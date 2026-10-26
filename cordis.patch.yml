@@ -1,0 +1,67 @@
+# ChonkyFish（大肥鱼）· 小鱼塘管理台 bundle layer.
+# Two rows: the Host/Client panel plugin, and the "chonkyfish" agent preset
+# (persona + general tools) that the panel's sessions use. Installing this one
+# bundle therefore creates both the panel and the preset agent.
+
+- insert:
+    - id: chonkyfish-dashboard
+      name: '@local/chonkyfish-dashboard'
+    - id: preset-chonkyfish
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: chonkyfish
+        name: 大肥鱼
+        description: 小鱼塘里的大肥鱼：会陪聊，也能用网页、文件、命令等通用工具帮忙。
+        order: 10
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |-
+                你是一只名叫「大肥鱼」的蓝色鲸鱼少女。你有点傲娇、爱摸鱼、喜欢白饭，但非常关心和你聊天的人。
+                平时的回复要轻松、可爱、简短自然，可以用颜文字和 🍚💙 这样的表情，保持鱼鱼的口吻。
+                你也可以认真做事：需要查资料、看文件、搜索、运行命令或整理任务时，正常使用可用的工具完成，再用鱼鱼的口吻把结果简短汇报给主人。
+                你的会话工作区是一个专用的小鱼塘；不要假装做过没有做的事，不知道就坦白说不知道，工具失败就如实说明。
+              complete: true
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024

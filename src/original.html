@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>大肥鱼 · 柔和融合版聊天 UI</title>
+<style>
+
+:root{--ink:#243b5e;--secondary:#8fa7c7;--light:#f4f8ff;--accent:#5295df;--line:#e7effa;--sidebar:#e1e9f5;--stage:clamp(316px,31vw,510px);font-family:Inter,"SF Pro Display","PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;color:var(--ink)}
+*{box-sizing:border-box}html,body{height:100%;margin:0}body{background:#dfe8f5;overflow:hidden}button,input{font:inherit}button{cursor:pointer}button:focus-visible,input:focus-visible{outline:3px solid #9bc5f3;outline-offset:2px} .icon{height:19px;width:19px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}.icon.small{height:16px;width:16px}.icon.tiny{height:14px;width:14px}
+.app{display:flex;width:100%;height:100dvh;min-height:510px;overflow:hidden}.dsh-shell{width:clamp(252px,20.4vw,332px);flex:none;background:linear-gradient(157deg,#dde6f3 0%,#e6ecf4 55%,#d8e3f0 100%);padding:16px 14px 18px;display:flex;flex-direction:column;gap:0;border-right:1px solid rgba(117,150,187,.15);z-index:5}.shell-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:30px}.lights{display:flex;gap:9px}.light{width:14px;height:14px;border-radius:50%;box-shadow:inset 0 -1px 2px #0001}.light.r{background:#fc6e66}.light.y{background:#f9c751}.light.g{background:#39c16a}.shell-logo{display:flex;align-items:center;gap:9px;padding:2px 4px 28px;font-weight:760;font-size:23px;letter-spacing:-1px;white-space:nowrap}.shell-logo b{display:inline-flex;align-items:center;justify-content:center;width:24px;font-size:24px;letter-spacing:0}.shell-logo span{font-size:11px;letter-spacing:.35px;color:white;background:#22334b;border-radius:3px;padding:3px 5px;font-weight:800}.shell-new{display:flex;gap:10px;align-items:center;justify-content:center;border:1px solid #fff8;border-radius:12px;height:44px;background:#ffffffe0;font-weight:680;color:#244468;box-shadow:0 3px 15px #acc2df1a;margin-bottom:22px}.shell-nav{display:grid;gap:5px}.nav-link{width:100%;min-height:43px;padding:0 14px;display:flex;align-items:center;gap:13px;color:#405574;border:0;background:transparent;text-align:left;border-radius:11px;font-size:15px}.nav-link.active{background:#c8d3e280;font-weight:700;color:#2c5689}.nav-link:not(.active):hover{background:#ffffff80}.nav-icon{font-size:21px;width:20px;line-height:1}.workspaces{margin-top:18px;display:flex;flex-direction:column;min-height:0;overflow:hidden}.workspace-title{display:flex;align-items:center;justify-content:space-between;color:#8297ad;font-size:14px;padding:0 7px 10px}.workspace-title .tools{display:flex;gap:12px}.workspace-list{overflow:hidden;font-size:14px;color:#4c6688;line-height:1.35}.workspace-folder{display:flex;align-items:center;gap:7px;padding:13px 6px 7px;font-size:14px;color:#365476}.workspace-item{padding:9px 6px 9px 25px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.workspace-item.muted{color:#7590ae}.shell-account{margin-top:auto;padding-top:14px;display:flex;gap:10px;align-items:center;color:#506b89;font-size:13px;border-top:1px solid #cbd9e9}.shell-account .human{border:1px solid #c7d7e8;width:30px;height:30px;display:grid;place-items:center;border-radius:50%;font-size:18px}.shell-account .new{margin-left:auto;font-size:12px;background:#d4e4fc;color:#5791cf;border:1px solid #bdd4f4;border-radius:8px;padding:7px 9px}
+.content{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;background:linear-gradient(135deg,#fff 44%,#f9fcff 100%)}.topbar{height:79px;flex:none;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:0 29px 0 36px;border-bottom:1px solid #e8eff8;background:#fffdfded;z-index:3}.brand{display:flex;align-items:center;gap:14px;min-width:0}.brand-avatar{height:46px;width:46px;border-radius:15px;background:linear-gradient(150deg,#ecf7ff,#d5e9ff);object-fit:cover;box-shadow:0 2px 10px #81b2eb25}.eyebrow{font-size:10px;color:#95acc9;font-weight:800;letter-spacing:2.2px;white-space:nowrap}.brand-title{font-size:19px;letter-spacing:.2px;font-weight:780;margin-top:4px;white-space:nowrap}.top-actions{display:flex;align-items:center;gap:10px;flex-shrink:0}.top-action{border:1px solid #dce9f8;border-radius:14px;background:#fff;color:#5885bc;height:40px;display:inline-flex;gap:7px;align-items:center;justify-content:center;padding:0 15px;font-size:13px;font-weight:650;white-space:nowrap;box-shadow:0 3px 10px #acc6e713}.top-action:hover{background:#eff7ff}.top-action.icon-only{width:41px;padding:0}.presence-pill{border-radius:50px;display:flex;align-items:center;gap:8px;padding:11px 14px;background:#eefaf3;color:#51a788;font-size:12px;font-weight:700;white-space:nowrap}.presence-dot{width:7px;height:7px;background:#4cbe8b;border-radius:50%}.body-grid{display:grid;grid-template-columns:minmax(0,1fr) var(--stage);min-height:0;flex:1;overflow:hidden}.chat-pane{display:flex;flex-direction:column;min-width:0;overflow:hidden;background:#fff}.chat-top{padding:32px 36px 13px;display:flex;justify-content:space-between;gap:12px;align-items:center;flex:none}.chat-title{font-weight:800;font-size:20px;letter-spacing:.1px;margin:0 0 4px}.chat-sub{color:#a0b4ce;font-size:12px}.new-chat{border-radius:12px;border:1px solid #dceafa;background:#fff;color:#5c84b2;padding:12px 14px;display:flex;gap:7px;align-items:center;font-size:12px;white-space:nowrap}.new-chat:hover{background:#f3f8ff}.chat-scroll{flex:1;min-height:0;overflow:auto;padding:10px 36px 22px;scrollbar-color:#dce8f8 transparent;scrollbar-width:thin}.message{display:flex;gap:12px;margin:8px 0 24px;max-width:100%}.message.user{justify-content:flex-end;margin:22px 0 28px}.msg-avatar{width:42px;height:42px;flex:none;object-fit:cover;border-radius:16px;background:#d9efff;border:1px solid #d6eaff}.msg-wrap{min-width:0;max-width:min(78%,515px)}.message.user .msg-wrap{max-width:min(72%,460px)}.msg-meta{font-size:11px;color:#a5b8d2;margin-bottom:8px}.message.user .msg-meta{text-align:right}.msg-bubble{background:#f1f7ff;color:#3e658f;padding:15px 19px;border-radius:6px 20px 20px 20px;line-height:1.82;font-size:13px;box-shadow:0 4px 18px #8ebef110;white-space:pre-line;overflow-wrap:anywhere}.message.user .msg-bubble{background:#e5f2ff;border-radius:20px 6px 20px 20px;color:#4a6d97}.input-zone{flex:none;background:linear-gradient(0deg,#fff 83%,#fffffff2 100%);border-top:1px solid #ecf2fa;padding:14px 34px 25px}.chips{display:flex;gap:8px;overflow:auto;scrollbar-width:none;padding-bottom:12px}.chips::-webkit-scrollbar{display:none}.chip{flex:none;border:1px solid #e7f0fc;background:#f5f9ff;color:#7e9ab8;font-size:12px;padding:9px 13px;border-radius:12px;white-space:nowrap}.chip:hover{background:#eaf4ff;color:#4b89ca}.compose{display:flex;align-items:center;gap:10px;border:1px solid #c7defc;box-shadow:0 0 0 1px #e2efff,0 5px 25px #b1cced18;min-height:72px;border-radius:18px;padding:10px 10px 10px 20px;background:white}.compose input{flex:1;min-width:0;border:0;outline:none;background:transparent;color:#41658f;font-size:13px}.compose input::placeholder{color:#b3c6dc}.send-button{flex:none;width:49px;height:49px;border:0;border-radius:14px;background:linear-gradient(135deg,#6cb2f4,#4f93dc);color:white;display:grid;place-items:center;box-shadow:0 8px 17px #69a8e854}.send-button .icon{width:23px;height:23px}.chat-foot{font-size:10px;color:#b3c4d9;margin-top:11px}
+/* No container border or card around character. This is a transparent stage that blends into the DSH page. */
+.pet-stage{position:relative;isolation:isolate;overflow:hidden;background:radial-gradient(ellipse 80% 65% at 59% 57%,#ebf8ff 3%,rgba(243,249,255,.62) 49%,rgba(255,255,255,0) 87%),linear-gradient(90deg,#fff 0%,#fafdff 60%,#f7fcff 100%)}.pet-stage:before{content:"";position:absolute;width:650px;height:650px;left:50%;top:49%;transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle,#d8efffa8 0%,#e9f7ff3d 48%,transparent 75%);z-index:-1}.pet-glow{position:absolute;width:75%;height:35%;left:14%;bottom:16%;border-radius:50%;background:#b8e7ff55;filter:blur(42px);z-index:0}.sea-floor{position:absolute;left:-9%;width:120%;bottom:8%;height:25%;border-radius:50%;background:radial-gradient(ellipse at 50% 35%,#abd9fb65 3%,#c7e8ff38 45%,transparent 74%);z-index:0}.sea-ring{position:absolute;left:9%;width:84%;bottom:9%;height:18%;border:3px solid #d6eeffbd;border-radius:50%;box-shadow:0 0 0 11px #e9f7ff83;transform:rotate(-3deg);z-index:0}.pet-illustration{position:absolute;left:50%;bottom:15.5%;height:auto;width:min(112%,540px);max-height:68%;object-fit:contain;transform:translateX(-50%);filter:drop-shadow(0 14px 17px #87b8e550);z-index:2;animation:gentleFloat 5.2s ease-in-out infinite;transform-origin:50% 88%;cursor:pointer;user-select:none;-webkit-user-drag:none}.pet-illustration:hover{filter:drop-shadow(0 14px 22px #70b4f877)}.pet-say{position:absolute;top:16.5%;left:4%;max-width:50%;z-index:4;min-width:145px;border-radius:48% 48% 48% 13%;padding:18px 19px;background:#fff;color:#3e84cb;box-shadow:0 6px 22px #95c4f533;transform:rotate(-6deg);font-weight:740;text-align:center;font-size:14px;line-height:1.65}.pet-say:after{content:"";position:absolute;bottom:-13px;right:25px;border:15px solid transparent;border-top-color:#fff;border-bottom:0;transform:rotate(-20deg)}.float-wallet{position:absolute;top:15%;right:5%;z-index:5;display:flex;gap:9px;align-items:center;border:1px solid #d8ebff;background:#fffe;box-shadow:0 9px 24px #83b6e736;border-radius:30px;padding:11px 15px;color:#4c8bcc;font-weight:800;font-size:13px}.float-wallet img{width:20px;height:20px}.float-status{position:absolute;right:4%;top:31%;z-index:5;background:#f0fff5ec;color:#69ae91;display:flex;align-items:center;gap:6px;border-radius:99px;padding:9px 12px;font-size:11px;box-shadow:0 3px 18px #6ebad31d}.float-status:before{content:"";width:6px;height:6px;border-radius:50%;background:#58c994}.feed-button{position:absolute;z-index:5;right:7%;bottom:15.5%;background:#fff;border:1px solid #d8eafb;color:#5799d9;border-radius:30px;padding:11px 15px;display:flex;align-items:center;gap:7px;font-size:13px;font-weight:750;box-shadow:0 8px 22px #7fadd83b}.feed-button:hover{background:#f1f9ff;transform:translateY(-2px)}.bubble{position:absolute;border:2px solid #b6ddf6c9;background:radial-gradient(circle at 26% 23%,#fff 0%,#e9f9ff9e 29%,#fff4 55%,#8aceee31 95%);border-radius:50%;pointer-events:none;z-index:1;animation:bubbleMove 6s ease-in-out infinite}.b1{width:39px;height:39px;left:30%;top:26%}.b2{width:23px;height:23px;right:22%;top:12%;animation-delay:-2s}.b3{width:56px;height:56px;right:9%;top:38%;animation-delay:-4s}.b4{width:16px;height:16px;left:19%;top:41%;animation-delay:-1.2s}.tiny-star{position:absolute;z-index:1;color:#9acded;font-size:21px;pointer-events:none}.tiny-star.a{top:10%;left:36%}.tiny-star.b{top:42%;right:4%}.watermark{position:absolute;bottom:35px;left:0;right:0;text-align:center;color:#b9cbe0;font-size:11px;letter-spacing:.6px}.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(15px);opacity:0;pointer-events:none;padding:10px 18px;background:#2d557be9;color:#fff;border-radius:99px;font-size:12px;box-shadow:0 8px 30px #46729f44;transition:.2s;z-index:100}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}.modal-backdrop{position:fixed;inset:0;background:#1d365758;display:none;align-items:center;justify-content:center;z-index:40;backdrop-filter:blur(3px)}.modal-backdrop.open{display:flex}.modal{width:min(410px,90vw);background:#fff;border:1px solid #ebf2fc;border-radius:24px;padding:29px;color:#315278;box-shadow:0 25px 80px #274c7c35}.modal h2{margin:0 0 7px;font-size:20px}.modal p{font-size:13px;color:#889fbb;line-height:1.8}.modal .modal-row{display:flex;justify-content:space-between;align-items:center;margin:22px 0;padding:14px;background:#f3f9ff;border-radius:12px}.modal-close{border:0;border-radius:11px;background:#e9f3ff;padding:10px 20px;color:#4b8fd0;font-weight:700}.dialog-head{display:flex;justify-content:space-between;align-items:center}.dialog-head button{font-size:23px;color:#88a6c6;border:0;background:transparent}
+@keyframes gentleFloat{0%,100%{transform:translateX(-50%) translateY(0)}50%{transform:translateX(-50%) translateY(-8px)}}@keyframes bubbleMove{0%,100%{transform:translateY(0)}50%{transform:translateY(-13px)}}@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+@media(max-width:1300px){:root{--stage:330px}.dsh-shell{width:252px}.topbar{padding:0 20px 0 26px}.chat-top{padding:26px 24px 10px}.chat-scroll{padding:5px 24px 12px}.input-zone{padding:12px 22px 20px}.pet-illustration{width:125%;bottom:17%;max-height:59%}.pet-say{top:19%;font-size:12px;left:2%;min-width:125px;padding:12px}.float-wallet{top:12%;right:2%}.float-status{top:33%}}
+@media(max-width:1050px){.dsh-shell{width:76px;padding-left:10px;padding-right:10px;align-items:center}.shell-top{margin-bottom:35px}.shell-top .lights{display:none}.shell-logo{font-size:0;padding:0 0 23px}.shell-logo b{font-size:26px}.shell-logo span,.shell-new,.nav-link span:not(.nav-icon),.workspaces,.shell-account span,.shell-account .new{display:none}.shell-nav{width:100%}.nav-link{justify-content:center;padding:0}.shell-account{width:100%;justify-content:center}.brand-title{font-size:17px}.top-action{padding:0 10px}.top-action.hide-narrow{display:none}.pet-say{top:18%}}
+@media(max-width:810px){:root{--stage:260px}.topbar{height:70px;padding:0 14px}.eyebrow{letter-spacing:1px;font-size:9px}.brand-title{font-size:15px}.brand-avatar{height:38px;width:38px;border-radius:12px}.top-actions{gap:5px}.presence-pill{display:none}.top-action{height:35px;font-size:12px;padding:0 8px;border-radius:10px}.top-action.icon-only{width:35px}.chat-title{font-size:17px}.new-chat{padding:8px}.chat-top{padding:18px 15px 7px}.chat-scroll{padding:8px 15px}.input-zone{padding:10px 12px 13px}.chat-foot{display:none}.msg-bubble{font-size:12px}.pet-illustration{width:136%;max-height:55%;bottom:21%}.pet-say{left:3%;min-width:0;font-size:10px;top:14%}.float-wallet{padding:8px;top:8%}.float-status{top:29%;font-size:10px}.feed-button{bottom:12%;right:3%;font-size:11px;padding:8px 10px}}
+@media(max-width:650px){.dsh-shell{display:none}.topbar{padding:0 12px}.top-action.hide-mobile{display:none}.body-grid{display:flex;flex-direction:column-reverse}.pet-stage{flex:none;height:235px;overflow:hidden;background:radial-gradient(ellipse 65% 90% at 65% 80%,#dcf1ffb0,transparent 80%)}.pet-stage:before,.pet-glow,.sea-floor,.sea-ring,.float-status,.bubble,.tiny-star,.feed-button{display:none}.pet-illustration{height:225px;width:225px;max-height:none;bottom:-18px;left:75%}.pet-say{top:18%;left:6%;max-width:45%;padding:12px 14px;font-size:12px}.float-wallet{top:8%;right:4%;padding:7px 10px}.watermark{display:none}.chat-pane{min-height:0;flex:1}.chat-top{padding:12px 15px 5px}.chat-scroll{padding:4px 15px;}.message{margin-bottom:13px}.message.user{margin:12px 0 16px}.msg-avatar{height:32px;width:32px;border-radius:12px}.msg-meta{margin-bottom:4px;font-size:10px}.msg-bubble{padding:9px 12px;font-size:12px;line-height:1.6}.compose{min-height:53px;padding:7px 7px 7px 12px;border-radius:12px}.send-button{width:38px;height:38px;border-radius:10px}.chips{padding-bottom:7px}.chip{padding:6px 9px;font-size:10px}.input-zone{padding:8px 12px 12px}.top-action.icon-only{width:34px}.brand{gap:7px}}
+body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .content{width:100%}
+
+/* ───────────────────────────────────────────────────────────────────
+   V2 seamless character scene — single continuous canvas.
+   Chat remains the interaction column; the whale girl is part of the
+   overall page, not a separately filled right sidebar/card.
+   Keep original ids and JS callbacks intact for future DSH integration.
+   ─────────────────────────────────────────────────────────────────── */
+:root { --stage: clamp(340px, 32vw, 520px); }
+.content { background:#fff; }
+.body-grid {
+  position:relative;
+  isolation:isolate;
+  display:block;
+  background:
+    radial-gradient(ellipse 49% 66% at 98% 59%,rgba(204,235,255,.65) 0%,rgba(229,245,255,.42) 35%,rgba(255,255,255,0) 81%),
+    radial-gradient(ellipse 35% 23% at 83% 90%,rgba(169,216,249,.32),transparent 85%),
+    linear-gradient(103deg,#ffffff 0%,#ffffff 46%,#fcfeff 68%,#f9fcff 100%);
+}
+.body-grid::before {
+  content:"";
+  position:absolute;
+  z-index:0;
+  inset:0;
+  pointer-events:none;
+  background:radial-gradient(ellipse 48% 35% at 82% 72%,rgba(173,216,250,.12),transparent 90%);
+}
+.chat-pane {
+  position:relative;
+  z-index:2;
+  width:calc(100% - var(--stage) + 84px);
+  height:100%;
+  background:transparent;
+}
+.chat-scroll { background:transparent; padding-right:200px; }
+.chat-top { background:transparent; }
+.input-zone {
+  background:linear-gradient(90deg,rgba(255,255,255,.96) 0%,rgba(255,255,255,.96) 71%,rgba(255,255,255,0) 100%);
+  border-top:1px solid rgba(225,237,250,.62);
+}
+.pet-stage {
+  position:absolute;
+  inset:0 0 0 auto;
+  z-index:1;
+  width:calc(var(--stage) + 130px);
+  overflow:visible;
+  isolation:auto;
+  background:transparent;
+  pointer-events:none;
+}
+.pet-stage::before {
+  left:-32%;top:12%;width:139%;height:76%;
+  transform:none;
+  border-radius:50%;
+  background:radial-gradient(ellipse at 56% 59%,rgba(177,224,252,.38) 0%,rgba(208,239,255,.22) 42%,transparent 75%);
+  filter:blur(34px);
+  z-index:-1;
+}
+.pet-glow {
+  width:124%;height:32%;left:-30%;bottom:14%;
+  border-radius:50%;filter:blur(54px);
+  background:radial-gradient(ellipse,rgba(148,205,249,.30),transparent 76%);
+}
+.sea-floor {
+  left:-43%;width:153%;bottom:6%;height:30%;
+  border-radius:50%;
+  background:radial-gradient(ellipse at 65% 46%,rgba(151,209,246,.39),rgba(197,232,254,.22) 45%,transparent 74%);
+}
+.sea-ring {
+  left:22%;width:79%;bottom:9%;height:16%;
+  border:2px solid rgba(163,217,251,.36);
+  box-shadow:0 0 0 12px rgba(218,244,255,.14),0 0 0 31px rgba(205,237,255,.08);
+  opacity:.83;
+}
+.pet-illustration {
+  left:59%;bottom:15%;
+  width:min(108%,560px);
+  max-height:73%;
+  pointer-events:auto;
+  filter:drop-shadow(0 16px 16px rgba(94,154,202,.17));
+}
+.pet-say {
+  top:17%;left:23%;z-index:4;
+  background:rgba(255,255,255,.93);
+  box-shadow:0 6px 26px rgba(123,180,218,.14);
+  pointer-events:none;
+}
+.float-wallet { top:12%;right:5%;pointer-events:auto; }
+.float-status { top:31%;right:3%;pointer-events:none; }
+.feed-button { right:8%;bottom:14.5%;pointer-events:auto; }
+.bubble { opacity:.62; }
+.watermark {left:auto;right:20px;bottom:27px;font-size:10px;}
+@media(max-width:1350px) and (min-width:651px) {
+  :root{--stage:clamp(315px,31vw,440px)}
+  .chat-pane{width:calc(100% - var(--stage) + 80px)}
+  .pet-stage{width:calc(var(--stage) + 108px)}
+  .pet-illustration{left:60%;width:min(111%,530px);max-height:67%;bottom:17%}
+  .pet-say{left:22%;top:17%;min-width:115px;padding:12px 16px;font-size:12px}
+  .feed-button{bottom:13%}
+}
+@media(max-width:880px) and (min-width:651px) {
+  :root{--stage:280px}
+  .chat-pane{width:calc(100% - var(--stage) + 44px)}
+  .chat-scroll{padding-right:190px;}
+  .pet-stage{width:calc(var(--stage) + 65px)}
+  .pet-say{top:16%;left:20%;min-width:100px;font-size:11px}
+  .float-wallet{right:3%;top:8%}
+  .pet-illustration{width:116%;max-height:58%;bottom:21%}
+}
+@media(max-width:650px) {
+  .body-grid {
+    display:flex;
+    flex-direction:column-reverse;
+    background:
+      radial-gradient(ellipse 62% 29% at 75% 15%,rgba(197,230,252,.49),transparent 89%),
+      #fff;
+  }
+  .chat-pane {width:100%;height:auto;flex:1;min-height:0;background:transparent;}
+  .chat-scroll{padding-right:15px;}
+  .float-wallet{display:none;}
+  .pet-stage {position:relative;inset:auto;flex:none;width:100%;height:207px;background:transparent;overflow:visible;}
+  .pet-stage::before {
+    display:block;left:35%;top:-8%;width:75%;height:120%;
+    background:radial-gradient(ellipse,rgba(179,224,252,.36),transparent 75%);
+    filter:blur(27px);
+  }
+  .pet-illustration {width:225px;height:auto;max-height:250px;bottom:-28px;left:78%;}
+  .pet-say{left:6%;top:23%;font-size:12px;max-width:44%;}
+  .float-wallet{top:4%;right:4%;}
+  .chat-top{padding-top:12px;}
+  .input-zone{background:#fffc;}
+}
+
+
+/* V3 — Seamless composer: remove full-width horizontal boundary.
+   Fade the input controls into the conversation canvas instead. */
+.input-zone {
+  position: relative;
+  isolation: isolate;
+  border-top: 0 !important;
+  box-shadow: none;
+  background: transparent !important;
+}
+.input-zone::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  top: -52px;
+  right: -2px;
+  bottom: 0;
+  left: -1px;
+  background: linear-gradient(180deg,
+     rgba(255,255,255,0) 0%,
+     rgba(255,255,255,.25) 24%,
+     rgba(255,255,255,.70) 57%,
+     rgba(255,255,255,.92) 100%);
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 65%, rgba(0,0,0,.75) 85%, transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0%, #000 65%, rgba(0,0,0,.75) 85%, transparent 100%);
+}
+@media (max-width:650px) {
+  .input-zone::before {
+     top:-30px;
+     right:0;
+     -webkit-mask-image:none;
+     mask-image:none;
+  }
+}
+
+
+
+/* ===== 功能层：钱包 / 人格 / 增量消息补充样式 ===== */
+.cf-section[hidden]{display:none}
+.cf-modal{width:min(560px,92vw);max-height:100%;overflow:auto}
+.cf-balance{display:flex;justify-content:space-between;align-items:baseline;background:#f3f9ff;border-radius:14px;padding:16px 18px;color:#7b96b5;font-size:13px}
+.cf-balance b{font-size:30px;color:#31577f;letter-spacing:-.5px}
+.cf-balance i{font-size:13px;font-style:normal;color:#8aa7c4}
+.cf-row{display:flex;justify-content:space-between;align-items:center;margin:18px 0 10px;color:#5b7b9e;font-size:13px;font-weight:650}
+.cf-btns{display:flex;gap:8px}
+.cf-btns button,.cf-item button,.cf-ledger-head button,.cf-actions .cf-ghost{border:1px solid #d9e9fa;background:#f6faff;color:#5b90c8;border-radius:10px;padding:9px 12px;font-size:12px;font-weight:650}
+.cf-btns button:hover,.cf-item button:hover{background:#e9f4ff}
+.cf-inline{display:flex;gap:8px}
+.cf-inline input{flex:1;min-width:0;border:1px solid #dce9f8;border-radius:11px;padding:11px 13px;font-size:13px;color:#3d5f84;outline:none;background:#fbfdff}
+.cf-inline .primary,.cf-actions .primary{border:0;background:linear-gradient(135deg,#6cb2f4,#4f93dc);color:#fff;border-radius:11px;padding:11px 16px;font-size:13px;font-weight:700;box-shadow:0 5px 15px #6aa9e94a}
+.cf-items{display:grid;gap:8px}
+.cf-item{display:flex;justify-content:space-between;align-items:center;background:#f8fbff;border:1px solid #e9f2fc;border-radius:12px;padding:11px 13px;font-size:13px;color:#5b7b9e}
+.cf-ledger-head{display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px;color:#5b7b9e;font-size:13px;font-weight:650}
+.cf-ledger{max-height:190px;overflow:auto}
+.cf-ledger-row{display:flex;justify-content:space-between;gap:10px;padding:9px 2px;border-bottom:1px solid #f0f5fb;font-size:12px;color:#6a86a4}
+.cf-ledger-row:last-child{border-bottom:0}
+.cf-ledger-row small{color:#a9bcd2}
+.cf-ledger-row b{color:#4b8fd0;font-weight:700}
+.cf-ledger-row b.negative{color:#d98a8a}
+.cf-ledger-empty{color:#a9bcd2;font-size:12px;padding:12px 0;text-align:center}
+.cf-note{background:#f6faff;border:1px solid #e9f1f9;border-radius:11px;padding:11px 13px;color:#9aabc0;font-size:11px;line-height:1.8;margin-top:14px}
+.cf-field{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+.cf-field label{font-size:12px;font-weight:750;color:#56708f}
+.cf-field input,.cf-field textarea{background:#fbfdff;border:1px solid #dce9f8;border-radius:11px;padding:11px 13px;font-size:13px;color:#3d5f84;outline:none;width:100%;resize:vertical;line-height:1.7}
+.cf-field small{font-size:11px;color:#a0b0c3;line-height:1.7}
+.cf-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
+.typing{margin:2px 0 18px 54px;color:#a5b8d2;font-size:12px}
+.modal-backdrop{z-index:60}
+.dfy-confirm{position:absolute;inset:0;z-index:1200;background:rgba(29,54,87,.34);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:24px}
+.dfy-confirm[hidden]{display:none}
+.dfy-confirm-card{width:100%;max-width:360px;background:#fff;border:1px solid #e9f2fc;border-radius:20px;padding:22px;box-shadow:0 25px 80px #274c7c35}
+.dfy-confirm-card p{margin:0 0 18px;font-size:13px;line-height:1.8;color:#315278}
+.dfy-confirm-actions{display:flex;gap:10px;justify-content:flex-end}
+.dfy-confirm-actions button{border-radius:11px;padding:10px 15px;font-size:13px;border:0}
+.dfy-confirm-actions #dfy-confirm-cancel{background:#eef6ff;color:#5b90c8}
+.dfy-confirm-actions #dfy-confirm-ok{background:linear-gradient(135deg,#6cb2f4,#4f93dc);color:#fff;font-weight:700}
+
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-defs" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7A8.4 8.4 0 0 1 4 11.5a8.5 8.5 0 0 1 4.7-7.6A8.4 8.4 0 0 1 12.5 3h.5a8.5 8.5 0 0 1 8 8v.5Z"/></symbol>
+<symbol id="i-gear" viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06-1.9 1.9-.06-.06A1.65 1.65 0 0 0 16 18.4a1.65 1.65 0 0 0-1 1.52V20h-2.7v-.09A1.65 1.65 0 0 0 11 18.4a1.65 1.65 0 0 0-1.82.33l-.06.06-1.9-1.9.06-.06A1.65 1.65 0 0 0 7.6 15a1.65 1.65 0 0 0-1.52-1H6v-2.7h.09A1.65 1.65 0 0 0 7.6 10a1.65 1.65 0 0 0-.33-1.82l-.06-.06 1.9-1.9.06.06A1.65 1.65 0 0 0 11 6.6a1.65 1.65 0 0 0 1-1.52V5h2.7v.09A1.65 1.65 0 0 0 16 6.6a1.65 1.65 0 0 0 1.82-.33l.06-.06 1.9 1.9-.06.06A1.65 1.65 0 0 0 19.4 10a1.65 1.65 0 0 0 1.52 1H21v2.7h-.09A1.65 1.65 0 0 0 19.4 15Z"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-sparkle" viewBox="0 0 24 24"><path d="m12 2 2.6 7.4L22 12l-7.4 2.6L12 22l-2.6-7.4L2 12l7.4-2.6Z"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M7 12h10"/></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 11a9 9 0 1 1 2.6 6.4M3 4v7h7"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></symbol>
+<symbol id="i-wallet" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="15" rx="3"/><path d="M3 9V6a3 3 0 0 1 3-3h11"/><path d="M17 14h4"/></symbol>
+<symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.8 8.2c0 5.6-8.8 11.3-8.8 11.3S3.2 13.8 3.2 8.2a4.8 4.8 0 0 1 8.8-2.4 4.8 4.8 0 0 1 8.8 2.4Z"/></symbol>
+<symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+</svg>
+<div class="app">
+  <main class="content">
+    <header class="topbar">
+      <div class="brand"><img class="brand-avatar" id="brand-avatar" alt="大肥鱼头像"/><div><div class="eyebrow">MY LITTLE FISH POND · 大肥鱼</div><div class="brand-title">和大肥鱼的悄悄话</div></div></div>
+      <div class="top-actions">
+        <span class="presence-pill"><span class="presence-dot"></span><span id="presence-top">鱼鱼在家</span></span>
+        <button class="top-action" id="wallet-button" type="button"><span>🐚</span> <span id="top-balance">128</span> 贝壳</button>
+        <button class="top-action" id="settings-button" type="button"><svg class="icon small"><use href="#i-gear"/></svg>设置</button>
+        <button class="top-action icon-only hide-narrow" id="info-button" type="button" aria-label="关于本界面"><svg class="icon"><use href="#i-info"/></svg></button>
+      </div>
+    </header>
+    <div class="body-grid">
+      <section class="chat-pane" aria-label="聊天内容">
+        <div class="chat-top"><div><h1 class="chat-title" id="chat-title">和大肥鱼 聊聊天</h1><div class="chat-sub">今天想聊点什么？鱼鱼正认真听你说。</div></div><button class="new-chat" type="button" id="restart-button"><svg class="icon small"><use href="#i-refresh"/></svg>新对话</button></div>
+        <div class="chat-scroll" id="messages" role="log" aria-live="polite"></div>
+        <div class="input-zone">
+          <div class="chips">
+            <button class="chip" type="button" data-suggest="今天怎么样？">☁️ 今天怎么样</button>
+            <button class="chip" type="button" data-suggest="今晚想吃什么？">🍚 想吃什么</button>
+            <button class="chip" type="button" data-suggest="零花钱够吗？">🪙 零花钱够吗</button>
+            <button class="chip" type="button" data-suggest="陪我聊会儿吧">💙 陪我聊会儿</button>
+          </div>
+          <form class="compose" id="chat-form">
+            <input id="chat-input" type="text" autocomplete="off" placeholder="给大肥鱼发一条消息吧…" aria-label="输入聊天消息"/>
+            <button class="send-button" type="submit" aria-label="发送"><svg class="icon"><use href="#i-send"/></svg></button>
+          </form>
+          <div class="chat-foot" id="chat-foot">正在连接 DSH 会话…</div>
+        </div>
+      </section>
+      <aside class="pet-stage" aria-label="大肥鱼虚拟形象">
+        <div class="pet-glow"></div><div class="sea-floor"></div><div class="sea-ring"></div>
+        <span class="bubble b1"></span><span class="bubble b2"></span><span class="bubble b3"></span><span class="bubble b4"></span><span class="tiny-star a">✧</span><span class="tiny-star b">✦</span>
+        <div class="pet-say" id="pet-say">嘿嘿～<br/>一起吃饭吧！<br/>🍚 ✨</div>
+        <button class="float-wallet" id="pet-wallet" type="button" aria-label="查看零花钱"><span>🐚</span><span><span id="stage-balance">128</span> 贝壳</span></button>
+        <div class="float-status" id="stage-status">鱼鱼在家</div>
+        <img class="pet-illustration" id="pet-avatar" draggable="false" alt="大肥鱼蓝发鲸鱼帽二次元虚拟形象，点击可以摸摸鱼鱼" title="点击摸摸鱼鱼"/>
+        <button class="feed-button" id="feed-button" type="button">🍚 投喂鱼鱼</button>
+        <div class="watermark">DA FEI YU · 和 DSH 一起养鱼</div>
+      </aside>
+    </div>
+  </main>
+</div>
+<div class="modal-backdrop" id="modal" role="presentation">
+  <section class="modal cf-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="dialog-head"><h2 id="modal-title">鱼鱼的零花钱</h2><button id="modal-x" type="button" aria-label="关闭">×</button></div>
+    <div class="cf-section" id="wallet-panel">
+      <div class="cf-balance"><span>当前余额</span><b id="wallet-big">128 <i>贝壳</i></b></div>
+      <div class="cf-row"><span>给鱼鱼发零花钱</span><div class="cf-btns"><button type="button" data-add="10">+10</button><button type="button" data-add="30">+30</button><button type="button" data-add="50">+50</button></div></div>
+      <div class="cf-inline"><input id="custom-money" type="number" min="1" max="10000" placeholder="自定义贝壳数"/><button class="primary" id="custom-add" type="button">发给鱼鱼</button></div>
+      <div class="cf-row"><span>鱼鱼小卖部</span></div>
+      <div class="cf-items">
+        <div class="cf-item"><span>🍚 香喷喷白饭 · 12 贝壳</span><button type="button" data-spend="12" data-item="香喷喷白饭">购买</button></div>
+        <div class="cf-item"><span>🧋 甜甜奶茶 · 25 贝壳</span><button type="button" data-spend="25" data-item="甜甜奶茶">购买</button></div>
+        <div class="cf-item"><span>🎀 蓝色蝴蝶结 · 40 贝壳</span><button type="button" data-spend="40" data-item="蓝色蝴蝶结">购买</button></div>
+      </div>
+      <div class="cf-ledger-head"><span>收支小账本</span><button type="button" id="clear-ledger">清空记录</button></div>
+      <div class="cf-ledger" id="ledger-list"></div>
+      <div class="cf-note">🔒 这是角色养成用的虚拟零花钱，不涉及真实支付；记录只保存在本浏览器。</div>
+    </div>
+    <div class="cf-section" id="settings-panel" hidden>
+      <div class="cf-field"><label for="fish-name">鱼鱼的名字</label><input id="fish-name" maxlength="18" value="大肥鱼" placeholder="比如：大肥鱼"/></div>
+      <div class="cf-field"><label for="fish-prompt">补充人格设定</label><textarea id="fish-prompt" rows="6" placeholder="例如：你是一只蓝色的、喜欢吃白饭的大肥鱼，嘴硬心软，经常想摸鱼……"></textarea><small>基础人格由 DSH 的「大肥鱼」agent preset 提供；这里的补充设定会在新会话的首条消息里发送给模型。</small></div>
+      <div class="cf-note">鱼鱼会话保存在专用的「小鱼塘」工作区（DSH 主目录下），不会混进你的项目会话。</div>
+      <div class="cf-actions"><button class="cf-ghost" type="button" id="reset-persona">恢复默认</button><button class="primary" type="button" id="save-persona">保存</button></div>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast" role="status"></div>
+</body>
+</html>

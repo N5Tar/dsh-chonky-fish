@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="蓝色卡通大肥鱼抱着饭碗">
+  <rect width="128" height="128" rx="30" fill="#e8f3ff"/>
+  <circle cx="30" cy="32" r="13" fill="#ffffff" opacity="0.6"/>
+  <circle cx="108" cy="26" r="7" fill="#ffffff" opacity="0.7"/>
+  <path d="M92 62c9-9 17-8 20-16 7 15 1 26-13 26Z" fill="#7dbbf1" stroke="#639edf" stroke-width="3"/>
+  <circle cx="60" cy="62" r="31" fill="#75b5ed" stroke="#4c88d0" stroke-width="3"/>
+  <path d="M36 66c2-13 11-21 24-21s23 8 24 21c1 15-10 24-24 24S35 81 36 66Z" fill="#fff9f0"/>
+  <ellipse cx="50" cy="58" rx="4.6" ry="6" fill="#365477"/>
+  <ellipse cx="72" cy="58" rx="4.6" ry="6" fill="#365477"/>
+  <circle cx="51.5" cy="55.6" r="1.5" fill="#ffffff"/>
+  <circle cx="73.5" cy="55.6" r="1.5" fill="#ffffff"/>
+  <ellipse cx="40" cy="68" rx="7" ry="3.4" fill="#ffb7be" opacity="0.7"/>
+  <ellipse cx="82" cy="68" rx="7" ry="3.4" fill="#ffb7be" opacity="0.7"/>
+  <path d="M57 71c2 3.4 6 4 9 0" stroke="#ad7180" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+  <ellipse cx="61" cy="94" rx="19" ry="6" fill="#ffffff" stroke="#85ade2" stroke-width="2.5"/>
+  <path d="M42 94c0 9 38 9 38 0" fill="#ffffff" stroke="#85ade2" stroke-width="2.5"/>
+  <ellipse cx="61" cy="94" rx="15" ry="3.4" fill="#fffaf0" stroke="#e3d6ba" stroke-width="1.6"/>
+  <path d="M30 76c-10 3-12 10-4 15l10-6" fill="#78b9f1" stroke="#639fdb" stroke-width="2.5"/>
+</svg>
