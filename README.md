@@ -76,7 +76,6 @@ node build.mjs      # 从 src/original.html + src/runtime.js 生成 client.js
 cordis.patch.yml   # bundle 入口：插面板 row + chonkyfish preset row
 index.js           # Host 半：建小鱼塘目录、给 chonkyfish 会话全权限
 client.js          # 构建产物：面板 UI + DSH 会话桥 + 主题皮肤
-client 源文件
 build.mjs          # client.js 构建脚本
 src/original.html  # 融合版聊天 UI 设计稿（Shadow DOM 适配前）
 src/runtime.js     # 面板控制器（增量消息、鱼鱼姿态、钱包/人格）
