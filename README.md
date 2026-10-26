@@ -16,6 +16,7 @@
 - **专属工作区**：首次打开会在 `$DSH_HOME/小鱼塘` 建目录并注册「小鱼塘」工作区，鱼鱼会话不混进项目会话
 - **主题皮肤**：加载插件后把 DSH 的 14 个语义 token 之外、整套 `--dsw-static-*` 调色板重映射成小鱼塘配色（明暗主题都适配），卸载即恢复
 - **角色养成**：名字 / 补充人格设定、贝壳钱包与账本、6 套姿态互动（点击害羞、投喂、思考/开心/睡着）
+- **状态落盘**：名字、补充人格、钱包、账本保存在本机 JSON 文件 `$DSH_HOME/chonkyfish/state.json`（Host 通过带一次性 token 的本地路由读写），HTTP API 与嵌入式浏览器存储只作为缓存/降级
 - **零外部请求**：插图与头像以 WebP data URI 内嵌在 `client.js` 里，不下载图片
 
 ## 安装
@@ -67,14 +68,15 @@ node build.mjs      # 从 src/original.html + src/runtime.js 生成 client.js
 ## 数据与隐私
 
 - 聊天记录保存在本机 DSH Session（`$DSH_HOME/sessions`）
-- 名字、补充人格、钱包与账本保存在浏览器 localStorage（`chonkyfish-mini-demo-v1`）
-- 插件本身不发网络请求；`web_search` / `web_fetch` 会走 DSH 配置的 Web 服务
+- 名字、补充人格、钱包、账本和地方演示记录保存在本机文件 `$DSH_HOME/chonkyfish/state.json`，由 Host 半通过本地 `/chonkyfish/state` 路由读写；路由要求每次 Host 启动随机生成、注入到页面的 token
+- 浏览器 localStorage（`chonkyfish-mini-demo-v1`）仅作为缓存和降级；首次安装/更新后刷新一次页面以拿到新的文件存储 token
+- 插件本身不访问外部网络；`web_search` / `web_fetch` 会走 DSH 配置的 Web 服务
 
 ## 仓库结构
 
 ```
 cordis.patch.yml   # bundle 入口：插面板 row + chonkyfish preset row
-index.js           # Host 半：建小鱼塘目录、给 chonkyfish 会话全权限
+index.js           # Host 半：建小鱼塘目录、给 chonkyfish 会话全权限、状态文件路由
 client.js          # 构建产物：面板 UI + DSH 会话桥 + 主题皮肤
 build.mjs          # client.js 构建脚本
 src/original.html  # 融合版聊天 UI 设计稿（Shadow DOM 适配前）

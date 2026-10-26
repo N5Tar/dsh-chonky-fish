@@ -1,6 +1,6 @@
 {
   "name": "@local/chonkyfish-dashboard",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "ChonkyFish（大肥鱼）· 小鱼塘管理台：安装本插件会同时注册「大肥鱼」agent preset（含通用工具），对话接入 DSH 会话，并把整个 Harness 换成小鱼塘配色。",

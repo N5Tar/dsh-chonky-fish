@@ -20,6 +20,16 @@ function mountChonkyFishPage(wrap, chat) {
   var lastChatSignature = ''
   var busy = false
 
+  var stateBridge = null
+  try {
+    if (typeof window !== 'undefined' && window.__CHONKYFISH_STATE__ && typeof window.__CHONKYFISH_STATE__.token === 'string') {
+      stateBridge = window.__CHONKYFISH_STATE__
+    }
+  } catch (error) {
+    stateBridge = null
+  }
+  var fileSaveTimer = null
+
   var KEY = 'chonkyfish-mini-demo-v1'
   var LEGACY_KEYS = ['dafeiyu-mini-demo-v1']
   var DEFAULT_PROMPT = '你是一只喜欢吃白饭的蓝色大肥鱼。你有点傲娇，喜欢摸鱼，偶尔嘴硬，但实际上非常关心和你聊天的人。请用轻松可爱、简短自然的中文交流。'
@@ -104,12 +114,71 @@ function mountChonkyFishPage(wrap, chat) {
     timers.add(id)
     return id
   }
-  function save() {
+  function saveLocal() {
     try {
       localStorage.setItem(KEY, JSON.stringify(state))
     } catch (error) {
       /* storage full or blocked */
     }
+  }
+
+  function scheduleFileSave(delay) {
+    if (!stateBridge || typeof fetch !== 'function') return
+    if (fileSaveTimer) {
+      clearTimeout(fileSaveTimer)
+      timers.delete(fileSaveTimer)
+    }
+    fileSaveTimer = later(function () {
+      fileSaveTimer = null
+      fetch(stateBridge.endpoint, {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          'x-chonkyfish-token': stateBridge.token,
+        },
+        body: JSON.stringify({ version: 1, savedAt: new Date().toISOString(), state: state }),
+      }).catch(function () {
+        /* the file may be unavailable; localStorage remains the cache */
+      })
+    }, delay === undefined ? 250 : delay)
+  }
+
+  function save() {
+    saveLocal()
+    scheduleFileSave()
+  }
+
+  function hydrateFromFile() {
+    if (!stateBridge || typeof fetch !== 'function') return
+    fetch(stateBridge.endpoint, {
+      headers: { 'x-chonkyfish-token': stateBridge.token },
+      cache: 'no-store',
+    }).then(function (response) {
+      return response.ok ? response.json() : null
+    }).then(function (payload) {
+      if (!payload || !payload.state || typeof payload.state !== 'object') {
+        /* first run: migrate the existing localStorage/default state into the file */
+        scheduleFileSave(0)
+        return
+      }
+      var merged = defaults()
+      Object.keys(payload.state).forEach(function (key) {
+        merged[key] = payload.state[key]
+      })
+      if (!Array.isArray(merged.messages) || !Array.isArray(merged.ledger)) {
+        scheduleFileSave(0)
+        return
+      }
+      state = merged
+      saveLocal()
+      updateTitle()
+      setBalanceUI()
+      renderPersona()
+      renderWallet()
+      renderChat(true)
+    }).catch(function () {
+      /* no token (page not refreshed yet) or route offline: localStorage only */
+    })
   }
 
   var toastTimer = null
@@ -776,6 +845,7 @@ function mountChonkyFishPage(wrap, chat) {
   renderWallet()
   renderChat()
   applyStatus()
+  hydrateFromFile()
 
   if (realChat) {
     realUnsubscribe = realChat.onChange(handleChatChange)
@@ -795,6 +865,10 @@ function mountChonkyFishPage(wrap, chat) {
     if (poseTimer) {
       clearTimeout(poseTimer)
       poseTimer = null
+    }
+    if (fileSaveTimer) {
+      clearTimeout(fileSaveTimer)
+      fileSaveTimer = null
     }
     document.removeEventListener('keydown', onConfirmKeydown)
     document.removeEventListener('keydown', onModalKeydown)
