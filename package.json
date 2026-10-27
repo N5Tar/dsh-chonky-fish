@@ -23,7 +23,8 @@
     "test:event-engine:pipeline": "node src/event-engine/tests/run-pipeline.mjs",
     "test:event-engine:extraction": "node src/event-engine/tests/run-extraction.mjs",
     "test:event-engine:delivery": "node src/event-engine/tests/run-delivery.mjs",
-    "test:event-engine:all": "node src/event-engine/tests/run-fixtures.mjs && node src/event-engine/tests/run-pipeline.mjs && node src/event-engine/tests/run-extraction.mjs && node src/event-engine/tests/run-delivery.mjs"
+    "test:event-engine:all": "node src/event-engine/tests/run-fixtures.mjs && node src/event-engine/tests/run-pipeline.mjs && node src/event-engine/tests/run-extraction.mjs && node src/event-engine/tests/run-delivery.mjs",
+    "requeue:dead-letters": "node src/event-engine/diagnostics/maintenance.mjs"
   },
   "dsh": {
     "bundle": {

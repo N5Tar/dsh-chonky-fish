@@ -30,11 +30,14 @@ const REPAIR_INSTRUCTION =
  *   llm: { stream: (options: any) => AsyncIterable<any> },
  *   resolveModel: (modelId?: string | null) => { provider: string, model: string },
  *   temperature?: number,
- *   maxTokens?: number,
+ *   maxTokens?: number | null,
  *   logger?: { warn: (...args: any[]) => void } | null,
  * }} options
+ *
+ * 不传 maxTokens 就不限制输出长度（2026-10-27 拍板）：宁可多花一点 token，
+ * 也不要把 JSON 截断成非法输出。
  */
-export function createExtractor({ llm, resolveModel, temperature = 0.1, maxTokens = 800, logger = null }) {
+export function createExtractor({ llm, resolveModel, temperature = 0.1, maxTokens = null, logger = null }) {
   function warn(message, error) {
     if (!logger) return
     try {
@@ -48,15 +51,16 @@ export function createExtractor({ llm, resolveModel, temperature = 0.1, maxToken
     let text = ''
     let usage = null
     let finish = null
-    const stream = llm.stream({
+    const request = {
       provider,
       model,
       system: SYSTEM_PROMPT,
       messages,
       temperature,
-      maxTokens,
       signal,
-    })
+    }
+    if (typeof maxTokens === 'number' && maxTokens > 0) request.maxTokens = maxTokens
+    const stream = llm.stream(request)
     for await (const chunk of stream) {
       if (!chunk || typeof chunk !== 'object') continue
       if (chunk.type === 'text-delta') text += chunk.text
@@ -69,7 +73,7 @@ export function createExtractor({ llm, resolveModel, temperature = 0.1, maxToken
       error.code = failure.code || finish.kind
       throw error
     }
-    return { text, usage }
+    return { text, usage, finishKind: finish && finish.kind ? finish.kind : 'unknown' }
   }
 
   /** 修复重试：把上一次输出塞回同一条 user 消息里，保持单轮对话形状。 */
@@ -104,12 +108,14 @@ export function createExtractor({ llm, resolveModel, temperature = 0.1, maxToken
     let raw = ''
     let usage = null
     let parsed = null
+    let finishKind = 'unknown'
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const payload = attempt === 0 ? messages : buildRepairMessages(messages, raw)
       const result = await callModel({ provider: selection.provider, model: selection.model, messages: payload, signal })
       raw = result.text
       usage = result.usage ?? usage
+      finishKind = result.finishKind
       parsed = parseAndValidateOutput(raw)
       if (parsed.ok) break
       const repairable = parsed.reason === 'invalid_json' || parsed.reason === 'schema_invalid'
@@ -126,9 +132,11 @@ export function createExtractor({ llm, resolveModel, temperature = 0.1, maxToken
         repaired,
         selection,
         usage,
+        rawLength: raw.length,
+        finishKind,
       }
     }
-    return { ok: true, output: parsed.output, repaired, selection, usage }
+    return { ok: true, output: parsed.output, repaired, selection, usage, rawLength: raw.length, finishKind }
   }
 
   return { extract, promptVersion: PROMPT_VERSION }

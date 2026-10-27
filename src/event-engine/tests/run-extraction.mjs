@@ -337,6 +337,49 @@ await test('会话日志读不到 → payload_unavailable，可重试', async ()
   }
 })
 
+await test('模型在 JSON 前后夹散文 → 仍能抽出来，不需要修复重试', async () => {
+  const env = setup({ responses: ['好的，我来抽取：\n' + validOutput() + '\n以上就是结果。'] })
+  try {
+    const summary = await env.runner.runOnce()
+    assert.equal(summary.succeeded, 1)
+    assert.equal(env.engine.listEvents({}).length, 1)
+    assert.equal(env.llm.calls.length, 1, '切出平衡 JSON 块后一次就够')
+  } finally {
+    env.cleanup()
+  }
+})
+
+await test('不再限制 maxTokens（2026-10-27 拍板：宁可多花 token 也不截断 JSON）', async () => {
+  const env = setup({ responses: [validOutput()] })
+  try {
+    await env.runner.runOnce()
+    assert.equal(env.llm.calls[0].maxTokens, undefined, '不传 maxTokens')
+    assert.equal(env.llm.calls[0].temperature, 0.1)
+  } finally {
+    env.cleanup()
+  }
+})
+
+await test('输出被截断（JSON 不闭合）→ 失败，但审计留下可诊断现场', async () => {
+  const truncated = validOutput().slice(0, 120)
+  const env = setup({ responses: [truncated] })
+  try {
+    const summary = await env.runner.runOnce()
+    assert.equal(summary.retrying, 1)
+    const row = env.engine.db
+      .prepare("SELECT reason_code, details_json FROM extraction_audit WHERE decision = 'failed'")
+      .get()
+    assert.equal(row.reason_code, 'invalid_json_after_repair')
+    const details = JSON.parse(row.details_json)
+    assert.equal(typeof details.rawLength, 'number')
+    assert.ok(details.rawLength > 0)
+    assert.equal(details.finishKind, 'stop')
+    assert.ok(String(details.detail).length > 0, '必须记录解析失败原因')
+  } finally {
+    env.cleanup()
+  }
+})
+
 /* ------------------------------------------------------------------ */
 
 const failed = results.filter((entry) => !entry.ok)

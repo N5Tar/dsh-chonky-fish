@@ -57,11 +57,16 @@ export function createExtractionRunner({
   }
 
   /** 失败结算：能重试就退避，次数用尽就进死信。 */
-  function settleFailure(job, code, selection, error) {
+  function settleFailure(job, code, selection, error, details = null) {
     const attempts = Number(job.attempts) || 1
     if (attempts >= maxAttempts) {
       engine.settleJob(job.jobId, { status: 'dead_letter', errorCode: code, modelId: modelLabel(selection) })
-      audit(job, 'failed', code, { deadLetter: true, attempts, detail: error ? String(error.message || error) : undefined })
+      audit(job, 'failed', code, {
+        deadLetter: true,
+        attempts,
+        ...(details ?? {}),
+        detail: error ? String(error.message || error) : details && details.detail,
+      })
       return 'deadLetter'
     }
     engine.settleJob(job.jobId, {
@@ -70,7 +75,12 @@ export function createExtractionRunner({
       nextAttemptAt: retryAt(attempts),
       modelId: modelLabel(selection),
     })
-    audit(job, 'failed', code, { attempts, retryIn: retryAt(attempts), detail: error ? String(error.message || error) : undefined })
+    audit(job, 'failed', code, {
+      attempts,
+      retryIn: retryAt(attempts),
+      ...(details ?? {}),
+      detail: error ? String(error.message || error) : details && details.detail,
+    })
     return 'retrying'
   }
 
@@ -105,9 +115,16 @@ export function createExtractionRunner({
     } catch (error) {
       return settleFailure(job, (error && error.code) || 'llm_failed', null, error)
     }
-    if (!result.ok) return settleFailure(job, result.code, result.selection, null)
+    if (!result.ok) {
+      return settleFailure(job, result.code, result.selection, null, {
+        detail: result.detail,
+        rawLength: result.rawLength,
+        finishKind: result.finishKind,
+        repaired: result.repaired,
+      })
+    }
 
-    if (result.repaired) audit(job, 'repaired', 'format_repaired')
+    if (result.repaired) audit(job, 'repaired', 'format_repaired', { rawLength: result.rawLength, finishKind: result.finishKind })
 
     const { candidates, rejections } = validateCandidates(result.output, turn, allowedTypes ? { allowedTypes } : {})
     for (const rejection of rejections) {

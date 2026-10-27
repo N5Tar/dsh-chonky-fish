@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { requeueDeadLetters } from '../diagnostics/maintenance.mjs'
 import { createCursorConsumer, createDemoConsumer } from '../delivery/consumer.js'
 import { handleEventsRequest, parseEventsQuery, readEvents } from '../delivery/query.js'
 import { createEventEngine } from '../engine.js'
@@ -164,6 +165,27 @@ test('演示消费者：可订阅 + 可重放（重放同一批不产生重复�
     const replay = await demo.poll()
     assert.equal(replay.processed, 0)
     assert.equal(demo.state.delivered, 2)
+  } finally {
+    cleanup()
+  }
+})
+
+test('运维：死信任务可以放回队列重跑（不清空已发布事件）', () => {
+  const { engine, cleanup } = makeEngine()
+  try {
+    engine.storeEvents([makeEvent()])
+    engine.db.prepare(
+      `INSERT INTO extraction_jobs
+         (job_id, session_id, turn, from_seq, to_seq, status, attempts, prompt_version, created_at, updated_at)
+       VALUES ('job-dead', 'session-a', 1, 2, 3, 'dead_letter', 3, 'v1', '2026-10-27T00:00:00Z', '2026-10-27T00:00:00Z')`,
+    ).run()
+    const moved = requeueDeadLetters(engine.db)
+    assert.equal(moved, 1)
+    const job = engine.db.prepare("SELECT status, attempts, last_error_code FROM extraction_jobs WHERE job_id = 'job-dead'").get()
+    assert.equal(job.status, 'pending')
+    assert.equal(Number(job.attempts), 0)
+    assert.equal(job.last_error_code, null)
+    assert.ok(engine.listEvents({}).length >= 1, '已发布事件不受影响')
   } finally {
     cleanup()
   }

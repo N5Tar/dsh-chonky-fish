@@ -131,6 +131,43 @@ export function validateAgainstSchema(value, schema) {
  */
 
 /**
+ * 模型经常在 JSON 前后夹散文/思考过程/``` 围栏。这里按括号配对切出第一个
+ * 完整的对象块（正确处理字符串内的引号与转义），切不出来就原样返回让 parse 失败。
+ * @param {unknown} text
+ * @returns {string}
+ */
+export function extractJsonCandidate(text) {
+  const trimmed = String(text ?? '').trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
+  const start = trimmed.indexOf('{')
+  if (start < 0) return trimmed
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let index = start; index < trimmed.length; index += 1) {
+    const ch = trimmed[index]
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '{') {
+      depth += 1
+    } else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) return trimmed.slice(start, index + 1)
+    }
+  }
+  return trimmed
+}
+
+/**
  * 第一层：把模型原始文本变成合法 JSON 并过 Schema。
  * @param {unknown} raw 模型返回的字符串或已解析对象
  * @returns {{ ok: true, output: any } | { ok: false, reason: string, detail: string, rejects: Array<object> }}
@@ -138,7 +175,7 @@ export function validateAgainstSchema(value, schema) {
 export function parseAndValidateOutput(raw) {
   let output = raw
   if (typeof raw === 'string') {
-    const text = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
+    const text = extractJsonCandidate(raw)
     try {
       output = JSON.parse(text)
     } catch (error) {

@@ -30,7 +30,8 @@ D. 同一句里语义重叠只抽最具体的一条，不要重复抽。
 E. 提问不产生表达事件（「你喜欢 Minecraft 吗」→ events=[]）。
 F. 指代不补全：「那个视频」就写「那个视频」，不要猜是哪一条。
 G. 一个 turn 最多 8 条事件；先抽最明确的，宁少勿编。
-H. 词表标注 target 必须填的类型，target 不能为空；其余类型 target 可以不填。`
+H. 词表标注 target 必须填的类型，target 不能为空；其余类型 target 可以不填。
+I. 回复的第一个字符必须是 {，不要输出思考过程、解释、前后缀文字，也不要包代码围栏。`
 
 function typeCatalog() {
   const lines = ['事件词表（type 一律写短名，不带 category 前缀）：']
