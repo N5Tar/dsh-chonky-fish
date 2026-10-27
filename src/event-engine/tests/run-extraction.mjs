@@ -380,6 +380,30 @@ await test('输出被截断（JSON 不闭合）→ 失败，但审计留下可�
   }
 })
 
+await test('timeExpression 不在原文里 → 丢弃该字段（不拒绝整条事件）', async () => {
+  const output = validOutput().replace('"timeExpression":"最近"', '"timeExpression":"下次"')
+  const env = setup({ responses: [output] })
+  try {
+    const summary = await env.runner.runOnce()
+    assert.equal(summary.succeeded, 1)
+    const event = env.engine.listEvents({})[0]
+    assert.equal(event.attributes.timeExpression, null, '编造的时间表达必须被丢弃')
+    assert.equal(event.sourceRefs[0].quote, '我最近很喜欢 Minecraft', '事件本身保留')
+  } finally {
+    env.cleanup()
+  }
+})
+
+await test('timeExpression 在原文里 → 保留', async () => {
+  const env = setup({ responses: [validOutput()] })
+  try {
+    await env.runner.runOnce()
+    assert.equal(env.engine.listEvents({})[0].attributes.timeExpression, '最近')
+  } finally {
+    env.cleanup()
+  }
+})
+
 /* ------------------------------------------------------------------ */
 
 const failed = results.filter((entry) => !entry.ok)

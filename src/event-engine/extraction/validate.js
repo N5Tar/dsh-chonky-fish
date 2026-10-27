@@ -267,6 +267,11 @@ export function validateCandidates(output, turn, options = {}) {
       reject('quote_not_found', raw.sourceQuote)
       continue
     }
+    // 时间表达也必须逐字出现在原文里，否则一律丢弃（模型会编「下次」这类词）。
+    const timeExpression =
+      typeof raw.timeExpression === 'string' && raw.timeExpression.length > 0 && record.text.includes(raw.timeExpression)
+        ? raw.timeExpression
+        : ''
 
     candidates.push({
       category: raw.category,
@@ -278,7 +283,7 @@ export function validateCandidates(output, turn, options = {}) {
         : { kind: raw.targetKind ?? 'other', value: raw.target.trim() },
       polarity: raw.polarity,
       modality: raw.modality,
-      timeExpression: raw.timeExpression ?? '',
+      timeExpression,
       sourceRef: {
         recordId: record.recordId,
         seq: record.seq,

@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { requeueDeadLetters } from '../diagnostics/maintenance.mjs'
+import { countDerived, purgeDerivedData, requeueAllJobs, requeueDeadLetters } from '../diagnostics/maintenance.mjs'
 import { createCursorConsumer, createDemoConsumer } from '../delivery/consumer.js'
 import { handleEventsRequest, parseEventsQuery, readEvents } from '../delivery/query.js'
 import { createEventEngine } from '../engine.js'
@@ -186,6 +186,36 @@ test('运维：死信任务可以放回队列重跑（不清空已发布事件�
     assert.equal(Number(job.attempts), 0)
     assert.equal(job.last_error_code, null)
     assert.ok(engine.listEvents({}).length >= 1, '已发布事件不受影响')
+  } finally {
+    cleanup()
+  }
+})
+
+test('运维：purge 派生数据 + requeue-all 用当前提示词版本重跑', async () => {
+  const { engine, cleanup } = makeEngine()
+  try {
+    engine.storeEvents([makeEvent(), makeEvent()])
+    engine.setConsumerCursor('demo:echo', 1)
+    await createDemoConsumer(engine).poll()
+    engine.db.prepare(
+      `INSERT INTO extraction_jobs
+         (job_id, session_id, turn, from_seq, to_seq, status, attempts, prompt_version, created_at, updated_at)
+       VALUES ('job-a', 'session-a', 1, 2, 3, 'succeeded', 1, 'v1', '2026-10-27T00:00:00Z', '2026-10-27T00:00:00Z')`,
+    ).run()
+    assert.ok(countDerived(engine.db).events > 0)
+
+    const purged = purgeDerivedData(engine.db)
+    assert.ok(purged.events >= 2)
+    assert.ok(purged.audits >= 0)
+    assert.ok(purged.consumers >= 1)
+    assert.equal(countDerived(engine.db).events, 0)
+
+    const moved = requeueAllJobs(engine.db, 'v2')
+    assert.equal(moved, 1)
+    const job = engine.db.prepare("SELECT status, attempts, prompt_version FROM extraction_jobs WHERE job_id = 'job-a'").get()
+    assert.equal(job.status, 'pending')
+    assert.equal(Number(job.attempts), 0)
+    assert.equal(job.prompt_version, 'v2')
   } finally {
     cleanup()
   }

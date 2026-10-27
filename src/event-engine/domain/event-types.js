@@ -14,7 +14,7 @@
 export const SCHEMA_VERSION = '1.0'
 export const EVENT_REGISTRY_VERSION = '1.0'
 /** 提示词/规则版本，进 dedupeKey，换版本即视为可重新提取。 */
-export const RULE_VERSION = 'v1'
+export const RULE_VERSION = 'v2'
 
 export const CATEGORIES = Object.freeze([
   'interaction',

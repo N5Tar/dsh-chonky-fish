@@ -7,7 +7,7 @@
 import { CATEGORIES, EVENT_TYPES, SCHEMA_VERSION, TARGET_KINDS, TYPES_BY_CATEGORY } from '../domain/event-types.js'
 
 /** 提示词/规则版本。进 dedupeKey 与 extraction_jobs 唯一键；改规则就换版本号。 */
-export const PROMPT_VERSION = 'v1'
+export const PROMPT_VERSION = 'v2'
 
 const ROLE_AND_RULES = `你是事件信息抽取器，不是大肥鱼，也不是聊天助手。
 你的任务：从指定的原始记录中提取 0..N 条明确表达的最小语义事件。
@@ -27,11 +27,19 @@ A. 负偏好不用 negated：「我不喜欢 X」= dislike_expressed + asserted 
 B. negated 只用于否定一个肯定陈述（「我没看那个视频」「我没说喜欢」）。
 C. 行为 + 评价拆两条：「我看了那个视频，挺好看的」= activity_reported + content_feedback_expressed，各自有自己的 sourceQuote。
 D. 同一句里语义重叠只抽最具体的一条，不要重复抽。
-E. 提问不产生表达事件（「你喜欢 Minecraft 吗」→ events=[]）。
+E. 区分「询问信息」和「邀约/请求」：
+   - 单纯询问信息、试探、反问（「你喜欢 Minecraft 吗」「这样行吗」）→ 不抽事件。
+   - 以问句形式发出的邀约（「要不要一起去」「想不想去逛逛」）→ interaction.invitation_expressed。
+   - 以问句形式提出的请求/愿望（「能多陪我一会儿吗」）→ goal.intention_expressed。
 F. 指代不补全：「那个视频」就写「那个视频」，不要猜是哪一条。
 G. 一个 turn 最多 8 条事件；先抽最明确的，宁少勿编。
 H. 词表标注 target 必须填的类型，target 不能为空；其余类型 target 可以不填。
-I. 回复的第一个字符必须是 {，不要输出思考过程、解释、前后缀文字，也不要包代码围栏。`
+I. 回复的第一个字符必须是 {，不要输出思考过程、解释、前后缀文字，也不要包代码围栏。
+J. 关于工具/系统能力的陈述（「我发不了评论」「系统给我的权限只够看和开页面」）不是自身状态，
+   不要抽成 state.self_state_expressed；确实说了做过什么才用 activity.activity_reported，否则忽略。
+K. 缺对象、又必须靠前几轮对话才能理解的极短陈述（「看完了」「我再试试」「想啊」）不抽；
+   除非同一 turn 里能明确找到对象。
+L. timeExpression 必须是原文里逐字出现的词（「最近」「昨天」）；原文没有就不填，不要换算或编造。`
 
 function typeCatalog() {
   const lines = ['事件词表（type 一律写短名，不带 category 前缀）：']

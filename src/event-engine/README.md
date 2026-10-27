@@ -5,7 +5,7 @@
 模块 0 只回答「信息里记录了什么」，不回答「该不该、喜不喜欢、人格是否成长」——
 后者属于模块 ①②③④⑤。每条事件都必须能回链到某条 DSH 会话日志记录并附原文引用。
 
-> 状态：**P0–P3 全部完成并已接入 index.js**（44 条用例，全部用 stub，不花 token）。
+> 状态：**P0–P3 全部完成并已接入 index.js**（47 条用例，全部用 stub，不花 token）。
 > 面板右上角「✨ 感知」按钮可查看事件；事件库 `$DSH_HOME/chonkyfish/events.db`。
 > 生效方式：重启 DSH（Host 半）→ 刷新页面（客户端半）。
 
@@ -119,8 +119,8 @@ fail-closed、按 seq/类型/时间/全文检索、`readEvent` 上下文窗口�
 ```bash
 npm run test:event-engine              # P0 契约 13/13
 npm run test:event-engine:pipeline     # P1 采集 13/13
-npm run test:event-engine:extraction   # P2 提取 12/12
-npm run test:event-engine:delivery     # P3 分发 6/6
+npm run test:event-engine:extraction   # P2 提取 14/14
+npm run test:event-engine:delivery     # P3 分发 7/7
 npm run test:event-engine:all
 ```
 
