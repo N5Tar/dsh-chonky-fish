@@ -8,7 +8,7 @@
 
 ## 特性
 
-- **自有面板**：侧栏「大肥鱼」入口 + 主面板聊天 UI（顶栏、消息流、无边框鱼鱼舞台、快捷 chips、钱包 / 人格弹窗）
+- **自有面板**：侧栏「大肥鱼」入口 + 主面板聊天 UI（顶栏、消息流、无边框鱼鱼舞台、快捷 chips、钱包 / 人格 / 感知弹窗）
 - **真实对话**：消息走 DSH Session，不是前端假回复；会话保存在 DSH 日志里，标准对话界面也能打开
 - **agent preset**：安装本插件即注册 `chonkyfish` preset（人格 + 通用工具），无需单独安装预设包
 - **通用工具**：bash / pwsh、文件读写与 glob/grep、后台任务、todo、web_search / web_fetch
@@ -17,6 +17,7 @@
 - **主题皮肤**：加载插件后把 DSH 的 14 个语义 token 之外、整套 `--dsw-static-*` 调色板重映射成小鱼塘配色（明暗主题都适配），卸载即恢复
 - **角色养成**：名字 / 补充人格设定、贝壳钱包与账本、6 套姿态互动（点击害羞、投喂、思考/开心/睡着）
 - **状态落盘**：名字、补充人格、钱包、账本保存在本机 JSON 文件 `$DSH_HOME/chonkyfish/state.json`（Host 通过带一次性 token 的本地路由读写），HTTP API 与嵌入式浏览器存储只作为缓存/降级
+- **事件感知（模块0）**：Host 侧监听 DSH 会话事件，把「小鱼塘 + chonkyfish」会话里每个 turn 交给该会话自己的模型抽取语义事件（说了喜欢 / 打算做 / 否认做过……），落 `$DSH_HOME/chonkyfish/events.db`，面板右上角「感知」可查看，每条都带原文引用与事实地位
 - **零外部请求**：插图与头像以 WebP data URI 内嵌在 `client.js` 里，不下载图片
 
 ## 安装
@@ -70,6 +71,7 @@ node build.mjs      # 从 src/original.html + src/runtime.js 生成 client.js
 - 聊天记录保存在本机 DSH Session（`$DSH_HOME/sessions`）
 - 名字、补充人格、钱包、账本和地方演示记录保存在本机文件 `$DSH_HOME/chonkyfish/state.json`，由 Host 半通过本地 `/chonkyfish/state` 路由读写；路由要求每次 Host 启动随机生成、注入到页面的 token
 - 浏览器 localStorage（`chonkyfish-mini-demo-v1`）仅作为缓存和降级；首次安装/更新后刷新一次页面以拿到新的文件存储 token
+- 「感知」事件保存在本机 SQLite 文件 `$DSH_HOME/chonkyfish/events.db`（只存抽取结果，原始对话仍在 DSH 会话日志里）；抽取会把该 turn 的对话原文发给当前配置的模型
 - 插件本身不访问外部网络；`web_search` / `web_fetch` 会走 DSH 配置的 Web 服务
 
 ## 仓库结构
@@ -82,6 +84,7 @@ build.mjs          # client.js 构建脚本
 src/original.html  # 融合版聊天 UI 设计稿（Shadow DOM 适配前）
 src/runtime.js     # 面板控制器（增量消息、鱼鱼姿态、钱包/人格）
 src/assets.json    # 6 套姿态 + 头像（WebP data URI）
+src/event-engine/  # 模块0：事件结构化引擎（采集 / 提取 / 分发，自带测试）
 locale/            # 插件列表显示名与描述（zh / en）
 icon.svg           # 插件图标
 ```

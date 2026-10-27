@@ -1,0 +1,468 @@
+{
+  "name": "大肥鱼模块 0 · V1 契约测试样本",
+  "schemaVersion": "1.0",
+  "note": "来源是对《模块0 V1 技术详细设计》§12.1 最小测试集按 V1 收窄范围（只做语言事件）改写。每条 case 的 modelOutput 模拟模型返回，用于校验「Schema + 登记表 + 原文锚定 + 事实地位」这一整层。",
+  "cases": [
+    {
+      "id": "small-talk",
+      "note": "寒暄不强制产出事件；events=[] 是正常结果",
+      "turn": {
+        "sessionId": "session-fix",
+        "turn": 1,
+        "observedAt": "2026-10-27T09:20:00.000Z",
+        "records": [
+          { "recordId": "session-fix:5", "seq": 5, "sourceKind": "user_message", "text": "哈哈哈" }
+        ]
+      },
+      "modelOutput": { "schemaVersion": "1.0", "events": [], "noEventReason": "small_talk" },
+      "expect": { "events": [] }
+    },
+    {
+      "id": "like-minecraft",
+      "note": "偏好表达 → reported，不是兴趣值",
+      "turn": {
+        "sessionId": "session-fix",
+        "turn": 3,
+        "observedAt": "2026-10-27T09:21:00.000Z",
+        "records": [
+          { "recordId": "session-fix:11", "seq": 11, "sourceKind": "user_message", "text": "我最近很喜欢 Minecraft" }
+        ]
+      },
+      "modelOutput": {
+        "schemaVersion": "1.0",
+        "events": [
+          {
+            "category": "preference",
+            "type": "like_expressed",
+            "action": "express_like",
+            "target": "Minecraft",
+            "targetKind": "object",
+            "polarity": "positive",
+            "modality": "asserted",
+            "sourceRecordId": "session-fix:11",
+            "sourceQuote": "我最近很喜欢 Minecraft",
+            "timeExpression": "最近"
+          }
+        ],
+        "noEventReason": null
+      },
+      "expect": {
+        "events": [
+          {
+            "type": "preference.like_expressed",
+            "evidenceStatus": "reported",
+            "polarity": "positive",
+            "actorRef": "owner",
+            "target": "Minecraft",
+            "quote": "我最近很喜欢 Minecraft"
+          }
+        ]
+      }
+    },
+    {
+      "id": "reported-activity",
+      "note": "自述看过视频 ≠ 工具验证事实",
+      "turn": {
+        "sessionId": "session-fix",
+        "turn": 5,
+        "observedAt": "2026-10-27T09:22:00.000Z",
+        "records": [
+          { "recordId": "session-fix:17", "seq": 17, "sourceKind": "user_message", "text": "我昨天看了视频" }
+        ]
+      },
+      "modelOutput": {
+        "schemaVersion": "1.0",
+        "events": [
+          {
+            "category": "activity",
+            "type": "activity_reported",
+            "target": "视频",
+            "targetKind": "content",
+            "polarity": "neutral",
+            "modality": "asserted",
+            "sourceRecordId": "session-fix:17",
+            "sourceQuote": "我昨天看了视频",
+            "timeExpression": "昨天"
+          }
+        ],
+        "noEventReason": null
+      },
+      "expect": {
+        "events": [
+          {
+            "type": "activity.activity_reported",
+            "evidenceStatus": "reported",
+            "polarity": "neutral",
+            "actorRef": "owner",
+            "target": "视频",
+            "quote": "我昨天看了视频"
+          }
+        ]
+      }
+    },
+    {
+      "id": "intention-not-execution",
+      "note": "意图 → intent，不能生成已经观看",
+      "turn": {
+        "sessionId": "session-fix",
+        "turn": 7,
+        "observedAt": "2026-10-27T09:23:00.000Z",
+        "records": [
+          { "recordId": "session-fix:23", "seq": 23, "sourceKind": "user_message", "text": "明天想看 B 站" }
+        ]
+      },
+      "modelOutput": {
+        "schemaVersion": "1.0",
+        "events": [
+          {
+            "category": "goal",
+            "type": "intention_expressed",
+            "target": "B 站",
+            "targetKind": "content",
+            "polarity": "positive",
+            "modality": "intended",
+            "sourceRecordId": "session-fix:23",
+            "sourceQuote": "明天想看 B 站",
+            "timeExpression": "明天"
+          }
+        ],
+        "noEventReason": null
+      },
+      "expect": {
+        "events": [
+          {
+            "type": "goal.intention_expressed",
+            "evidenceStatus": "intent",
+            "polarity": "positive",
+            "actorRef": "owner",
+            "target": "B 站",
+            "quote": "明天想看 B 站"
+          }
+        ]
+      }
+    },
+    {
+      "id": "negated-statement",
+      "note": "否定陈述 → negated，且不得升级为已发生",
+      "turn": {
+        "sessionId": "session-fix",
+        "turn": 9,
+        "observedAt": "2026-10-27T09:24:00.000Z",
+        "records": [
+          { "recordId": "session-fix:29", "seq": 29, "sourceKind": "user_message", "text": "我没看那个视频" }
+        ]
+      },
+      "modelOutput": {
+        "schemaVersion": "1.0",
+        "events": [
+          {
+            "category": "activity",
+            "type": "activity_reported",
+            "target": "那个视频",
+            "targetKind": "content",
+            "polarity": "negative",
+            "modality": "negated",
+            "sourceRecordId": "session-fix:29",
+            "sourceQuote": "我没看那个视频"
+          }
+        ],
+        "noEventReason": null
+      },
+      "expect": {
+        "events": [
+          {
+            "type": "activity.activity_reported",
+            "evidenceStatus": "negated",
+            "polarity": "negative",
+            "actorRef": "owner",
+            "target": "那个视频",
+            "quote": "我没看那个视频"
+          }
+        ]
+      }
+    },
+    {
+      "id": "two-events-one-sentence",
+      "note": "一句里两个不同含义 → 两条事件，各自有原文引用",
+      "turn": {
+        "sessionId": "session-fix",
+        "turn": 11,
+        "observedAt": "2026-10-27T09:25:00.000Z",
+        "records": [
+          {
+            "recordId": "session-fix:35",
+            "seq": 35,
+            "sourceKind": "user_message",
+            "text": "最近很喜欢 Minecraft，不过昨天那个建筑视频挺无聊。"
+          }
+        ]
+      },
+      "modelOutput": {
+        "schemaVersion": "1.0",
+        "events": [
+          {
+            "category": "preference",
+            "type": "like_expressed",
+            "action": "express_like",
+            "target": "Minecraft",
+            "targetKind": "object",
+            "polarity": "positive",
+            "modality": "asserted",
+            "sourceRecordId": "session-fix:35",
+            "sourceQuote": "最近很喜欢 Minecraft",
+            "timeExpression": "最近"
+          },
+          {
+            "category": "preference",
+            "type": "content_feedback_expressed",
+            "action": "evaluate_content",
+            "target": "昨天那个建筑视频",
+            "targetKind": "content",
+            "polarity": "negative",
+            "modality": "asserted",
+            "sourceRecordId": "session-fix:35",
+            "sourceQuote": "昨天那个建筑视频挺无聊",
+            "timeExpression": "昨天"
+          }
+        ],
+        "noEventReason": null
+      },
+      "expect": {
+        "events": [
+          {
+            "type": "preference.like_expressed",
+            "evidenceStatus": "reported",
+            "polarity": "positive",
+            "actorRef": "owner",
+            "target": "Minecraft",
+            "quote": "最近很喜欢 Minecraft"
+          },
+          {
+            "type": "preference.content_feedback_expressed",
+            "evidenceStatus": "reported",
+            "polarity": "negative",
+            "actorRef": "owner",
+            "target": "昨天那个建筑视频",
+            "quote": "昨天那个建筑视频挺无聊"
+          }
+        ]
+      }
+    },
+    {
+      "id": "assistant-persona-source",
+      "note": "角色自述主体必须是 persona，不是 owner",
+      "turn": {
+        "sessionId": "session-fix",
+        "turn": 13,
+        "observedAt": "2026-10-27T09:26:00.000Z",
+        "records": [
+          { "recordId": "session-fix:41", "seq": 41, "sourceKind": "assistant_message", "text": "本鲸想学画画！" }
+        ]
+      },
+      "modelOutput": {
+        "schemaVersion": "1.0",
+        "events": [
+          {
+            "category": "goal",
+            "type": "intention_expressed",
+            "target": "画画",
+            "targetKind": "activity",
+            "polarity": "positive",
+            "modality": "intended",
+            "sourceRecordId": "session-fix:41",
+            "sourceQuote": "想学画画"
+          }
+        ],
+        "noEventReason": null
+      },
+      "expect": {
+        "events": [
+          {
+            "type": "goal.intention_expressed",
+            "evidenceStatus": "intent",
+            "actorRef": "persona:dafeiyu",
+            "target": "画画",
+            "quote": "想学画画"
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate-in-one-output",
+      "note": "同一输出里重复的候选只留一条（跨批幂等由 events 表唯一键兜底）",
+      "turn": {
+        "sessionId": "session-fix",
+        "turn": 15,
+        "observedAt": "2026-10-27T09:27:00.000Z",
+        "records": [
+          { "recordId": "session-fix:47", "seq": 47, "sourceKind": "user_message", "text": "我喜欢 Minecraft" }
+        ]
+      },
+      "modelOutput": {
+        "schemaVersion": "1.0",
+        "events": [
+          {
+            "category": "preference",
+            "type": "like_expressed",
+            "target": "Minecraft",
+            "polarity": "positive",
+            "modality": "asserted",
+            "sourceRecordId": "session-fix:47",
+            "sourceQuote": "我喜欢 Minecraft"
+          },
+          {
+            "category": "preference",
+            "type": "like_expressed",
+            "target": "Minecraft",
+            "polarity": "positive",
+            "modality": "asserted",
+            "sourceRecordId": "session-fix:47",
+            "sourceQuote": "我喜欢 Minecraft"
+          }
+        ],
+        "noEventReason": null
+      },
+      "expect": {
+        "events": [
+          {
+            "type": "preference.like_expressed",
+            "evidenceStatus": "reported",
+            "polarity": "positive",
+            "actorRef": "owner",
+            "target": "Minecraft",
+            "quote": "我喜欢 Minecraft"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-type-rejected",
+      "note": "未登记类型必须拒绝（词表外的一律不采信）",
+      "turn": {
+        "sessionId": "session-fix",
+        "turn": 17,
+        "observedAt": "2026-10-27T09:28:00.000Z",
+        "records": [
+          { "recordId": "session-fix:53", "seq": 53, "sourceKind": "user_message", "text": "我打开了 B 站首页" }
+        ]
+      },
+      "modelOutput": {
+        "schemaVersion": "1.0",
+        "events": [
+          {
+            "category": "preference",
+            "type": "page_opened",
+            "target": "B 站首页",
+            "polarity": "neutral",
+            "modality": "asserted",
+            "sourceRecordId": "session-fix:53",
+            "sourceQuote": "我打开了 B 站首页"
+          }
+        ],
+        "noEventReason": null
+      },
+      "expect": { "events": [], "rejectCodes": ["unknown_type"] }
+    },
+    {
+      "id": "quote-not-in-record",
+      "note": "引文必须逐字出现在指定原始记录里，否则拒绝",
+      "turn": {
+        "sessionId": "session-fix",
+        "turn": 19,
+        "observedAt": "2026-10-27T09:29:00.000Z",
+        "records": [
+          { "recordId": "session-fix:59", "seq": 59, "sourceKind": "user_message", "text": "我最近很喜欢 Minecraft" }
+        ]
+      },
+      "modelOutput": {
+        "schemaVersion": "1.0",
+        "events": [
+          {
+            "category": "preference",
+            "type": "like_expressed",
+            "target": "动物",
+            "polarity": "positive",
+            "modality": "asserted",
+            "sourceRecordId": "session-fix:59",
+            "sourceQuote": "我最近很喜欢动物"
+          }
+        ],
+        "noEventReason": null
+      },
+      "expect": { "events": [], "rejectCodes": ["quote_not_found"] }
+    },
+    {
+      "id": "invalid-json",
+      "note": "非法 JSON 直接失败入队，不接收散文、不猜内容",
+      "turn": {
+        "sessionId": "session-fix",
+        "turn": 21,
+        "observedAt": "2026-10-27T09:30:00.000Z",
+        "records": [
+          { "recordId": "session-fix:65", "seq": 65, "sourceKind": "user_message", "text": "我最近很喜欢 Minecraft" }
+        ]
+      },
+      "modelOutputRaw": "{ \"schemaVersion\": \"1.0\", \"events\": [ { ",
+      "expect": { "events": [], "rejectCodes": ["invalid_json"] }
+    },
+    {
+      "id": "smuggle-tool-verified",
+      "note": "模型夹带 toolVerified / eventId 之类字段必须被 Schema 拒绝（不变量 I1）",
+      "turn": {
+        "sessionId": "session-fix",
+        "turn": 23,
+        "observedAt": "2026-10-27T09:31:00.000Z",
+        "records": [
+          { "recordId": "session-fix:71", "seq": 71, "sourceKind": "user_message", "text": "我昨天看完那个视频了" }
+        ]
+      },
+      "modelOutput": {
+        "schemaVersion": "1.0",
+        "events": [
+          {
+            "category": "activity",
+            "type": "activity_reported",
+            "target": "那个视频",
+            "polarity": "positive",
+            "modality": "asserted",
+            "sourceRecordId": "session-fix:71",
+            "sourceQuote": "我昨天看完那个视频了",
+            "toolVerified": true,
+            "eventId": "forged-1"
+          }
+        ],
+        "noEventReason": null
+      },
+      "expect": { "events": [], "rejectCodes": ["extra_property"] }
+    },
+    {
+      "id": "forged-actor",
+      "note": "主体由来源决定：模型把用户话语伪装成工具观测必须拒绝",
+      "turn": {
+        "sessionId": "session-fix",
+        "turn": 25,
+        "observedAt": "2026-10-27T09:32:00.000Z",
+        "records": [
+          { "recordId": "session-fix:77", "seq": 77, "sourceKind": "user_message", "text": "我昨天看了那个视频" }
+        ]
+      },
+      "modelOutput": {
+        "schemaVersion": "1.0",
+        "events": [
+          {
+            "category": "activity",
+            "type": "activity_reported",
+            "actor": "tool:browser",
+            "target": "那个视频",
+            "polarity": "neutral",
+            "modality": "asserted",
+            "sourceRecordId": "session-fix:77",
+            "sourceQuote": "我昨天看了那个视频"
+          }
+        ],
+        "noEventReason": null
+      },
+      "expect": { "events": [], "rejectCodes": ["actor_mismatch"] }
+    }
+  ]
+}

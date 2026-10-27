@@ -260,6 +260,7 @@ function mountChonkyFishPage(wrap, chat) {
   var modalTitle = $('modal-title')
   var walletPanel = $('wallet-panel')
   var settingsPanel = $('settings-panel')
+  var sensePanel = $('sense-panel')
   var modalKind = null
   var modalReturnFocus = null
 
@@ -267,12 +268,16 @@ function mountChonkyFishPage(wrap, chat) {
     if (!modal) return
     modalKind = kind
     modalReturnFocus = focusedNode()
-    if (modalTitle) modalTitle.textContent = kind === 'settings' ? '人格设定' : '鱼鱼的零花钱'
+    if (modalTitle) {
+      modalTitle.textContent = kind === 'settings' ? '人格设定' : kind === 'sense' ? '鱼鱼的感知' : '鱼鱼的零花钱'
+    }
     if (walletPanel) walletPanel.hidden = kind !== 'wallet'
     if (settingsPanel) settingsPanel.hidden = kind !== 'settings'
+    if (sensePanel) sensePanel.hidden = kind !== 'sense'
     modal.classList.add('open')
     if (kind === 'settings') renderPersona()
     if (kind === 'wallet') renderWallet()
+    if (kind === 'sense') renderSense()
     focusNode($('modal-x'))
   }
   function closeModal() {
@@ -307,6 +312,152 @@ function mountChonkyFishPage(wrap, chat) {
     closeModal()
   }
   document.addEventListener('keydown', onModalKeydown)
+
+  /* --------------------------------------------------------- sense (模块0) */
+
+  var senseList = $('sense-list')
+  var senseCount = $('sense-count')
+  var senseRefresh = $('sense-refresh')
+  var senseButton = $('sense-button')
+  var senseRequest = 0
+
+  var SENSE_TYPE_LABELS = {
+    'interaction.compliment_expressed': '夸奖',
+    'interaction.invitation_expressed': '邀请',
+    'interaction.thanks_expressed': '道谢',
+    'preference.like_expressed': '说喜欢',
+    'preference.dislike_expressed': '说不喜欢',
+    'preference.content_feedback_expressed': '评价内容',
+    'activity.activity_reported': '说做了什么',
+    'environment.content_update_reported': '提到更新',
+    'state.self_state_expressed': '说自己的状态',
+    'goal.intention_expressed': '说想做',
+    'goal.plan_expressed': '说计划',
+    'goal.goal_cancelled': '取消目标'
+  }
+
+  function senseLabel(type) {
+    return SENSE_TYPE_LABELS[type] || type
+  }
+  function senseEvidenceLabel(status) {
+    if (status === 'reported') return '说是这样'
+    if (status === 'intent') return '打算'
+    if (status === 'hypothetical') return '假设'
+    if (status === 'negated') return '否认'
+    return '不确定'
+  }
+  function senseActorLabel(actorRef) {
+    return actorRef === 'persona:dafeiyu' ? '鱼鱼' : '主人'
+  }
+  function senseClock(iso) {
+    try {
+      return new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+    } catch (error) {
+      return ''
+    }
+  }
+
+  function senseCard(event) {
+    var card = document.createElement('div')
+    card.className = 'cf-event'
+
+    var head = document.createElement('div')
+    head.className = 'cf-event-head'
+    var type = document.createElement('span')
+    type.className = 'cf-event-type'
+    type.textContent = senseLabel(event.type)
+    var tag = document.createElement('span')
+    tag.className = 'cf-tag ' + (event.evidenceStatus || 'uncertain')
+    tag.textContent = senseEvidenceLabel(event.evidenceStatus)
+    head.appendChild(type)
+    head.appendChild(tag)
+    card.appendChild(head)
+
+    if (event.quote) {
+      var quote = document.createElement('p')
+      quote.className = 'cf-event-quote'
+      quote.textContent = '“' + event.quote + '”'
+      card.appendChild(quote)
+    }
+
+    var meta = document.createElement('div')
+    meta.className = 'cf-event-meta'
+    var actor = document.createElement('span')
+    actor.textContent = senseActorLabel(event.actorRef)
+    var clock = document.createElement('span')
+    clock.textContent = senseClock(event.observedAt)
+    meta.appendChild(actor)
+    meta.appendChild(clock)
+    if (event.target) {
+      var target = document.createElement('span')
+      target.textContent = '对象：' + event.target
+      meta.appendChild(target)
+    }
+    card.appendChild(meta)
+    return card
+  }
+
+  function renderSenseEvents(payload) {
+    if (!senseList) return
+    while (senseList.firstChild) senseList.removeChild(senseList.firstChild)
+    var events = payload && Array.isArray(payload.events) ? payload.events : []
+    if (senseCount) {
+      var total = payload && payload.stats && typeof payload.stats.events === 'number' ? payload.stats.events : events.length
+      senseCount.textContent = String(total)
+    }
+    if (events.length === 0) {
+      var empty = document.createElement('div')
+      empty.className = 'cf-sense-empty'
+      empty.textContent = '还没有感知到事件～先和鱼鱼聊两句吧'
+      senseList.appendChild(empty)
+      return
+    }
+    // 最新的排在最上面
+    for (var index = events.length - 1; index >= 0; index -= 1) {
+      senseList.appendChild(senseCard(events[index]))
+    }
+  }
+
+  function renderSenseError(message) {
+    if (!senseList) return
+    while (senseList.firstChild) senseList.removeChild(senseList.firstChild)
+    var box = document.createElement('div')
+    box.className = 'cf-sense-error'
+    box.textContent = message
+    senseList.appendChild(box)
+  }
+
+  function renderSense() {
+    if (!senseList) return
+    if (!stateBridge || typeof fetch !== 'function') {
+      renderSenseError('感知服务还没连上：刷新一下页面拿到新的令牌后再试。')
+      return
+    }
+    var request = ++senseRequest
+    if (!senseList.firstChild) {
+      var loading = document.createElement('div')
+      loading.className = 'cf-sense-empty'
+      loading.textContent = '正在翻鱼鱼的记忆…'
+      senseList.appendChild(loading)
+    }
+    var endpoint = (stateBridge.eventsEndpoint || '/chonkyfish/events') + '?limit=30'
+    fetch(endpoint, {
+      headers: { 'x-chonkyfish-token': stateBridge.token },
+      cache: 'no-store'
+    }).then(function (response) {
+      if (!response.ok) throw new Error('HTTP ' + response.status)
+      return response.json()
+    }).then(function (payload) {
+      if (request !== senseRequest) return
+      renderSenseEvents(payload)
+    }).catch(function () {
+      if (request !== senseRequest) return
+      renderSenseError('读取感知事件失败：事件引擎可能还没启动（重启 DSH 或稍后再试）。')
+    })
+  }
+
+  if (senseButton) senseButton.addEventListener('click', function () { openModal('sense') })
+  if (senseRefresh) senseRefresh.addEventListener('click', function () { renderSense() })
 
   /* --------------------------------------------------------------- stage */
 

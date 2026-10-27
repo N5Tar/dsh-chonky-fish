@@ -227,6 +227,25 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
 .dfy-confirm-actions #dfy-confirm-cancel{background:#eef6ff;color:#5b90c8}
 .dfy-confirm-actions #dfy-confirm-ok{background:linear-gradient(135deg,#6cb2f4,#4f93dc);color:#fff;font-weight:700}
 
+/* ===== 功能层：感知（模块0 事件流）===== */
+.cf-refresh{border:1px solid #d9e9fa;background:#f6faff;color:#5b90c8;border-radius:10px;padding:7px 12px;font-size:12px;font-weight:650}
+.cf-refresh:hover{background:#e9f4ff}
+.cf-sense-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:4px 0 12px;color:#7b96b5;font-size:12px}
+.cf-sense-head b{color:#31577f;font-size:14px;margin-right:4px}
+.cf-sense-list{display:grid;gap:9px;max-height:340px;overflow:auto;padding:2px 2px 2px 0}
+.cf-event{border:1px solid #e9f2fc;border-radius:14px;padding:11px 13px;background:#fbfdff}
+.cf-event-head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:#5b7b9e}
+.cf-event-type{font-weight:750;color:#3f6f9f}
+.cf-event-quote{margin:7px 0 0;padding:8px 10px;background:#f2f8ff;border-radius:10px;font-size:12px;color:#4b6f93;line-height:1.75;word-break:break-word}
+.cf-event-meta{margin-top:7px;font-size:11px;color:#a9bcd2;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.cf-tag{display:inline-flex;align-items:center;border-radius:99px;padding:2px 9px;font-size:10px;font-weight:750}
+.cf-tag.reported{background:#eaf4ff;color:#4b8fd0}
+.cf-tag.intent{background:#eafaf1;color:#4a9b74}
+.cf-tag.hypothetical{background:#fdf6e6;color:#b58a3c}
+.cf-tag.negated{background:#fdeeee;color:#c07070}
+.cf-tag.uncertain{background:#f2f0fa;color:#7d74b8}
+.cf-sense-empty{color:#a9bcd2;font-size:12px;text-align:center;padding:24px 0;line-height:1.9}
+.cf-sense-error{color:#c07070;font-size:12px;background:#fdf0f0;border-radius:11px;padding:11px 13px;line-height:1.8}
 </style>
 </head>
 <body>
@@ -245,6 +264,7 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
 <symbol id="i-wallet" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="15" rx="3"/><path d="M3 9V6a3 3 0 0 1 3-3h11"/><path d="M17 14h4"/></symbol>
 <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.8 8.2c0 5.6-8.8 11.3-8.8 11.3S3.2 13.8 3.2 8.2a4.8 4.8 0 0 1 8.8-2.4 4.8 4.8 0 0 1 8.8 2.4Z"/></symbol>
 <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></symbol>
+<symbol id="i-spark" viewBox="0 0 24 24"><path d="M11 3l1.7 5.1L18 10l-5.3 1.9L11 17l-1.7-5.1L4 10l5.3-1.9z"/><path d="M18 16l.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7z"/></symbol>
 <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
 </svg>
 <div class="app">
@@ -254,6 +274,7 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
       <div class="top-actions">
         <span class="presence-pill"><span class="presence-dot"></span><span id="presence-top">鱼鱼在家</span></span>
         <button class="top-action" id="wallet-button" type="button"><span>🐚</span> <span id="top-balance">128</span> 贝壳</button>
+        <button class="top-action icon-only" id="sense-button" type="button" aria-label="查看鱼鱼的感知"><svg class="icon"><use href="#i-spark"/></svg></button>
         <button class="top-action" id="settings-button" type="button"><svg class="icon small"><use href="#i-gear"/></svg>设置</button>
         <button class="top-action icon-only hide-narrow" id="info-button" type="button" aria-label="关于本界面"><svg class="icon"><use href="#i-info"/></svg></button>
       </div>
@@ -311,6 +332,11 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
       <div class="cf-field"><label for="fish-prompt">补充人格设定</label><textarea id="fish-prompt" rows="6" placeholder="例如：你是一只蓝色的、喜欢吃白饭的大肥鱼，嘴硬心软，经常想摸鱼……"></textarea><small>基础人格由 DSH 的「大肥鱼」agent preset 提供；这里的补充设定会在新会话的首条消息里发送给模型。</small></div>
       <div class="cf-note">鱼鱼会话保存在专用的「小鱼塘」工作区（DSH 主目录下），不会混进你的项目会话。名字、人格、钱包和账本保存在本机文件 $DSH_HOME/chonkyfish/state.json。</div>
       <div class="cf-actions"><button class="cf-ghost" type="button" id="reset-persona">恢复默认</button><button class="primary" type="button" id="save-persona">保存</button></div>
+    </div>
+    <div class="cf-section" id="sense-panel" hidden>
+      <div class="cf-sense-head"><span>鱼鱼从对话里感知到的事件：<b id="sense-count">0</b>条</span><button class="cf-refresh" id="sense-refresh" type="button">刷新</button></div>
+      <div class="cf-sense-list" id="sense-list"></div>
+      <div class="cf-note">🔒 每条事件都会回链到你和鱼鱼对话里的原话（「说了什么 / 打算什么 / 否认什么」），存在本机 $DSH_HOME/chonkyfish/events.db，不改变人格和钱包。</div>
     </div>
   </section>
 </div>

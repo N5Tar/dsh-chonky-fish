@@ -20,6 +20,9 @@ import { join } from 'node:path'
 const FISH_PRESET = 'chonkyfish'
 const FULL_ACCESS = 'danger-full-access'
 const STATE_ROUTE = '/chonkyfish/state'
+const EVENTS_ROUTE = '/chonkyfish/events'
+const EXTRACT_TICK_MS = 5000
+const EXTRACT_BATCH = 2
 const STATE_LIMIT_BYTES = 1024 * 1024
 
 export const inject = ['permissionPresets', 'agents', 'agentPresets', 'webServer']
@@ -83,7 +86,7 @@ export function apply(ctx) {
     table.push({
       kind: 'script',
       placement: 'body',
-      text: 'window.__CHONKYFISH_STATE__ = ' + JSON.stringify({ token, endpoint: STATE_ROUTE }) + ';',
+      text: 'window.__CHONKYFISH_STATE__ = ' + JSON.stringify({ token, endpoint: STATE_ROUTE, eventsEndpoint: EVENTS_ROUTE }) + ';',
     })
   })
 
@@ -186,4 +189,118 @@ export function apply(ctx) {
       void task
     }
   }, 'chonkyfish: pond directory')
+
+  // 事件引擎（模块0）：采集 → 提取 → 查询。任何失败都不许影响面板本身。
+  void startEventEngine(ctx, { home, token, warn })
+}
+
+let runningEngine = null
+
+function service(ctx, name) {
+  try {
+    return typeof ctx.get === 'function' ? ctx.get(name) : undefined
+  } catch (error) {
+    return undefined
+  }
+}
+
+/**
+ * 启动模块0事件引擎。故意用动态 import + 整段 try/catch：
+ * 事件引擎挂了，鱼鱼面板和聊天也必须照常工作。
+ */
+async function startEventEngine(ctx, { home, token, warn }) {
+  try {
+    const [{ createEventEngine, FISH_PRESET }, { handleEventsRequest }] = await Promise.all([
+      import('./src/event-engine/engine.js'),
+      import('./src/event-engine/delivery/query.js'),
+    ])
+
+    const stateDir = join(home, 'chonkyfish')
+    await mkdir(stateDir, { recursive: true })
+    // 热重载可能重复调用 apply：先关掉上一只引擎，避免两条连接抢同一个库。
+    if (runningEngine) {
+      try {
+        runningEngine.close()
+      } catch (ignored) {
+        /* already gone */
+      }
+      runningEngine = null
+    }
+    const engine = createEventEngine({
+      file: join(stateDir, 'events.db'),
+      pondDir: join(home, '小鱼塘'),
+      preset: FISH_PRESET,
+      logger: ctx.logger,
+    })
+    runningEngine = engine
+    ctx.effect(() => () => {
+      if (runningEngine === engine) runningEngine = null
+      engine.close()
+    }, 'chonkyfish: event engine')
+
+    ctx.effect(() => ctx.webServer.register({
+      kind: 'exact',
+      path: EVENTS_ROUTE,
+      handler: (request, response) => {
+        if (request.method !== 'GET' && request.method !== 'HEAD') {
+          response.writeHead(405)
+          response.end()
+          return
+        }
+        const result = handleEventsRequest({ engine, headers: request.headers, url: request.url, token })
+        const body = JSON.stringify(result.body)
+        response.writeHead(result.status, { 'content-type': 'application/json; charset=utf-8' })
+        response.end(request.method === 'HEAD' ? undefined : body)
+      },
+    }), 'chonkyfish: events route')
+
+    // 采集：所有会话事件都经过 feed，由引擎用「(小鱼塘, chonkyfish)」联合判断过滤。
+    ctx.on('session/event', (session, event) => {
+      engine.feed(session, event)
+    })
+
+    const llm = service(ctx, 'llm')
+    const sessionQuery = service(ctx, 'sessionQuery')
+    if (llm && sessionQuery) {
+      const [{ createExtractor, resolveModelFromId }, { createExtractionRunner }] = await Promise.all([
+        import('./src/event-engine/extraction/extractor.js'),
+        import('./src/event-engine/extraction/runner.js'),
+      ])
+      const extractor = createExtractor({
+        llm,
+        // 模型 = 该鱼鱼会话自己的模型（preset 决定）；会话拿不到才退默认选择。
+        resolveModel: (modelId) => resolveModelFromId(modelId, defaultModelSelection(ctx)),
+        logger: ctx.logger,
+      })
+      const runner = createExtractionRunner({ engine, extractor, sessionQuery, logger: ctx.logger })
+      let running = false
+      const timer = setInterval(() => {
+        if (running) return
+        running = true
+        runner.runOnce({ limit: EXTRACT_BATCH })
+          .catch((error) => warn('[chonkyfish] 提取轮询失败', error))
+          .finally(() => {
+            running = false
+          })
+      }, EXTRACT_TICK_MS)
+      ctx.effect(() => () => clearInterval(timer), 'chonkyfish: extraction loop')
+    } else {
+      warn('[chonkyfish] 缺少 llm/sessionQuery，事件引擎只采集不提取')
+    }
+  } catch (error) {
+    warn('[chonkyfish] 事件引擎启动失败（面板不受影响）', error)
+  }
+}
+
+function defaultModelSelection(ctx) {
+  try {
+    const serviceRef = service(ctx, 'agentDefaultModel')
+    const selection = serviceRef && serviceRef.currentSelection()
+    if (selection && selection.provider && selection.model) {
+      return { provider: selection.provider, model: selection.model }
+    }
+  } catch (error) {
+    /* fall through */
+  }
+  return { provider: '', model: '' }
 }
