@@ -97,6 +97,8 @@ await test('paths: 所有文件都在 home 下，工作区在 home/小鱼塘', (
     state: join(home, FILES.state),
     proactive: join(home, FILES.proactive),
     events: join(home, FILES.events),
+    diaryState: join(home, FILES.diaryState),
+    diary: join(home, '日记'),
     workspace: join(home, WORKSPACE_DIR),
   })
   // 没有任何 legacy 路径字段
@@ -116,6 +118,7 @@ await test('layout: 建 home/工作区目录和默认 config.json，不碰旧路
     assert.equal(layout.workspace, join(workspace.home, WORKSPACE_DIR))
     assert.equal(existsSync(workspace.home), true)
     assert.equal(existsSync(join(workspace.home, WORKSPACE_DIR)), true)
+    assert.equal(existsSync(resources.paths.diary), true)
     assert.equal(existsSync(resources.paths.config), true)
     // 规划里不包含旧 $DSH_HOME/小鱼塘：不会被创建/迁移
     assert.equal(existsSync(join(workspace.dshHome, WORKSPACE_DIR)), false)
@@ -123,6 +126,8 @@ await test('layout: 建 home/工作区目录和默认 config.json，不碰旧路
     assert.equal(config.version, VERSIONS.config)
     assert.equal(config.proactive.enabled, DEFAULT_CONFIG.proactive.enabled)
     assert.equal(config.eventEngine.extractTickMs, DEFAULT_CONFIG.eventEngine.extractTickMs)
+    assert.equal(config.diary.schedule.hour, 20)
+    assert.equal(config.diary.schedule.minute, 0)
   } finally {
     workspace.cleanup()
   }
@@ -173,6 +178,12 @@ await test('config: 文件缺失/坏 JSON 时回退默认值', () => {
       version: VERSIONS.config,
       proactive: { enabled: true },
       eventEngine: { enabled: true, extractTickMs: 5000, extractBatch: 2, maxRecordsPerTurn: 400 },
+      diary: {
+        enabled: true,
+        enabledPresets: [PRESET],
+        maxContentChars: 50000,
+        schedule: { enabled: true, hour: 20, minute: 0, timezone: '', catchUp: true },
+      },
     })))
     mkdirSync(workspace.home, { recursive: true })
     writeFileSync(resources.paths.config, '{not-json', 'utf8')
@@ -207,17 +218,50 @@ await test('config: 越界/非法字段被 clamp 或回退', () => {
   }
 })
 
+await test('config: diary 字段消毒 / clamp / 时区校验', () => {
+  const workspace = makeHome()
+  try {
+    mkdirSync(workspace.home, { recursive: true })
+    writeFileSync(
+      createResources({ homeRoot: workspace.dshHome }).paths.config,
+      JSON.stringify({
+        diary: {
+          enabled: 'yes',
+          enabledPresets: ['chonkyfish', '  ', 42, 'chonkyfish', 'other'],
+          maxContentChars: 999999,
+          schedule: { enabled: false, hour: 99, minute: -1, timezone: 'Not/AZone', catchUp: 'no' },
+        },
+      }),
+      'utf8',
+    )
+    const config = createResources({ homeRoot: workspace.dshHome }).getConfig()
+    assert.equal(config.diary.enabled, true)
+    assert.deepEqual(config.diary.enabledPresets, ['chonkyfish', 'other'])
+    assert.equal(config.diary.maxContentChars, 200000)
+    assert.equal(config.diary.schedule.enabled, false)
+    assert.equal(config.diary.schedule.hour, 23)
+    assert.equal(config.diary.schedule.minute, 0)
+    assert.equal(config.diary.schedule.timezone, '')
+    assert.equal(config.diary.schedule.catchUp, true)
+  } finally {
+    workspace.cleanup()
+  }
+})
+
 await test('config: updateConfig 深合并并原子落盘，重新读取可见', async () => {
   const workspace = makeHome()
   try {
     const resources = createResources({ homeRoot: workspace.dshHome })
     await resources.ensureLayout()
-    const next = await resources.updateConfig({ proactive: { enabled: false }, eventEngine: { extractBatch: 3 } })
+    const next = await resources.updateConfig({ proactive: { enabled: false }, eventEngine: { extractBatch: 3 }, diary: { schedule: { hour: 21 } } })
     assert.equal(next.proactive.enabled, false)
     assert.equal(next.eventEngine.extractBatch, 3)
+    assert.equal(next.diary.schedule.hour, 21)
+    assert.equal(next.diary.schedule.minute, 0)
     const reopened = createResources({ homeRoot: workspace.dshHome })
     assert.equal(reopened.getConfig().proactive.enabled, false)
     assert.equal(reopened.getConfig().eventEngine.extractBatch, 3)
+    assert.equal(reopened.getConfig().diary.schedule.hour, 21)
     // 落盘仍是合法 JSON（2 空格缩进 + 换行）
     const raw = readFileSync(resources.paths.config, 'utf8')
     assert.ok(raw.endsWith('\n'))

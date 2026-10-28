@@ -20,7 +20,9 @@ $DSH_HOME/chonkyfish/
   config.json       可编辑配置（见下）
   state.json        面板状态（名字 / 补充人格 / 钱包 / 账本 / 演示对话）
   proactive.json    主动消息运行态（activeSessionId、发送计数、最近记录）
+  diary.json        日记提醒运行态（lastNudgeDate / 最近一次结果）
   events.db         模块0 事件库（SQLite，伴随 -wal/-shm）
+  日记/             日记正文（一天一个 YYYY-MM-DD.md）
   小鱼塘/           鱼鱼工作区（DSH 会话 cwd）
 ```
 
@@ -38,6 +40,12 @@ $DSH_HOME/chonkyfish/
     "extractTickMs": 5000,
     "extractBatch": 2,
     "maxRecordsPerTurn": 400
+  },
+  "diary": {
+    "enabled": true,
+    "enabledPresets": ["chonkyfish"],
+    "maxContentChars": 50000,
+    "schedule": { "enabled": true, "hour": 20, "minute": 0, "timezone": "", "catchUp": true }
   }
 }
 ```
@@ -49,6 +57,9 @@ $DSH_HOME/chonkyfish/
 - 运行时可通过 `GET /chonkyfish/config`（带 token）查看、`PUT /chonkyfish/config` 局部更新。
 - `eventEngine.enabled` / `extractTickMs` / `extractBatch` 是启动时读取的，改完需要重启 Host 生效；
   `proactive.enabled` 每次发送前重读，改完即时生效。
+- `diary`：`maxContentChars` 1000–200000；`schedule.hour` 0–23、`minute` 0–59、`timezone` 必须是合法
+  IANA 时区或空（跟随系统）；`enabledPresets` 只收非空字符串。`diary.enabled` / `enabledPresets`
+  是启动时读取的，改完需重启 Host；`schedule` / `maxContentChars` 由日记定时器与工具在运行时重读。
 
 ## 对外接口
 
@@ -62,11 +73,12 @@ resources.clientState()   // 注入页面：home / preset / routes / paths（不
 ```
 
 `paths.workspace` 是唯一的鱼鱼工作区根（`$DSH_HOME/chonkyfish/小鱼塘`），事件引擎、主动消息、
-客户端都只用它。`clientState()` 给面板提供工作区路径，客户端不再自己拼 `~/.dsh`。
+客户端都只用它。`paths.diary` 是日记目录，`paths.diaryState` 是提醒状态文件。
+`clientState()` 给面板提供工作区路径，客户端不再自己拼 `~/.dsh`。
 
 ## 跑测试
 
 ```bash
-node src/resources/tests/run-resources.mjs   # 12 个用例
-npm test                                     # 模块0 + 资源管理 + 主动消息
+node src/resources/tests/run-resources.mjs   # 13 个用例
+npm test                                     # 模块0 + 资源管理 + 人格 + 主动消息 + 日记
 ```

@@ -15,6 +15,9 @@ export const HOME_DIR = 'chonkyfish'
 /** 鱼鱼工作区目录名：$DSH_HOME/chonkyfish/小鱼塘/ */
 export const WORKSPACE_DIR = '小鱼塘'
 
+/** 日记目录名：$DSH_HOME/chonkyfish/日记/（一天一个 YYYY-MM-DD.md） */
+export const DIARY_DIR = '日记'
+
 /** agent preset 名：鱼鱼会话 =（cwd 在工作区内, header.agentPreset === 该值） */
 export const PRESET = 'chonkyfish'
 
@@ -27,6 +30,7 @@ export const FILES = Object.freeze({
   state: 'state.json',
   proactive: 'proactive.json',
   events: 'events.db',
+  diaryState: 'diary.json',
 })
 
 /** Host 暴露给面板的本地 HTTP 路由（都按 activation token 鉴权）。 */
@@ -90,5 +94,23 @@ export const DEFAULT_CONFIG = Object.freeze({
     extractTickMs: 5000,
     extractBatch: 2,
     maxRecordsPerTurn: 400,
+  }),
+  /**
+   * 日记模块：同一个大肥鱼会话里写日记，正文落本地 Markdown。
+   * - enabledPresets：哪些 agent preset 能看到 diary 工具（其它 preset 默认关闭）
+   * - schedule：每天固定时刻提醒同一个鱼鱼会话写日记
+   * - catchUp：当天错过时间点后，Host 再启动时补一次
+   */
+  diary: Object.freeze({
+    enabled: true,
+    enabledPresets: Object.freeze([PRESET]),
+    maxContentChars: 50000,
+    schedule: Object.freeze({
+      enabled: true,
+      hour: 20,
+      minute: 0,
+      timezone: '',
+      catchUp: true,
+    }),
   }),
 })

@@ -1,6 +1,6 @@
 {
   "name": "@local/chonkyfish-dashboard",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "ChonkyFish（大肥鱼）· 小鱼塘管理台：安装本插件会同时注册「大肥鱼」agent preset（含通用工具），对话接入 DSH 会话；插件数据全部收拢在自己的 home（$DSH_HOME/chonkyfish/），面板补充人格设定作为 system prompt 补充动态生效，路径/路由/配置由资源管理模块统一提供。",
@@ -19,7 +19,8 @@
     "src/persona/**",
     "src/resources/**",
     "src/event-engine/**",
-    "src/proactive/**"
+    "src/proactive/**",
+    "src/diary/**"
   ],
   "scripts": {
     "test:event-engine": "node src/event-engine/tests/run-fixtures.mjs",
@@ -29,7 +30,8 @@
     "test:event-engine:all": "node src/event-engine/tests/run-fixtures.mjs && node src/event-engine/tests/run-pipeline.mjs && node src/event-engine/tests/run-extraction.mjs && node src/event-engine/tests/run-delivery.mjs",
     "requeue:dead-letters": "node src/event-engine/diagnostics/maintenance.mjs",
     "test:proactive": "node src/proactive/tests/run-revisit.mjs && node src/proactive/tests/run-proactive.mjs",
-    "test": "npm run test:event-engine:all && npm run test:resources && npm run test:persona && npm run test:proactive",
+    "test:diary": "node src/diary/tests/run-diary.mjs",
+    "test": "npm run test:event-engine:all && npm run test:resources && npm run test:persona && npm run test:proactive && npm run test:diary",
     "test:resources": "node src/resources/tests/run-resources.mjs",
     "test:persona": "node src/persona/tests/run-supplement.mjs"
   },

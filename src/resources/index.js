@@ -22,6 +22,7 @@ import { dirname, join } from 'node:path'
 import {
   ASSETS,
   DEFAULT_CONFIG,
+  DIARY_DIR,
   FILES,
   HOME_DIR,
   LIMITS,
@@ -86,14 +87,46 @@ async function writeJsonAtomic(file, value) {
 }
 
 /**
+ * IANA 时区是否合法；空字符串表示跟随系统，也允许。
+ * Intl 遇到未知时区会抛 RangeError，这里只用来做配置消毒。
+ */
+function isValidTimeZone(value) {
+  if (typeof value !== 'string') return false
+  if (value === '') return true
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value })
+    return true
+  } catch (error) {
+    return false
+  }
+}
+
+/** agent preset 白名单：去重、去空白、只接受非空字符串。 */
+function sanitizePresetList(value, fallback) {
+  if (!Array.isArray(value)) return [...fallback]
+  const seen = new Set()
+  const presets = []
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const preset = item.trim()
+    if (preset === '' || seen.has(preset)) continue
+    seen.add(preset)
+    presets.push(preset)
+  }
+  return presets.length > 0 ? presets : [...fallback]
+}
+
+/**
  * 配置消毒：未知字段一律丢弃，非法字段回退默认值。
  * @param {unknown} raw
- * @returns {{ version: number, proactive: { enabled: boolean }, eventEngine: { enabled: boolean, extractTickMs: number, extractBatch: number, maxRecordsPerTurn: number } }}
+ * @returns {{ version: number, proactive: { enabled: boolean }, eventEngine: { enabled: boolean, extractTickMs: number, extractBatch: number, maxRecordsPerTurn: number }, diary: { enabled: boolean, enabledPresets: string[], maxContentChars: number, schedule: { enabled: boolean, hour: number, minute: number, timezone: string, catchUp: boolean } } }}
  */
 function sanitizeConfig(raw) {
   const source = isPlainObject(raw) ? raw : {}
   const proactive = isPlainObject(source.proactive) ? source.proactive : {}
   const eventEngine = isPlainObject(source.eventEngine) ? source.eventEngine : {}
+  const diary = isPlainObject(source.diary) ? source.diary : {}
+  const schedule = isPlainObject(diary.schedule) ? diary.schedule : {}
   const defaults = DEFAULT_CONFIG
   return {
     version: VERSIONS.config,
@@ -114,18 +147,41 @@ function sanitizeConfig(raw) {
         fallback: defaults.eventEngine.maxRecordsPerTurn,
       }),
     },
+    diary: {
+      enabled: typeof diary.enabled === 'boolean' ? diary.enabled : defaults.diary.enabled,
+      enabledPresets: sanitizePresetList(diary.enabledPresets, defaults.diary.enabledPresets),
+      maxContentChars: clampInt(diary.maxContentChars, {
+        min: 1000,
+        max: 200000,
+        fallback: defaults.diary.maxContentChars,
+      }),
+      schedule: {
+        enabled: typeof schedule.enabled === 'boolean' ? schedule.enabled : defaults.diary.schedule.enabled,
+        hour: clampInt(schedule.hour, { min: 0, max: 23, fallback: defaults.diary.schedule.hour }),
+        minute: clampInt(schedule.minute, { min: 0, max: 59, fallback: defaults.diary.schedule.minute }),
+        timezone: isValidTimeZone(schedule.timezone) ? schedule.timezone : defaults.diary.schedule.timezone,
+        catchUp: typeof schedule.catchUp === 'boolean' ? schedule.catchUp : defaults.diary.schedule.catchUp,
+      },
+    },
   }
 }
 
-/** 顶层浅合并 + proactive/eventEngine 深合并，然后整体消毒。非法 patch 按 {} 处理。 */
+/** 顶层浅合并 + proactive/eventEngine/diary 深合并，然后整体消毒。非法 patch 按 {} 处理。 */
 function mergeConfig(current, patch) {
   const source = isPlainObject(patch) ? patch : {}
   const proactive = isPlainObject(source.proactive) ? source.proactive : {}
   const eventEngine = isPlainObject(source.eventEngine) ? source.eventEngine : {}
+  const diary = isPlainObject(source.diary) ? source.diary : {}
+  const schedule = isPlainObject(diary.schedule) ? diary.schedule : {}
   return sanitizeConfig({
     version: VERSIONS.config,
     proactive: { ...current.proactive, ...proactive },
     eventEngine: { ...current.eventEngine, ...eventEngine },
+    diary: {
+      ...current.diary,
+      ...diary,
+      schedule: { ...current.diary.schedule, ...schedule },
+    },
   })
 }
 
@@ -151,7 +207,7 @@ function resolveDshHome(env, homeRoot) {
  * @returns {{
  *   dshHome: string,
  *   home: string,
- *   paths: { home: string, config: string, state: string, proactive: string, events: string, workspace: string },
+ *   paths: { home: string, config: string, state: string, proactive: string, events: string, diaryState: string, diary: string, workspace: string },
  *   routes: typeof ROUTES,
  *   limits: typeof LIMITS,
  *   versions: typeof VERSIONS,
@@ -171,6 +227,8 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     state: join(home, FILES.state),
     proactive: join(home, FILES.proactive),
     events: join(home, FILES.events),
+    diaryState: join(home, FILES.diaryState),
+    diary: join(home, DIARY_DIR),
     workspace: join(home, WORKSPACE_DIR),
   }
 
@@ -181,6 +239,7 @@ export function createResources({ env = process.env, homeRoot } = {}) {
   const spec = Object.freeze({
     HOME_DIR,
     WORKSPACE_DIR,
+    DIARY_DIR,
     PRESET,
     FILES,
     ROUTES,
@@ -252,6 +311,11 @@ export function createResources({ env = process.env, homeRoot } = {}) {
       await mkdir(paths.workspace, { recursive: true })
     } catch (error) {
       warn(logger, '[chonkyfish] 鱼鱼工作区目录创建失败', error)
+    }
+    try {
+      await mkdir(paths.diary, { recursive: true })
+    } catch (error) {
+      warn(logger, '[chonkyfish] 日记目录创建失败', error)
     }
     return { home: paths.home, workspace: paths.workspace }
   }

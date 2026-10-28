@@ -21,10 +21,11 @@ import { dirname } from 'node:path'
 
 import { createPanelSupplement } from './src/persona/supplement.js'
 import { createResources } from './src/resources/index.js'
+import { DIARY_TOOL_NAME } from './src/diary/tools.js'
 
 const FULL_ACCESS = 'danger-full-access'
 
-export const inject = ['permissionPresets', 'agents', 'agentPresets', 'systemPrompt', 'webServer']
+export const inject = ['permissionPresets', 'agents', 'agentPresets', 'systemPrompt', 'webServer', 'tools']
 
 function isFishAgent(ctx, agent, preset) {
   try {
@@ -34,6 +35,24 @@ function isFishAgent(ctx, agent, preset) {
     return composed === preset
   } catch (error) {
     return false
+  }
+}
+
+/**
+ * 取 Agent 实际运行的 preset 名（header 优先，其次 composed preset）。
+ * 日记工具的 preset 白名单判断和 guard 都用它。
+ * @param {any} ctx
+ * @param {any} agent
+ * @returns {string|undefined}
+ */
+function agentPresetName(ctx, agent) {
+  try {
+    const header = agent && agent.session && agent.session.header
+    if (header && typeof header.agentPreset === 'string' && header.agentPreset !== '') return header.agentPreset
+    const composed = ctx.agentPresets.composedPreset(agent.ctx)
+    return typeof composed === 'string' && composed !== '' ? composed : undefined
+  } catch (error) {
+    return undefined
   }
 }
 
@@ -295,6 +314,87 @@ export function apply(ctx) {
     return () => {}
   }, 'chonkyfish: home layout')
 
+  /* ------------------------------------------------------------- diary */
+
+  // 日记模块：单工具 `diary`（write/read/list）+ 本地 Markdown + 每天 20:00 提醒。
+  // 工具全局注册；只有 config.diary.enabledPresets 里的 preset 能用，其它 Agent
+  // 在创建时 restrict 掉，guard 再兜一层。日记模块整体失败不影响面板/聊天。
+  const diaryConfig = resources.getConfig().diary
+  if (diaryConfig.enabled) {
+    const enabledPresets = new Set(diaryConfig.enabledPresets)
+    const gated = new WeakSet()
+    let diaryHandle = null
+    let diaryDisposed = false
+    let resolveDiaryReady = () => {}
+    const diaryReady = new Promise((resolve) => {
+      resolveDiaryReady = resolve
+    })
+
+    /** 非日记 preset 的 Agent：把全局 diary 工具从它的可见集合里去掉。 */
+    async function gateDiaryAgent(agent) {
+      if (!agent || gated.has(agent)) return
+      gated.add(agent)
+      const handle = await diaryReady
+      if (!handle) return
+      if (enabledPresets.has(agentPresetName(ctx, agent))) return
+      try {
+        agent.ctx.tools.restrict({ deny: [DIARY_TOOL_NAME] })
+      } catch (error) {
+        warn('[chonkyfish] 非日记 preset 隐藏 diary 工具失败（不影响使用）', error)
+      }
+    }
+
+    ctx.tools.guard((exec) => {
+      if (!exec || exec.name !== DIARY_TOOL_NAME) return undefined
+      const preset = exec.agent ? agentPresetName(ctx, exec.agent) : undefined
+      return enabledPresets.has(preset) ? undefined : 'diary 只对启用的大肥鱼 preset 开放'
+    })
+
+    ctx.on('agent/created', (payload) => {
+      void gateDiaryAgent(payload && payload.agent)
+    })
+
+    ctx.effect(() => {
+      diaryDisposed = false
+      startDiary(ctx, { resources, ready: layoutReady, warn }).then((handle) => {
+        if (diaryDisposed) {
+          if (handle) {
+            try {
+              handle.stop()
+            } catch (ignored) {
+              /* already gone */
+            }
+          }
+          resolveDiaryReady(null)
+          return
+        }
+        diaryHandle = handle
+        resolveDiaryReady(handle)
+        if (handle) {
+          try {
+            for (const agent of ctx.agents.list()) void gateDiaryAgent(agent)
+          } catch (error) {
+            /* no live agents is the normal case at boot */
+          }
+        }
+      }).catch((error) => {
+        warn('[chonkyfish] 日记模块启动失败（面板不受影响）', error)
+        resolveDiaryReady(null)
+      })
+      return () => {
+        diaryDisposed = true
+        if (diaryHandle) {
+          try {
+            diaryHandle.stop()
+          } catch (ignored) {
+            /* already gone */
+          }
+          diaryHandle = null
+        }
+      }
+    }, 'chonkyfish: diary')
+  }
+
   // 事件引擎（模块0）：采集 → 提取 → 查询。任何失败都不许影响面板本身。
   void startEventEngine(ctx, { resources, ready: layoutReady, token, warn })
 
@@ -327,6 +427,44 @@ function service(ctx, name) {
     return typeof ctx.get === 'function' ? ctx.get(name) : undefined
   } catch (error) {
     return undefined
+  }
+}
+
+/**
+ * 启动日记模块：注册 diary 工具 + 起每日 20:00 定时器。
+ * 和事件引擎一样用动态 import + 整段 try/catch：日记挂了，面板和聊天照常。
+ * @returns {Promise<{ stop: () => void } | null>}
+ */
+async function startDiary(ctx, { resources, ready, warn }) {
+  try {
+    await ready
+    const [{ createDiaryModule }] = await Promise.all([import('./src/diary/index.js')])
+    const diary = createDiaryModule({ ctx, resources, logger: ctx.logger })
+    let disposeTool = () => {}
+    try {
+      disposeTool = ctx.tools.register(diary.tool)
+    } catch (error) {
+      warn('[chonkyfish] diary 工具注册失败', error)
+      return null
+    }
+    diary.start()
+    return {
+      stop() {
+        try {
+          diary.stop()
+        } catch (ignored) {
+          /* already gone */
+        }
+        try {
+          disposeTool()
+        } catch (ignored) {
+          /* already gone */
+        }
+      },
+    }
+  } catch (error) {
+    warn('[chonkyfish] 日记模块启动失败（面板不受影响）', error)
+    return null
   }
 }
 
