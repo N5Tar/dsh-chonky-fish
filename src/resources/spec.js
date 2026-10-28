@@ -40,6 +40,7 @@ export const ROUTES = Object.freeze({
   session: '/chonkyfish/session',
   proactive: '/chonkyfish/proactive',
   config: '/chonkyfish/config',
+  diary: '/chonkyfish/diary',
 })
 
 /** 请求体上限（字节）。state 是整份面板状态，其它是小型控制 JSON。 */

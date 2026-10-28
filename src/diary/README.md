@@ -41,6 +41,7 @@ src/diary/
   narration.js    每日隐藏旁白的文案（写完不汇报）
   state.js        diary.json：lastNudgeDate / 最近一次结果
   schedule.js     20:00 判断（时区 / catchUp / 去重 / 重试）
+  http.js         面板「日记」弹窗的只读路由（list / read）
   index.js        装配：tool + provider + scheduler
   tests/run-diary.mjs
 ```
@@ -71,6 +72,17 @@ src/diary/
 - `catchUp`：20:00 Host 没开着，当天稍后启动补一次；
 - 同一天只提醒一次（`diary.json` 落盘 + 进程内兜底）；当天日记已存在则不提醒。
 
+## 面板查看
+
+右上角 📔 打开「鱼鱼的日记」：按日期列出、点开只读正文。
+
+```text
+GET /chonkyfish/diary?limit=60          → { ok:true, action:'list', dates:[...] }
+GET /chonkyfish/diary?date=2026-10-28   → { ok:true, action:'read', date, content }
+```
+
+请求需要注入页面的 `x-chonkyfish-token`；只读，写入仍然只能由鱼鱼调用 `diary` 工具。
+
 ## 工具契约
 
 ```json
@@ -86,6 +98,6 @@ DIARY_ALREADY_EXISTS / DIARY_NOT_FOUND / DIARY_STORAGE_ERROR`。
 ## 跑测试
 
 ```bash
-node src/diary/tests/run-diary.mjs   # 12 个用例
+node src/diary/tests/run-diary.mjs   # 13 个用例
 npm test                            # 模块0 + 资源 + 人格 + 主动消息 + 日记
 ```

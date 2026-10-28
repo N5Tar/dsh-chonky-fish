@@ -20,7 +20,7 @@
 - **状态落盘**：名字、补充人格、钱包、账本保存在 home 里的 `state.json`（Host 通过带一次性 token 的本地路由读写），HTTP API 与嵌入式浏览器存储只作为缓存/降级
 - **事件感知（模块0）**：Host 侧监听 DSH 会话事件，把「小鱼塘 + chonkyfish」会话里每个 turn 交给该会话自己的模型抽取语义事件（说了喜欢 / 打算做 / 否认做过……），落 `$DSH_HOME/chonkyfish/events.db`，面板右上角「感知」可查看，每条都带原文引用与事实地位
 - **主动消息（能力）**：保留「让大肥鱼先开口」的能力——Host 往**面板当前会话**里注入一条隐藏旁白，她就会主动说一句；主动消息本身没有定时器，不会自己新建或另找会话
-- **日记（模块1）**：一个 `diary` 工具（write / read / list）+ 本地 Markdown（`$DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md`），每天 **20:00** 往**同一个鱼鱼会话**投一条隐藏旁白提醒她写日记；默认只有 `chonkyfish` preset 能用，写完不用汇报
+- **日记（模块1）**：一个 `diary` 工具（write / read / list）+ 本地 Markdown（`$DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md`），每天 **20:00** 往**同一个鱼鱼会话**投一条隐藏旁白提醒她写日记；面板右上角 📔 图标可查看已写日记（只读）；默认只有 `chonkyfish` preset 能用，写完不用汇报
 - **零外部请求**：插图与头像以 WebP data URI 内嵌在 `client.js` 里，不下载图片
 
 ## 主动消息
@@ -86,6 +86,8 @@ Host 会把消息投到面板当前会话。事件回访计划器 `src/proactive
   20:00 时 Host 没开着，当天稍后启动会补一次（`catchUp`）。
 - **不新建会话、不做多会话聚合**：项目设定就是面板始终同一个会话；没有面板会话时今晚跳过，等下个 tick 再试。
 - **写完不用汇报**：旁白里明确说了不用汇报、不要提提醒或旁白，免得穿帮。
+- **面板查看**：右上角 📔 图标打开「鱼鱼的日记」，按日期列出、点开只读正文；
+  走 token 鉴权的本地路由 `GET /chonkyfish/diary?limit=60` / `?date=YYYY-MM-DD`，不写文件。
 - **谁能用**：全局注册，但 `config.diary.enabledPresets` 默认只有 `["chonkyfish"]`；
   其它 preset 的 Agent 创建时会被 `restrict` 掉，guard 再兜一层。
 - **生效时机**：`diary.enabled` / `enabledPresets` 在插件启动时读取，改完要重启 DSH Host；

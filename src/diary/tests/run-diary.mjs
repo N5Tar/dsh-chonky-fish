@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { createDiaryService } from '../core.js'
 import { isValidDateText } from '../date.js'
 import { DIARY_CODES, DiaryError } from '../errors.js'
+import { handleDiaryRequest } from '../http.js'
 import { createDiaryModule } from '../index.js'
 import { diaryNarration, timeLabel } from '../narration.js'
 import { createLocalDiaryProvider } from '../provider.js'
@@ -404,6 +405,73 @@ await test('schedule: enabled/disabled 与 catchUp=false', async () => {
     })
     assert.equal((await late.scheduler.checkOnce()).reason, 'not-due')
     lateWs.cleanup()
+  } finally {
+    workspace.cleanup()
+  }
+})
+
+/* --------------------------------------------------------- 面板路由 */
+
+await test('http: 鉴权 / 列表 / 读取 / 404 / 参数校验', async () => {
+  const workspace = makeRoot()
+  try {
+    const { service } = makeService(workspace.root)
+    await service.run({ action: 'write', date: '2026-10-28', content: '面板里能读到' })
+    const token = 'secret-token'
+
+    const unauthorized = await handleDiaryRequest({
+      service,
+      headers: {},
+      url: '/chonkyfish/diary',
+      token,
+    })
+    assert.equal(unauthorized.status, 401)
+
+    const listed = await handleDiaryRequest({
+      service,
+      headers: { 'x-chonkyfish-token': token },
+      url: '/chonkyfish/diary?limit=60',
+      token,
+    })
+    assert.equal(listed.status, 200)
+    assert.deepEqual(listed.body, { ok: true, action: 'list', dates: ['2026-10-28'] })
+
+    const read = await handleDiaryRequest({
+      service,
+      headers: { 'x-chonkyfish-token': token },
+      url: '/chonkyfish/diary?date=2026-10-28',
+      token,
+    })
+    assert.equal(read.status, 200)
+    assert.equal(read.body.ok, true)
+    assert.ok(read.body.content.includes('面板里能读到'))
+
+    const missing = await handleDiaryRequest({
+      service,
+      headers: { 'x-chonkyfish-token': token },
+      url: '/chonkyfish/diary?date=2026-10-29',
+      token,
+    })
+    assert.equal(missing.status, 404)
+    assert.equal(missing.body.error.code, DIARY_CODES.notFound)
+
+    const badDate = await handleDiaryRequest({
+      service,
+      headers: { 'x-chonkyfish-token': token },
+      url: '/chonkyfish/diary?date=2026-02-30',
+      token,
+    })
+    assert.equal(badDate.status, 400)
+    assert.equal(badDate.body.error.code, DIARY_CODES.invalidDate)
+
+    const badLimit = await handleDiaryRequest({
+      service,
+      headers: { 'x-chonkyfish-token': token },
+      url: '/chonkyfish/diary?limit=0',
+      token,
+    })
+    assert.equal(badLimit.status, 400)
+    assert.equal(badLimit.body.error.code, DIARY_CODES.invalidLimit)
   } finally {
     workspace.cleanup()
   }

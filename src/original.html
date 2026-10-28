@@ -246,6 +246,16 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
 .cf-tag.uncertain{background:#f2f0fa;color:#7d74b8}
 .cf-sense-empty{color:#a9bcd2;font-size:12px;text-align:center;padding:24px 0;line-height:1.9}
 .cf-sense-error{color:#c07070;font-size:12px;background:#fdf0f0;border-radius:11px;padding:11px 13px;line-height:1.8}
+
+/* ===== 功能层：日记（模块1）===== */
+.cf-diary-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:4px 0 10px;color:#7b96b5;font-size:12px}
+.cf-diary-head b{color:#31577f;font-size:14px;margin-right:4px}
+.cf-diary-dates{display:flex;gap:6px;flex-wrap:wrap;max-height:110px;overflow:auto;padding:2px 0 8px}
+.cf-diary-date{border:1px solid #e2eefb;background:#f7fbff;color:#5b7b9e;border-radius:9px;padding:6px 9px;font-size:11px;font-weight:650;cursor:pointer}
+.cf-diary-date:hover{background:#eef7ff}
+.cf-diary-date.active{background:#e5f2ff;border-color:#bcd9f7;color:#31577f}
+.cf-diary-title{margin:2px 0 8px;font-size:14px;font-weight:760;color:#31577f}
+.cf-diary-body{white-space:pre-wrap;word-break:break-word;background:#fbfdff;border:1px solid #e9f2fc;border-radius:14px;padding:12px 14px;color:#3f5f80;font-size:12px;line-height:1.9;max-height:320px;overflow:auto;min-height:120px}
 </style>
 </head>
 <body>
@@ -266,6 +276,7 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
 <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></symbol>
 <symbol id="i-spark" viewBox="0 0 24 24"><path d="M11 3l1.7 5.1L18 10l-5.3 1.9L11 17l-1.7-5.1L4 10l5.3-1.9z"/><path d="M18 16l.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7z"/></symbol>
 <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+<symbol id="i-diary" viewBox="0 0 24 24"><path d="M7 3h11a2 2 0 0 1 2 2v16H8a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Z"/><path d="M8 3v18"/><path d="M11 8h6M11 12h6M11 16h4"/></symbol>
 </svg>
 <div class="app">
   <main class="content">
@@ -275,6 +286,7 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
         <span class="presence-pill"><span class="presence-dot"></span><span id="presence-top">鱼鱼在家</span></span>
         <button class="top-action" id="wallet-button" type="button"><span>🐚</span> <span id="top-balance">128</span> 贝壳</button>
         <button class="top-action icon-only" id="sense-button" type="button" aria-label="查看鱼鱼的感知"><svg class="icon"><use href="#i-spark"/></svg></button>
+        <button class="top-action icon-only" id="diary-button" type="button" aria-label="查看鱼鱼的日记"><svg class="icon"><use href="#i-diary"/></svg></button>
         <button class="top-action" id="settings-button" type="button"><svg class="icon small"><use href="#i-gear"/></svg>设置</button>
         <button class="top-action icon-only hide-narrow" id="info-button" type="button" aria-label="关于本界面"><svg class="icon"><use href="#i-info"/></svg></button>
       </div>
@@ -337,6 +349,13 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
       <div class="cf-sense-head"><span>鱼鱼从对话里感知到的事件：<b id="sense-count">0</b>条</span><button class="cf-refresh" id="sense-refresh" type="button">刷新</button></div>
       <div class="cf-sense-list" id="sense-list"></div>
       <div class="cf-note">🔒 每条事件都会回链到你和鱼鱼对话里的原话（「说了什么 / 打算什么 / 否认什么」），存在本机 $DSH_HOME/chonkyfish/events.db，不改变人格和钱包。</div>
+    </div>
+    <div class="cf-section" id="diary-panel" hidden>
+      <div class="cf-diary-head"><span>鱼鱼写过的日记：<b id="diary-count">0</b>篇</span><button class="cf-refresh" id="diary-refresh" type="button">刷新</button></div>
+      <div class="cf-diary-dates" id="diary-dates"></div>
+      <h3 class="cf-diary-title" id="diary-title">选一篇看看</h3>
+      <div class="cf-diary-body" id="diary-body">还没有写过日记。</div>
+      <div class="cf-note">🔒 日记保存在本机 $DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md；面板只读，写日记由鱼鱼自己调用 diary 工具完成，不会上传。</div>
     </div>
   </section>
 </div>

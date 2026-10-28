@@ -356,7 +356,7 @@ export function apply(ctx) {
 
     ctx.effect(() => {
       diaryDisposed = false
-      startDiary(ctx, { resources, ready: layoutReady, warn }).then((handle) => {
+      startDiary(ctx, { resources, ready: layoutReady, token, warn }).then((handle) => {
         if (diaryDisposed) {
           if (handle) {
             try {
@@ -435,7 +435,7 @@ function service(ctx, name) {
  * 和事件引擎一样用动态 import + 整段 try/catch：日记挂了，面板和聊天照常。
  * @returns {Promise<{ stop: () => void } | null>}
  */
-async function startDiary(ctx, { resources, ready, warn }) {
+async function startDiary(ctx, { resources, ready, token, warn }) {
   try {
     await ready
     const [{ createDiaryModule }] = await Promise.all([import('./src/diary/index.js')])
@@ -446,6 +446,40 @@ async function startDiary(ctx, { resources, ready, warn }) {
     } catch (error) {
       warn('[chonkyfish] diary 工具注册失败', error)
       return null
+    }
+    // 面板「日记」弹窗的只读路由（list / read）。注册失败不影响工具与定时器。
+    try {
+      const { handleDiaryRequest } = await import('./src/diary/http.js')
+      ctx.effect(() => ctx.webServer.register({
+        kind: 'exact',
+        path: resources.routes.diary,
+        handler: (request, response) => {
+          if (request.method !== 'GET' && request.method !== 'HEAD') {
+            response.writeHead(405)
+            response.end()
+            return
+          }
+          handleDiaryRequest({
+            service: diary.service,
+            headers: request.headers,
+            url: request.url,
+            token,
+          }).then((result) => {
+            const body = JSON.stringify(result.body)
+            response.writeHead(result.status, { 'content-type': 'application/json; charset=utf-8' })
+            response.end(request.method === 'HEAD' ? undefined : body)
+          }).catch(() => {
+            try {
+              response.writeHead(500)
+              response.end()
+            } catch (ignored) {
+              /* response already gone */
+            }
+          })
+        },
+      }), 'chonkyfish: diary route')
+    } catch (error) {
+      warn('[chonkyfish] 日记面板路由注册失败（日记工具仍可用）', error)
     }
     diary.start()
     return {

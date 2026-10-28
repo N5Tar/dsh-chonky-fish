@@ -257,6 +257,7 @@ function mountChonkyFishPage(wrap, chat) {
   var walletPanel = $('wallet-panel')
   var settingsPanel = $('settings-panel')
   var sensePanel = $('sense-panel')
+  var diaryPanel = $('diary-panel')
   var modalKind = null
   var modalReturnFocus = null
 
@@ -265,15 +266,23 @@ function mountChonkyFishPage(wrap, chat) {
     modalKind = kind
     modalReturnFocus = focusedNode()
     if (modalTitle) {
-      modalTitle.textContent = kind === 'settings' ? '人格设定' : kind === 'sense' ? '鱼鱼的感知' : '鱼鱼的零花钱'
+      modalTitle.textContent = kind === 'settings'
+        ? '人格设定'
+        : kind === 'sense'
+          ? '鱼鱼的感知'
+          : kind === 'diary'
+            ? '鱼鱼的日记'
+            : '鱼鱼的零花钱'
     }
     if (walletPanel) walletPanel.hidden = kind !== 'wallet'
     if (settingsPanel) settingsPanel.hidden = kind !== 'settings'
     if (sensePanel) sensePanel.hidden = kind !== 'sense'
+    if (diaryPanel) diaryPanel.hidden = kind !== 'diary'
     modal.classList.add('open')
     if (kind === 'settings') renderPersona()
     if (kind === 'wallet') renderWallet()
     if (kind === 'sense') renderSense()
+    if (kind === 'diary') renderDiary()
     focusNode($('modal-x'))
   }
   function closeModal() {
@@ -454,6 +463,136 @@ function mountChonkyFishPage(wrap, chat) {
 
   if (senseButton) senseButton.addEventListener('click', function () { openModal('sense') })
   if (senseRefresh) senseRefresh.addEventListener('click', function () { renderSense() })
+
+  /* ------------------------------------------------------- diary (模块1) */
+
+  var diaryDates = $('diary-dates')
+  var diaryCount = $('diary-count')
+  var diaryTitle = $('diary-title')
+  var diaryBody = $('diary-body')
+  var diaryRefresh = $('diary-refresh')
+  var diaryButton = $('diary-button')
+  var diaryRequest = 0
+  var diarySelected = ''
+
+  function diaryRoute() {
+    var routes = stateBridge && stateBridge.routes ? stateBridge.routes : ROUTE_SPEC
+    return routes && typeof routes.diary === 'string' ? routes.diary : ''
+  }
+
+  function clearNode(node) {
+    while (node && node.firstChild) node.removeChild(node.firstChild)
+  }
+
+  function diaryMessage(text, isError) {
+    if (!diaryDates) return
+    clearNode(diaryDates)
+    var box = document.createElement('div')
+    box.className = isError ? 'cf-sense-error' : 'cf-sense-empty'
+    box.textContent = text
+    diaryDates.appendChild(box)
+  }
+
+  function markDiarySelection() {
+    if (!diaryDates) return
+    var buttons = diaryDates.querySelectorAll('[data-diary-date]')
+    for (var i = 0; i < buttons.length; i += 1) {
+      buttons[i].classList.toggle('active', buttons[i].dataset.diaryDate === diarySelected)
+    }
+  }
+
+  function showDiaryDate(date) {
+    if (diaryTitle) diaryTitle.textContent = date + ' 的日记'
+  }
+
+  function loadDiary(date) {
+    var route = diaryRoute()
+    if (!route || !stateBridge || typeof fetch !== 'function') {
+      diaryMessage('日记服务还没连上：刷新一下页面拿到新的令牌后再试。', true)
+      return
+    }
+    diarySelected = date
+    markDiarySelection()
+    showDiaryDate(date)
+    if (diaryBody) diaryBody.textContent = '正在翻开这一页…'
+    var request = ++diaryRequest
+    fetch(route + '?date=' + encodeURIComponent(date), {
+      headers: { 'x-chonkyfish-token': stateBridge.token },
+      cache: 'no-store',
+    }).then(function (response) {
+      return response.json().catch(function () { return null }).then(function (payload) {
+        return { ok: response.ok, payload: payload }
+      })
+    }).then(function (result) {
+      if (request !== diaryRequest) return
+      if (!result.ok || !result.payload || result.payload.ok !== true) {
+        throw new Error('read-failed')
+      }
+      if (diaryBody) diaryBody.textContent = result.payload.content || '（这一页是空白的）'
+    }).catch(function () {
+      if (request !== diaryRequest) return
+      if (diaryBody) diaryBody.textContent = '读取这篇日记失败，刷新再试。'
+    })
+  }
+
+  function renderDiaryDates(payload) {
+    var dates = payload && Array.isArray(payload.dates) ? payload.dates : []
+    if (diaryCount) diaryCount.textContent = String(dates.length)
+    if (!diaryDates) return
+    clearNode(diaryDates)
+    if (dates.length === 0) {
+      if (diaryTitle) diaryTitle.textContent = '还没有日记'
+      if (diaryBody) diaryBody.textContent = ''
+      diaryMessage('还没有写过日记，等鱼鱼今晚写一篇吧～', false)
+      return
+    }
+    dates.forEach(function (date) {
+      var button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'cf-diary-date'
+      button.dataset.diaryDate = date
+      button.textContent = date
+      button.addEventListener('click', function () { loadDiary(date) })
+      diaryDates.appendChild(button)
+    })
+    if (diarySelected && dates.indexOf(diarySelected) === -1) diarySelected = ''
+    loadDiary(diarySelected || dates[0])
+  }
+
+  function renderDiary() {
+    var route = diaryRoute()
+    if (!route || !stateBridge || typeof fetch !== 'function') {
+      diaryMessage('日记服务还没连上：刷新一下页面拿到新的令牌后再试。', true)
+      return
+    }
+    var request = ++diaryRequest
+    if (diaryDates && !diaryDates.firstChild) {
+      var loading = document.createElement('div')
+      loading.className = 'cf-sense-empty'
+      loading.textContent = '正在翻鱼鱼的日记本…'
+      diaryDates.appendChild(loading)
+    }
+    fetch(route + '?limit=60', {
+      headers: { 'x-chonkyfish-token': stateBridge.token },
+      cache: 'no-store',
+    }).then(function (response) {
+      if (!response.ok) throw new Error('HTTP ' + response.status)
+      return response.json()
+    }).then(function (payload) {
+      if (request !== diaryRequest) return
+      if (!payload || payload.ok !== true) throw new Error('list-failed')
+      renderDiaryDates(payload)
+    }).catch(function () {
+      if (request !== diaryRequest) return
+      if (diaryDates) clearNode(diaryDates)
+      if (diaryTitle) diaryTitle.textContent = '日记'
+      if (diaryBody) diaryBody.textContent = ''
+      diaryMessage('读取日记列表失败：日记服务可能还没启动（重启 DSH 或稍后再试）。', true)
+    })
+  }
+
+  if (diaryButton) diaryButton.addEventListener('click', function () { openModal('diary') })
+  if (diaryRefresh) diaryRefresh.addEventListener('click', function () { renderDiary() })
 
   /* --------------------------------------------------------------- stage */
 
