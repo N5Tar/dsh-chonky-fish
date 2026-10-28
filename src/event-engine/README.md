@@ -9,13 +9,15 @@
 > 面板右上角「✨ 感知」按钮可查看事件；事件库 `$DSH_HOME/chonkyfish/events.db`。
 > 生效方式：重启 DSH（Host 半）→ 刷新页面（客户端半）。
 
+> 相关但暂未接线：主动消息的「事件回访」计划器（读取本模块 `goal.intention_expressed` / `goal.plan_expressed` 事件）保存在 [../proactive/README.md](../proactive/README.md)，等触发点确定后再接回运行时。
+
 ## 会话识别规则（重要）
 
 **联合判断**：鱼鱼会话的身份是一个配对，两半必须同时成立。
 
 ```text
-fish identity = ( $DSH_HOME/小鱼塘 , 'chonkyfish' )     ← 项目 与 preset 的配对
-session.header.cwd ∈ 项目根           且
+fish identity = ( 鱼鱼工作区根 , 'chonkyfish' )        ← 工作区 与 preset 的配对
+session.header.cwd ∈ workspaceRoot  且
 session.header.agentPreset === preset
 且 不是 subagent 子会话（origin !== 'subagent'、delegationDepth === 0）
 ```
@@ -27,7 +29,8 @@ session.header.agentPreset === preset
 | 错 | 对 | ❌ 别的项目里恰好选了鱼鱼 preset |
 | 错 | 错 | ❌ |
 
-- 没有任何「单项放行」开关，也不能关闭校验（`pondDir` 缺失直接拒绝启动）。
+- 没有任何「单项放行」开关，也不能关闭校验（`workspaceRoot` 缺失直接拒绝启动）。
+- `workspaceRoot` 由资源管理模块给出：固定为 `$DSH_HOME/chonkyfish/小鱼塘`，不做旧路径兼容。
 - 只看 preset 会误收：实测 `workspace/chonky-fish-site`、`workspace/chonkyFish`、
   `workspace/homeSite` 等工作区也出现过 chonkyfish 会话。
 - 只看项目会误收：同一个项目里换成别的 preset 跑的是别的 agent。
@@ -82,6 +85,11 @@ src/event-engine/
 
 **排除**：`assistant/attempt`（重试中间流）、`system/message`、`developer/message`、
 `request/*`、`step/*`、以及非 `append` 的 surface 事件（compaction/replace 换掉的旧内容）。
+
+另外，**不是主人打字的 user 消息也不采集**：Host 主动消息旁白（`source.kind = 'chonkyfish-nudge'`）、
+定时提醒（`source.kind = 'schedule'`）、系统注入（`agent-instructions` 等）都只出现在会话日志里，
+不进入抽取区间——否则第三人称旁白会被抽成「主人说过」的事实。
+
 **工具事件不进 job**（V1 不做工具事实），但游标照常推进。
 
 审计里会看到的观测/跳过原因：`empty_turn`、`turn_not_buffered`、`duplicate_turn`、
@@ -135,6 +143,6 @@ seq 空洞只记一次审计。
   只发当前 turn 的原文记录，不回灌人格上下文；提示词的 type 清单由注册表生成，不手写。
   `engine.takeJobs()` / `engine.storeEvents()` / `engine.settleJob()` 已就位。
 - **P3 分发**：`/chonkyfish/events` 查询路由 + 演示消费者。
-- **接线**：`index.js` 里 `createEventEngine({ file: $DSH_HOME/chonkyfish/events.db, pondDir: $DSH_HOME/小鱼塘 })`
-  （pondDir 优先用 `workspaceRegistry` 里「小鱼塘」工作区的实际路径，避免改名后失配）
+- **接线**：`index.js` 里 `createEventEngine({ file: <资源模块给的 events.db>, workspaceRoot: <资源模块给的工作区根> })`；
+  路径与工作区根都由 `src/resources/` 统一给出，不再在事件引擎里硬编码。
   + `ctx.on('session/event', (session, event) => engine.feed(session, event))`，约 6 行。

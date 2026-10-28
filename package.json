@@ -1,9 +1,9 @@
 {
   "name": "@local/chonkyfish-dashboard",
-  "version": "0.1.2",
+  "version": "0.3.3",
   "private": true,
   "type": "module",
-  "description": "ChonkyFish（大肥鱼）· 小鱼塘管理台：安装本插件会同时注册「大肥鱼」agent preset（含通用工具），对话接入 DSH 会话，并把整个 Harness 换成小鱼塘配色。",
+  "description": "ChonkyFish（大肥鱼）· 小鱼塘管理台：安装本插件会同时注册「大肥鱼」agent preset（含通用工具），对话接入 DSH 会话；插件数据全部收拢在自己的 home（$DSH_HOME/chonkyfish/），面板补充人格设定作为 system prompt 补充动态生效，路径/路由/配置由资源管理模块统一提供。",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -16,7 +16,10 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
-    "src/event-engine/**"
+    "src/persona/**",
+    "src/resources/**",
+    "src/event-engine/**",
+    "src/proactive/**"
   ],
   "scripts": {
     "test:event-engine": "node src/event-engine/tests/run-fixtures.mjs",
@@ -24,7 +27,11 @@
     "test:event-engine:extraction": "node src/event-engine/tests/run-extraction.mjs",
     "test:event-engine:delivery": "node src/event-engine/tests/run-delivery.mjs",
     "test:event-engine:all": "node src/event-engine/tests/run-fixtures.mjs && node src/event-engine/tests/run-pipeline.mjs && node src/event-engine/tests/run-extraction.mjs && node src/event-engine/tests/run-delivery.mjs",
-    "requeue:dead-letters": "node src/event-engine/diagnostics/maintenance.mjs"
+    "requeue:dead-letters": "node src/event-engine/diagnostics/maintenance.mjs",
+    "test:proactive": "node src/proactive/tests/run-revisit.mjs && node src/proactive/tests/run-proactive.mjs",
+    "test": "npm run test:event-engine:all && npm run test:resources && npm run test:persona && npm run test:proactive",
+    "test:resources": "node src/resources/tests/run-resources.mjs",
+    "test:persona": "node src/persona/tests/run-supplement.mjs"
   },
   "dsh": {
     "bundle": {

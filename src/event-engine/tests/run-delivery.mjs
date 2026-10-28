@@ -18,7 +18,7 @@ const TOKEN = 'test-token'
 
 function makeEngine() {
   const dir = mkdtempSync(join(tmpdir(), 'chonkyfish-delivery-'))
-  const engine = createEventEngine({ file: join(dir, 'events.db'), pondDir: POND })
+  const engine = createEventEngine({ file: join(dir, 'events.db'), workspaceRoot: POND })
   return {
     engine,
     cleanup() {

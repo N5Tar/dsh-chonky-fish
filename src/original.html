@@ -329,7 +329,7 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
     </div>
     <div class="cf-section" id="settings-panel" hidden>
       <div class="cf-field"><label for="fish-name">鱼鱼的名字</label><input id="fish-name" maxlength="18" value="大肥鱼" placeholder="比如：大肥鱼"/></div>
-      <div class="cf-field"><label for="fish-prompt">补充人格设定</label><textarea id="fish-prompt" rows="6" placeholder="例如：你是一只蓝色的、喜欢吃白饭的大肥鱼，嘴硬心软，经常想摸鱼……"></textarea><small>基础人格由 DSH 的「大肥鱼」agent preset 提供；这里的补充设定会在新会话的首条消息里发送给模型。</small></div>
+      <div class="cf-field"><label for="fish-prompt">补充人格设定</label><textarea id="fish-prompt" rows="6" placeholder="例如：你是一只蓝色的、喜欢吃白饭的大肥鱼，嘴硬心软，经常想摸鱼……"></textarea><small>基础人格由 DSH 的「大肥鱼」agent preset 提供；这里的补充设定会作为 system prompt 的补充交给模型（修改后下一轮对话生效）。</small></div>
       <div class="cf-note">鱼鱼会话保存在专用的「小鱼塘」工作区（DSH 主目录下），不会混进你的项目会话。名字、人格、钱包和账本保存在本机文件 $DSH_HOME/chonkyfish/state.json。</div>
       <div class="cf-actions"><button class="cf-ghost" type="button" id="reset-persona">恢复默认</button><button class="primary" type="button" id="save-persona">保存</button></div>
     </div>

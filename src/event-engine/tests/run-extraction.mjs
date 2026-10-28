@@ -125,7 +125,7 @@ function setup({ responses, userText = '我最近很喜欢 Minecraft', extraEven
   const eventsBySession = new Map([[SID, new Map()]])
   const sessionQuery = makeSessionQuery(eventsBySession)
   const llm = makeLlm(responses)
-  const engine = createEventEngine({ file, pondDir: POND, now })
+  const engine = createEventEngine({ file, workspaceRoot: POND, now })
   const extractor = createExtractor({
     llm,
     resolveModel: (modelId) => resolveModelFromId(modelId, { provider: 'fallback', model: 'default' }),
@@ -315,7 +315,7 @@ await test('读原文：跳过工具事件与被 compaction 换掉的 shadowed �
 
 await test('会话日志读不到 → payload_unavailable，可重试', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'chonkyfish-extract-'))
-  const engine = createEventEngine({ file: join(dir, 'events.db'), pondDir: POND, now })
+  const engine = createEventEngine({ file: join(dir, 'events.db'), workspaceRoot: POND, now })
   seqCounter = 0
   const session = fishSession()
   for (const event of [turnStartEvent(), userEvent('我最近很喜欢 Minecraft'), turnEndEvent()]) engine.feed(session, event)

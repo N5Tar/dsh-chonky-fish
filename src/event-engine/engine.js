@@ -4,7 +4,7 @@
  * 识别规则（2026-10-27 最终）：**联合判断**。
  *
  * 鱼鱼会话的身份是一个「(项目, preset) 配对」：
- *     ( $DSH_HOME/小鱼塘 , 'chonkyfish' )
+ *     ( 鱼鱼工作区 , 'chonkyfish' )
  * 会话必须同时落在这个配对里才算鱼鱼对话——不拆成两条互不相干的过滤条件，
  * 也不允许只满足其中一项就放行：
  *
@@ -21,6 +21,7 @@
 import { randomUUID } from 'node:crypto'
 import { resolve, sep } from 'node:path'
 
+import { PRESET } from '../resources/spec.js'
 import { createTurnCollector } from './adapters/dsh-source.js'
 import { PROMPT_VERSION } from './extraction/prompt.js'
 import {
@@ -43,16 +44,17 @@ import {
 } from './persistence/sqlite.js'
 
 /**
- * 鱼鱼会话身份配对里的 preset 半边。另半边（项目路径）由运行时传入：
+ * 鱼鱼会话身份配对里的 preset 半边，来自资源规格（单一事实源）。
+ * 另半边（工作区根）由资源管理模块给出的 `workspaceRoot` 传入：
  * 二者合起来才是身份，缺一项就不是鱼鱼会话。
  */
-export const FISH_PRESET = 'chonkyfish'
+export const FISH_PRESET = PRESET
 export { PROMPT_VERSION }
 
 /**
  * @param {{
  *   file: string,
- *   pondDir?: string | null,
+ *   workspaceRoot: string,
  *   preset?: string,
  *   maxRecordsPerTurn?: number,
  *   logger?: { warn: (...args: any[]) => void },
@@ -61,7 +63,7 @@ export { PROMPT_VERSION }
  */
 export function createEventEngine({
   file,
-  pondDir,
+  workspaceRoot,
   preset = FISH_PRESET,
   maxRecordsPerTurn = 400,
   logger = null,
@@ -69,9 +71,11 @@ export function createEventEngine({
 }) {
   const db = openEventDatabase(file)
   const recoveredLeases = recoverExpiredLeases(db, now())
-  // 项目路径是身份配对的一半，必须有；没有项目就无法联合判断。
-  if (!pondDir) throw new Error('createEventEngine: pondDir is required (fish identity = project + preset)')
-  const pond = resolve(pondDir)
+  // 工作区根是身份配对的一半，必须有；没有它就无法联合判断。
+  if (typeof workspaceRoot !== 'string' || workspaceRoot.length === 0) {
+    throw new Error('createEventEngine: workspaceRoot is required (fish identity = workspace + preset)')
+  }
+  const root = resolve(workspaceRoot)
 
   /** @type {Map<string, number>} 进程内 seq 连续性观测（用于发现丢事件） */
   const lastSeq = new Map()
@@ -120,7 +124,7 @@ export function createEventEngine({
     if (header.agentPreset !== preset) return false
     const cwd = typeof header.cwd === 'string' ? resolve(header.cwd) : ''
     if (cwd === '') return false
-    return cwd === pond || cwd.startsWith(pond + sep)
+    return cwd === root || cwd.startsWith(root + sep)
   }
 
   /* ---------------- turn → job ---------------- */

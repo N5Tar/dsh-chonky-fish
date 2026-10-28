@@ -14,12 +14,32 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ASSETS, DEFAULT_PANEL_PROMPT, PRESET, ROUTES, STORAGE_KEYS, WORKSPACE_DIR } from './src/resources/spec.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const sourcePath = process.env.DFY_SOURCE || join(here, 'src/original.html')
 
 const raw = readFileSync(sourcePath, 'utf8')
 const assets = JSON.parse(readFileSync(join(here, 'src/assets.json'), 'utf8'))
+
+// 资源管理模块的客户端投影：存储 key / 路由 / 预设名 / 素材目录全部来自 spec，
+// 在构建时嵌入 client.js，避免客户端再写死这些常量。
+for (const pose of ASSETS.poses) {
+  if (!assets.poses || typeof assets.poses[pose] !== 'string') {
+    throw new Error(`src/assets.json 缺少立绘姿态 "${pose}"（资源规格 ASSETS.poses）`)
+  }
+}
+if (typeof assets.avatar !== 'string' || assets.avatar === '') {
+  throw new Error('src/assets.json 缺少 avatar（资源规格 ASSETS.avatar）')
+}
+const clientResources = {
+  preset: PRESET,
+  workspaceName: WORKSPACE_DIR,
+  routes: ROUTES,
+  storageKeys: STORAGE_KEYS,
+  defaultPanelPrompt: DEFAULT_PANEL_PROMPT,
+  assets: { avatar: assets.avatar, poses: assets.poses },
+}
 const styleMatch = raw.match(/<style>([\s\S]*?)<\/style>/)
 const bodyMatch = raw.match(/<body>([\s\S]*)<\/body>/)
 if (!styleMatch || !bodyMatch) throw new Error(`cannot extract <style>/<body> from ${sourcePath}`)
@@ -139,8 +159,7 @@ window.__ModuleLoader__.load({
 
     var CSS = ${JSON.stringify(css)}
     var PAGE_HTML = ${JSON.stringify(html)}
-    var PET_AVATAR = ${JSON.stringify(assets.avatar)}
-    var PET_POSES = ${JSON.stringify(assets.poses)}
+    var RESOURCES = ${JSON.stringify(clientResources)}
 
     /**
      * The Harness-wide skin. Every Web UI colour derives from the static palette
@@ -279,11 +298,11 @@ ${runtime}
     var fishChat = null
 
     function createFishChat(ctx) {
-      var SESSION_KEY = 'chonkyfish-session-v2'
-      var LEGACY_SESSION_KEY = 'chonkyfish-session-v1'
-      var WORKSPACE_KEY = 'chonkyfish-workspace-v1'
-      var POND_DIR_NAME = '小鱼塘'
-      var PRESET = 'chonkyfish'
+      var STORAGE = RESOURCES.storageKeys
+      var SESSION_KEY = STORAGE.session
+      var WORKSPACE_KEY = STORAGE.workspace
+      var POND_DIR_NAME = RESOURCES.workspaceName
+      var PRESET = RESOURCES.preset
       var listeners = new Set()
       var status = { phase: 'idle', error: null }
       var reference = null
@@ -329,18 +348,27 @@ ${runtime}
           /* ignore */
         }
       }
-      function migrateLegacySession() {
+      // 告诉 Host「面板现在显示的是这条鱼鱼会话」。主动消息只投这一条会话，
+      // 所以不会跑到别的会话、也不会新建会话。上报失败只影响主动消息，聊天照常。
+      function reportActiveSession(sessionId) {
         try {
-          var legacy = localStorage.getItem(LEGACY_SESSION_KEY)
-          if (!legacy) return
-          localStorage.removeItem(LEGACY_SESSION_KEY)
-          try {
-            Promise.resolve(ctx.workspaces.archiveSession(legacy, { stopActivity: true })).catch(function () {})
-          } catch (error) {
-            /* archiving is best-effort */
-          }
+          var bridge = typeof window !== 'undefined' ? window.__CHONKYFISH_STATE__ : null
+          if (!bridge || typeof bridge.token !== 'string' || typeof sessionId !== 'string' || sessionId === '') return
+          if (typeof fetch !== 'function') return
+          var endpoint = bridge.sessionEndpoint || RESOURCES.routes.session
+          fetch(endpoint, {
+            method: 'PUT',
+            headers: {
+              'content-type': 'application/json',
+              'x-chonkyfish-token': bridge.token,
+            },
+            body: JSON.stringify({ sessionId: sessionId }),
+            keepalive: true,
+          }).catch(function () {
+            /* the panel works without the host route */
+          })
         } catch (error) {
-          /* storage unavailable */
+          /* best effort */
         }
       }
       function readWorkspaceId() {
@@ -357,6 +385,13 @@ ${runtime}
           /* ignore */
         }
       }
+      function forgetWorkspaceId() {
+        try {
+          localStorage.removeItem(WORKSPACE_KEY)
+        } catch (error) {
+          /* ignore */
+        }
+      }
       function listedWorkspaces() {
         try {
           var snapshot = ctx.workspaces.list.getSnapshot()
@@ -365,49 +400,76 @@ ${runtime}
           return []
         }
       }
-      function knownWorkspace(id) {
-        if (!id) return false
+      function workspaceEntry(id) {
+        if (!id) return null
         var items = listedWorkspaces()
         for (var i = 0; i < items.length; i += 1) {
-          if (items[i] && items[i].workspaceId === id) return true
+          if (items[i] && items[i].workspaceId === id) return items[i]
         }
-        return false
+        return null
       }
-      function hostHome() {
+      // 面板只认资源模块注入的 canonical 工作区路径。历史遗留的软链工作区
+      // （例如迁移前注册在 $DSH_HOME/小鱼塘 的条目）不能复用：DSH 校验会话
+      // 归属时会 realpath(cwd) 与工作区记录路径严格比较，软链会让新建会话
+      // 附件失败（session/workspace-attach-failed）。
+      function reusableWorkspaceId(id, canonicalPath) {
+        var entry = workspaceEntry(id)
+        if (entry === null) return null
+        if (!canonicalPath) return id
+        return entry.path === canonicalPath ? id : null
+      }
+      function injectedPaths() {
         try {
-          var host = ctx.remote && ctx.remote.$host
-          return host && typeof host.home === 'string' ? host.home : null
+          var bridge = typeof window !== 'undefined' ? window.__CHONKYFISH_STATE__ : null
+          return bridge && bridge.paths && typeof bridge.paths === 'object' ? bridge.paths : null
         } catch (error) {
           return null
         }
       }
+      // 工作区路径只从资源管理模块注入，客户端不自己拼 .dsh。
+      function workspaceResourcePaths() {
+        var injected = injectedPaths()
+        if (injected && typeof injected.workspace === 'string' && injected.workspace) {
+          return {
+            workspace: injected.workspace,
+            workspaceParent: typeof injected.workspaceParent === 'string' ? injected.workspaceParent : null,
+            workspaceName: typeof injected.workspaceName === 'string' ? injected.workspaceName : POND_DIR_NAME,
+          }
+        }
+        // 没有注入信息就不猜路径：让调用方退回「最近使用的工作区」。
+        return null
+      }
       async function ensureFishWorkspace() {
-        if (fishWorkspaceId && knownWorkspace(fishWorkspaceId)) return fishWorkspaceId
+        var paths = workspaceResourcePaths()
+        var canonical = paths ? paths.workspace : null
+        if (fishWorkspaceId && reusableWorkspaceId(fishWorkspaceId, canonical)) return fishWorkspaceId
         if (workspacePromise) return workspacePromise
         workspacePromise = (async function () {
           var stored = readWorkspaceId()
-          if (stored && knownWorkspace(stored)) {
-            fishWorkspaceId = stored
-            return stored
+          var storedId = reusableWorkspaceId(stored, canonical)
+          if (storedId) {
+            fishWorkspaceId = storedId
+            return storedId
           }
-          var home = hostHome()
-          if (!home) return undefined
-          var base = home.replace(/[\/]+$/, '') + '/.dsh'
-          var path = base + '/' + POND_DIR_NAME
+          if (stored) forgetWorkspaceId()
+          if (!paths) return undefined
           var items = listedWorkspaces()
           for (var i = 0; i < items.length; i += 1) {
-            if (items[i] && items[i].path === path) {
+            if (items[i] && items[i].path === paths.workspace) {
               fishWorkspaceId = items[i].workspaceId
               rememberWorkspaceId(fishWorkspaceId)
               return fishWorkspaceId
             }
           }
+          var parent = paths.workspaceParent
+          if (!parent && paths.workspace) parent = paths.workspace.replace(/[\/][^\/]*$/, '')
+          if (!parent) return undefined
           try {
-            await ctx.uiWorkspace.createDirectory(base, POND_DIR_NAME)
+            await ctx.uiWorkspace.createDirectory(parent, paths.workspaceName || POND_DIR_NAME)
           } catch (error) {
             /* the folder may already exist; creating the workspace adopts it */
           }
-          var created = await ctx.workspaces.create({ path: path })
+          var created = await ctx.workspaces.create({ path: paths.workspace })
           var workspaceId = created && created.workspaceId
           if (!workspaceId) throw new Error('创建小鱼塘工作区失败')
           fishWorkspaceId = workspaceId
@@ -512,11 +574,12 @@ ${runtime}
           return false
         }
       }
-      function attach(nextReference) {
+      function attach(nextReference, sessionId) {
         reference = nextReference
         binding = nextReference.binding
         unsubscribes.push(binding.eventSource.subscribe(emit))
         unsubscribes.push(binding.session.subscribe(emit))
+        reportActiveSession(sessionId)
       }
       function releaseReference() {
         for (var i = 0; i < unsubscribes.length; i += 1) {
@@ -543,7 +606,6 @@ ${runtime}
         if (ensurePromise) return ensurePromise
         ensurePromise = (async function () {
           setStatus('connecting')
-          migrateLegacySession()
           var pondWorkspaceId
           try {
             pondWorkspaceId = await ensureFishWorkspace()
@@ -555,7 +617,7 @@ ${runtime}
             try {
               var existing = ctx.sessions.retain(stored, { source: 'controllerOperation' })
               await existing.ready
-              attach(existing)
+              attach(existing, stored)
               setStatus('ready')
               return binding
             } catch (error) {
@@ -568,7 +630,7 @@ ${runtime}
           storeId(created)
           var next = ctx.sessions.retain(created, { source: 'controllerOperation' })
           await next.ready
-          attach(next)
+          attach(next, created)
           setStatus('ready')
           return binding
         })()

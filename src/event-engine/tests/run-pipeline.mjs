@@ -62,7 +62,7 @@ function tempDb() {
 
 test('小鱼塘 + chonkyfish 会话：user+assistant 聚合成一个 pending job', () => {
   const { file, cleanup } = tempDb()
-  const engine = createEventEngine({ file, pondDir: POND, now })
+  const engine = createEventEngine({ file, workspaceRoot: POND, now })
   try {
     const session = fishSession()
     engine.feed(session, turnStart(1, 1))
@@ -88,9 +88,32 @@ test('小鱼塘 + chonkyfish 会话：user+assistant 聚合成一个 pending job
   }
 })
 
+test('非主人来源的 user 消息不进抽取（定时提醒 / 主动消息旁白）', () => {
+  const { file, cleanup } = tempDb()
+  const engine = createEventEngine({ file, workspaceRoot: POND, now })
+  try {
+    const session = fishSession()
+    engine.feed(session, turnStart(1, 1))
+    engine.feed(session, event(2, 'user/message', {
+      role: 'user',
+      content: [{ type: 'text', text: '（鱼塘旁白：主人已经很久没出现了。）' }],
+      source: { kind: 'chonkyfish-nudge', form: 'notice', summary: '大肥鱼主动来找你了' },
+    }))
+    engine.feed(session, assistantMessage(3, '主人～好久不见！'))
+    engine.feed(session, turnEnd(4, 1))
+
+    const job = engine.db.prepare('SELECT * FROM extraction_jobs').get()
+    assert.equal(Number(job.from_seq), 3, '旁白不进入抽取区间')
+    assert.equal(Number(job.to_seq), 3)
+  } finally {
+    engine.close()
+    cleanup()
+  }
+})
+
 test('非小鱼塘工作区的 chonkyfish 会话必须被忽略', () => {
   const { file, cleanup } = tempDb()
-  const engine = createEventEngine({ file, pondDir: POND, now })
+  const engine = createEventEngine({ file, workspaceRoot: POND, now })
   try {
     const session = otherSession()
     const accepted = engine.feed(session, turnStart(1, 1))
@@ -107,7 +130,7 @@ test('非小鱼塘工作区的 chonkyfish 会话必须被忽略', () => {
 
 test('项目对、preset 不对 → 忽略（项目 + preset 缺一不可）', () => {
   const { file, cleanup } = tempDb()
-  const engine = createEventEngine({ file, pondDir: POND, now })
+  const engine = createEventEngine({ file, workspaceRoot: POND, now })
   try {
     const session = otherPresetPondSession()
     assert.equal(engine.feed(session, turnStart(1, 1)), false)
@@ -123,7 +146,7 @@ test('项目对、preset 不对 → 忽略（项目 + preset 缺一不可）', (
 
 test('两条件都满足才算：项目对 + preset 对 → 收', () => {
   const { file, cleanup } = tempDb()
-  const engine = createEventEngine({ file, pondDir: POND, now })
+  const engine = createEventEngine({ file, workspaceRoot: POND, now })
   try {
     const session = fishSession('session-fish-10')
     assert.equal(engine.feed(session, turnStart(1, 1)), true)
@@ -135,7 +158,7 @@ test('两条件都满足才算：项目对 + preset 对 → 收', () => {
 
 test('subagent 子会话（鱼鱼派出去的孩子）必须排除', () => {
   const { file, cleanup } = tempDb()
-  const engine = createEventEngine({ file, pondDir: POND, now })
+  const engine = createEventEngine({ file, workspaceRoot: POND, now })
   try {
     const session = subagentSession()
     assert.equal(engine.feed(session, turnStart(1, 1)), false)
@@ -151,7 +174,7 @@ test('subagent 子会话（鱼鱼派出去的孩子）必须排除', () => {
 
 test('联合判断没有单项放行：缺项目或缺 preset 都不行，也不可关闭校验', () => {
   const { file, cleanup } = tempDb()
-  const engine = createEventEngine({ file, pondDir: POND, now })
+  const engine = createEventEngine({ file, workspaceRoot: POND, now })
   try {
     // 1) 项目对、preset 错
     assert.equal(engine.feed(otherPresetPondSession('session-standard-2'), turnStart(1, 1)), false)
@@ -160,7 +183,7 @@ test('联合判断没有单项放行：缺项目或缺 preset 都不行，也不
     // 3) 两个都对才算
     assert.equal(engine.feed(fishSession('session-fish-9'), turnStart(1, 1)), true)
     // 4) 没有项目路径就无法联合判断，直接拒绝启动
-    assert.throws(() => createEventEngine({ file: file + '.x', now }), /pondDir is required/)
+    assert.throws(() => createEventEngine({ file: file + '.x', now }), /workspaceRoot is required/)
   } finally {
     engine.close()
     cleanup()
@@ -169,7 +192,7 @@ test('联合判断没有单项放行：缺项目或缺 preset 都不行，也不
 
 test('空 turn（只有工具事件）不产生 job，记 empty_turn 审计', () => {
   const { file, cleanup } = tempDb()
-  const engine = createEventEngine({ file, pondDir: POND, now })
+  const engine = createEventEngine({ file, workspaceRoot: POND, now })
   try {
     const session = fishSession('session-fish-2')
     engine.feed(session, turnStart(1, 2))
@@ -188,7 +211,7 @@ test('空 turn（只有工具事件）不产生 job，记 empty_turn 审计', ()
 
 test('缺少 turn/start（模拟重启后中途接入）→ 跳过且不补采', () => {
   const { file, cleanup } = tempDb()
-  const engine = createEventEngine({ file, pondDir: POND, now })
+  const engine = createEventEngine({ file, workspaceRoot: POND, now })
   try {
     const session = fishSession('session-fish-3')
     engine.feed(session, userMessage(10, '重启前说过的话'))
@@ -205,7 +228,7 @@ test('缺少 turn/start（模拟重启后中途接入）→ 跳过且不补采',
 
 test('同一 turn 重放：job 只有一条，记 duplicate_turn 审计', () => {
   const { file, cleanup } = tempDb()
-  const engine = createEventEngine({ file, pondDir: POND, now })
+  const engine = createEventEngine({ file, workspaceRoot: POND, now })
   try {
     const session = fishSession('session-fish-4')
     const events = [turnStart(1, 7), userMessage(2, '重复的 turn'), assistantMessage(3, '嗯嗯'), turnEnd(4, 7)]
@@ -223,14 +246,14 @@ test('同一 turn 重放：job 只有一条，记 duplicate_turn 审计', () => 
 
 test('跨进程重启：半截 turn 丢失，新引擎从 turn/end 起不会补造事件', () => {
   const { file, cleanup } = tempDb()
-  const first = createEventEngine({ file, pondDir: POND, now })
+  const first = createEventEngine({ file, workspaceRoot: POND, now })
   const session = fishSession('session-fish-5')
   first.feed(session, turnStart(1, 9))
   first.feed(session, userMessage(2, '这句话在重启前'))
   const cursorBefore = first.getCursor(session.id)
   first.close()
 
-  const second = createEventEngine({ file, pondDir: POND, now })
+  const second = createEventEngine({ file, workspaceRoot: POND, now })
   try {
     second.feed(session, assistantMessage(3, '重启之后才回的'))
     second.feed(session, turnEnd(4, 9))
@@ -247,7 +270,7 @@ test('跨进程重启：半截 turn 丢失，新引擎从 turn/end 起不会补�
 
 test('进程重启后回收租约过期的 processing 孤儿任务', () => {
   const { file, cleanup } = tempDb()
-  const first = createEventEngine({ file, pondDir: POND, now })
+  const first = createEventEngine({ file, workspaceRoot: POND, now })
   const session = fishSession('session-fish-6')
   first.feed(session, turnStart(1, 1))
   first.feed(session, userMessage(2, '会被处理的任务'))
@@ -259,7 +282,7 @@ test('进程重启后回收租约过期的 processing 孤儿任务', () => {
   ).run(jobId)
   first.close()
 
-  const second = createEventEngine({ file, pondDir: POND, now })
+  const second = createEventEngine({ file, workspaceRoot: POND, now })
   try {
     const row = second.db.prepare('SELECT status FROM extraction_jobs WHERE job_id = ?').get(jobId)
     assert.equal(row.status, 'pending', '孤儿任务应被放回 pending')
@@ -272,7 +295,7 @@ test('进程重启后回收租约过期的 processing 孤儿任务', () => {
 
 test('游标单调：回放更小的 seq 不会把游标写回去', () => {
   const { file, cleanup } = tempDb()
-  const engine = createEventEngine({ file, pondDir: POND, now })
+  const engine = createEventEngine({ file, workspaceRoot: POND, now })
   try {
     const session = fishSession('session-fish-7')
     engine.feed(session, turnStart(100, 1))
@@ -287,7 +310,7 @@ test('游标单调：回放更小的 seq 不会把游标写回去', () => {
 
 test('seq 空洞只记一次审计，不打断采集', () => {
   const { file, cleanup } = tempDb()
-  const engine = createEventEngine({ file, pondDir: POND, now })
+  const engine = createEventEngine({ file, workspaceRoot: POND, now })
   try {
     const session = fishSession('session-fish-8')
     engine.feed(session, turnStart(1, 1))

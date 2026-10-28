@@ -2,44 +2,43 @@
  * Host half of the ChonkyFish（大肥鱼）bundle.
  *
  * Jobs:
- * 1. Keep the dedicated 「小鱼塘」 folder under the DSH home.
+ * 1. Own the chonkyFish home under the DSH home（`$DSH_HOME/chonkyfish/`）：
+ *    all plugin data (state / config / proactive / events.db / 小鱼塘 workspace)
+ *    lives there through the resource manager（src/resources/）.
  * 2. Give every "chonkyfish" preset Session full permission (sandbox
  *    danger-full-access + approval never), through the normal permission
  *    preset write path.
  * 3. Persist the panel's own state (name / extra persona / wallet / ledger /
  *    local demo transcript) in a real JSON file instead of browser
  *    localStorage, served to the panel through an authenticated local route.
- *    The route token is generated per Host activation and injected into the
- *    page; the file is the source of truth, localStorage stays a cache.
+ * 4. Expose the resource config（config.json）and the active-session /
+ *    proactive routes. Every path, route, limit and default comes from the
+ *    resource module — this file does not hardcode them.
  */
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname } from 'node:path'
 
-const FISH_PRESET = 'chonkyfish'
+import { createPanelSupplement } from './src/persona/supplement.js'
+import { createResources } from './src/resources/index.js'
+
 const FULL_ACCESS = 'danger-full-access'
-const STATE_ROUTE = '/chonkyfish/state'
-const EVENTS_ROUTE = '/chonkyfish/events'
-const EXTRACT_TICK_MS = 5000
-const EXTRACT_BATCH = 2
-const STATE_LIMIT_BYTES = 1024 * 1024
 
-export const inject = ['permissionPresets', 'agents', 'agentPresets', 'webServer']
+export const inject = ['permissionPresets', 'agents', 'agentPresets', 'systemPrompt', 'webServer']
 
-function isFishAgent(ctx, agent) {
+function isFishAgent(ctx, agent, preset) {
   try {
     const header = agent && agent.session && agent.session.header
-    if (header && header.agentPreset === FISH_PRESET) return true
+    if (header && header.agentPreset === preset) return true
     const composed = ctx.agentPresets.composedPreset(agent.ctx)
-    return composed === FISH_PRESET
+    return composed === preset
   } catch (error) {
     return false
   }
 }
 
-function giveFullAccess(ctx, agent) {
-  if (!agent || !agent.session || !isFishAgent(ctx, agent)) return
+function giveFullAccess(ctx, agent, preset) {
+  if (!agent || !agent.session || !isFishAgent(ctx, agent, preset)) return
   try {
     ctx.permissionPresets.set(agent.session, FULL_ACCESS)
   } catch (error) {
@@ -51,10 +50,43 @@ function giveFullAccess(ctx, agent) {
   }
 }
 
+/**
+ * 读取请求体 JSON；超过上限、空 body、非法 JSON 都返回 null。
+ * @param {import('node:http').IncomingMessage} request
+ * @param {number} limit
+ */
+function readJsonBody(request, limit) {
+  return new Promise((resolve) => {
+    let size = 0
+    let tooLarge = false
+    const chunks = []
+    request.on('data', (chunk) => {
+      size += chunk.length
+      if (size > limit) {
+        tooLarge = true
+        chunks.length = 0
+        return
+      }
+      chunks.push(chunk)
+    })
+    request.on('end', () => {
+      if (tooLarge || chunks.length === 0) {
+        resolve(null)
+        return
+      }
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+      } catch (error) {
+        resolve(null)
+      }
+    })
+    request.on('error', () => resolve(null))
+  })
+}
+
 export function apply(ctx) {
-  const home = process.env.DSH_HOME || join(homedir(), '.dsh')
-  const stateDir = join(home, 'chonkyfish')
-  const stateFile = join(stateDir, 'state.json')
+  const resources = createResources({ env: process.env })
+  const { routes, limits, spec } = resources
   const token = randomUUID()
   let writeChain = Promise.resolve()
 
@@ -66,12 +98,26 @@ export function apply(ctx) {
     }
   }
 
+  // home 布局（目录 + 默认 config）；所有异步启动器都会 await 它。
+  const layoutReady = resources.ensureLayout({ logger: ctx.logger }).catch((error) => {
+    warn('[chonkyfish] home 布局初始化失败（面板仍可继续使用）', error)
+    return null
+  })
+
+  // 面板「补充人格设定」→ system prompt 变量：预设里的 persona 模板用
+  // {{chonkyfish_supplement}} 引用它，所以人格不再混进用户消息。
+  ctx.effect(() => {
+    const supplement = createPanelSupplement({ statePath: resources.paths.state, logger: ctx.logger })
+    return ctx.systemPrompt.variable(supplement.variableName, supplement.provider)
+  }, 'chonkyfish: panel persona supplement')
+
   function writeState(body) {
     writeChain = writeChain.then(async () => {
-      await mkdir(stateDir, { recursive: true })
-      const temporary = stateFile + '.' + process.pid + '.' + randomUUID() + '.tmp'
+      await layoutReady
+      await mkdir(dirname(resources.paths.state), { recursive: true })
+      const temporary = resources.paths.state + '.' + process.pid + '.' + randomUUID() + '.tmp'
       await writeFile(temporary, body, 'utf8')
-      await rename(temporary, stateFile)
+      await rename(temporary, resources.paths.state)
     }).catch((error) => {
       warn('[chonkyfish] 状态文件写入失败', error)
     })
@@ -82,17 +128,38 @@ export function apply(ctx) {
     return request.headers['x-chonkyfish-token'] === token
   }
 
+  function replyJson(response, status, body) {
+    response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+    response.end(body === undefined ? undefined : JSON.stringify(body))
+  }
+
   ctx.on('webserver/index-inject', (table) => {
+    const clientResources = resources.clientState()
     table.push({
       kind: 'script',
       placement: 'body',
-      text: 'window.__CHONKYFISH_STATE__ = ' + JSON.stringify({ token, endpoint: STATE_ROUTE, eventsEndpoint: EVENTS_ROUTE }) + ';',
+      text: 'window.__CHONKYFISH_STATE__ = ' + JSON.stringify({
+        token,
+        // 兼容旧字段
+        endpoint: routes.state,
+        eventsEndpoint: routes.events,
+        sessionEndpoint: routes.session,
+        proactiveEndpoint: routes.proactive,
+        configEndpoint: routes.config,
+        // 资源管理模块给出的布局/路由/预设
+        routes,
+        preset: clientResources.preset,
+        paths: clientResources.paths,
+        home: clientResources.home,
+      }) + ';',
     })
   })
 
+  /* ---------------------------------------------------------- state file */
+
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
-    path: STATE_ROUTE,
+    path: routes.state,
     handler: (request, response) => {
       if (request.method === 'GET' || request.method === 'HEAD') {
         if (!authorized(request)) {
@@ -100,7 +167,7 @@ export function apply(ctx) {
           response.end()
           return
         }
-        readFile(stateFile, 'utf8').then((text) => {
+        readFile(resources.paths.state, 'utf8').then((text) => {
           response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
           response.end(request.method === 'HEAD' ? undefined : text)
         }).catch((error) => {
@@ -124,12 +191,12 @@ export function apply(ctx) {
         response.end()
         return
       }
+      const chunks = []
       let size = 0
       let tooLarge = false
-      const chunks = []
       request.on('data', (chunk) => {
         size += chunk.length
-        if (size > STATE_LIMIT_BYTES) {
+        if (size > limits.stateBodyBytes) {
           tooLarge = true
           chunks.length = 0
           return
@@ -142,10 +209,9 @@ export function apply(ctx) {
           response.end()
           return
         }
-        const text = Buffer.concat(chunks).toString('utf8')
         let payload
         try {
-          payload = JSON.parse(text)
+          payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
         } catch (error) {
           response.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
           response.end('invalid json')
@@ -173,25 +239,85 @@ export function apply(ctx) {
     },
   }), 'chonkyfish: state file route')
 
+  /* --------------------------------------------------------- config file */
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: routes.config,
+    handler: (request, response) => {
+      if (!authorized(request)) {
+        replyJson(response, 401, { ok: false, error: 'unauthorized' })
+        return
+      }
+      if (request.method === 'GET' || request.method === 'HEAD') {
+        const body = JSON.stringify({
+          ok: true,
+          home: resources.home,
+          paths: resources.paths,
+          routes,
+          config: resources.getConfig(),
+        })
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        response.end(request.method === 'HEAD' ? undefined : body)
+        return
+      }
+      if (request.method !== 'PUT' && request.method !== 'POST') {
+        replyJson(response, 405, { ok: false, error: 'method-not-allowed' })
+        return
+      }
+      readJsonBody(request, limits.jsonBodyBytes).then((patch) => {
+        if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+          replyJson(response, 400, { ok: false, error: 'invalid-config' })
+          return null
+        }
+        return resources.updateConfig(patch).then((config) => {
+          replyJson(response, 200, { ok: true, config })
+        })
+      }).catch((error) => {
+        replyJson(response, 500, { ok: false, error: String((error && error.message) || error) })
+      })
+    },
+  }), 'chonkyfish: config route')
+
+  /* ------------------------------------------------------- permissions */
+
   ctx.on('agent/created', (payload) => {
-    if (payload && payload.agent) giveFullAccess(ctx, payload.agent)
+    if (payload && payload.agent) giveFullAccess(ctx, payload.agent, spec.PRESET)
   })
   try {
-    for (const agent of ctx.agents.list()) giveFullAccess(ctx, agent)
+    for (const agent of ctx.agents.list()) giveFullAccess(ctx, agent, spec.PRESET)
   } catch (error) {
     /* no live agents is the normal case at boot */
   }
 
   ctx.effect(() => {
-    const path = join(home, '小鱼塘')
-    const task = mkdir(path, { recursive: true }).catch((error) => warn('[chonkyfish] 小鱼塘目录创建失败', error))
-    return () => {
-      void task
-    }
-  }, 'chonkyfish: pond directory')
+    void layoutReady
+    return () => {}
+  }, 'chonkyfish: home layout')
 
   // 事件引擎（模块0）：采集 → 提取 → 查询。任何失败都不许影响面板本身。
-  void startEventEngine(ctx, { home, token, warn })
+  void startEventEngine(ctx, { resources, ready: layoutReady, token, warn })
+
+  // 主动消息：只保留「往面板当前会话主动发一句」的能力，没有任何定时器/自动触发。
+  // 同样整段 try/catch：主动消息挂了，聊天照常。
+  ctx.effect(() => {
+    let disposed = false
+    let stop = () => {}
+    startProactive(ctx, { resources, ready: layoutReady, token, warn }).then((dispose) => {
+      if (disposed) dispose()
+      else stop = dispose
+    }).catch((error) => {
+      warn('[chonkyfish] 主动消息启动失败（面板不受影响）', error)
+    })
+    return () => {
+      disposed = true
+      try {
+        stop()
+      } catch (ignored) {
+        /* already gone */
+      }
+    }
+  }, 'chonkyfish: proactive')
 }
 
 let runningEngine = null
@@ -208,15 +334,17 @@ function service(ctx, name) {
  * 启动模块0事件引擎。故意用动态 import + 整段 try/catch：
  * 事件引擎挂了，鱼鱼面板和聊天也必须照常工作。
  */
-async function startEventEngine(ctx, { home, token, warn }) {
+async function startEventEngine(ctx, { resources, ready, token, warn }) {
   try {
-    const [{ createEventEngine, FISH_PRESET }, { handleEventsRequest }] = await Promise.all([
+    await ready
+    const engineConfig = resources.getConfig().eventEngine
+    if (!engineConfig.enabled) return null
+
+    const [{ createEventEngine }, { handleEventsRequest }] = await Promise.all([
       import('./src/event-engine/engine.js'),
       import('./src/event-engine/delivery/query.js'),
     ])
 
-    const stateDir = join(home, 'chonkyfish')
-    await mkdir(stateDir, { recursive: true })
     // 热重载可能重复调用 apply：先关掉上一只引擎，避免两条连接抢同一个库。
     if (runningEngine) {
       try {
@@ -227,9 +355,10 @@ async function startEventEngine(ctx, { home, token, warn }) {
       runningEngine = null
     }
     const engine = createEventEngine({
-      file: join(stateDir, 'events.db'),
-      pondDir: join(home, '小鱼塘'),
-      preset: FISH_PRESET,
+      file: resources.paths.events,
+      workspaceRoot: resources.paths.workspace,
+      preset: resources.spec.PRESET,
+      maxRecordsPerTurn: engineConfig.maxRecordsPerTurn,
       logger: ctx.logger,
     })
     runningEngine = engine
@@ -240,7 +369,7 @@ async function startEventEngine(ctx, { home, token, warn }) {
 
     ctx.effect(() => ctx.webServer.register({
       kind: 'exact',
-      path: EVENTS_ROUTE,
+      path: resources.routes.events,
       handler: (request, response) => {
         if (request.method !== 'GET' && request.method !== 'HEAD') {
           response.writeHead(405)
@@ -254,7 +383,7 @@ async function startEventEngine(ctx, { home, token, warn }) {
       },
     }), 'chonkyfish: events route')
 
-    // 采集：所有会话事件都经过 feed，由引擎用「(小鱼塘, chonkyfish)」联合判断过滤。
+    // 采集：所有会话事件都经过 feed，由引擎用「(工作区根, chonkyfish)」联合判断过滤。
     ctx.on('session/event', (session, event) => {
       engine.feed(session, event)
     })
@@ -277,18 +406,110 @@ async function startEventEngine(ctx, { home, token, warn }) {
       const timer = setInterval(() => {
         if (running) return
         running = true
-        runner.runOnce({ limit: EXTRACT_BATCH })
+        runner.runOnce({ limit: engineConfig.extractBatch })
           .catch((error) => warn('[chonkyfish] 提取轮询失败', error))
           .finally(() => {
             running = false
           })
-      }, EXTRACT_TICK_MS)
+      }, engineConfig.extractTickMs)
       ctx.effect(() => () => clearInterval(timer), 'chonkyfish: extraction loop')
     } else {
       warn('[chonkyfish] 缺少 llm/sessionQuery，事件引擎只采集不提取')
     }
+    return engine
   } catch (error) {
     warn('[chonkyfish] 事件引擎启动失败（面板不受影响）', error)
+    return null
+  }
+}
+
+/**
+ * 启动主动消息能力（无定时器）：
+ *   PUT  /chonkyfish/session      面板上报当前显示的鱼鱼会话
+ *   GET  /chonkyfish/proactive    只读诊断（active session / 最近发送 / 配置）
+ *   POST /chonkyfish/proactive    让她往面板当前会话主动说一句（可选自定义旁白）
+ * 返回一个幂等的 stop 函数。
+ */
+async function startProactive(ctx, { resources, ready, token, warn }) {
+  try {
+    await ready
+    const [{ createProactiveService }] = await Promise.all([import('./src/proactive/proactive.js')])
+    const proactive = createProactiveService({ ctx, resources, logger: ctx.logger })
+
+    function authorized(request) {
+      return request.headers['x-chonkyfish-token'] === token
+    }
+    function replyJson(response, status, body) {
+      response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+      response.end(body === undefined ? undefined : JSON.stringify(body))
+    }
+
+    try {
+      // 面板绑定/切换会话时上报。Host 只往这条会话投主动消息。
+      ctx.effect(() => ctx.webServer.register({
+        kind: 'exact',
+        path: resources.routes.session,
+        handler: (request, response) => {
+          if (!authorized(request)) {
+            replyJson(response, 401, { ok: false, error: 'unauthorized' })
+            return
+          }
+          if (request.method !== 'PUT' && request.method !== 'POST') {
+            replyJson(response, 405, { ok: false, error: 'method-not-allowed' })
+            return
+          }
+          readJsonBody(request, resources.limits.jsonBodyBytes).then((body) => {
+            const result = proactive.registerActiveSession(body && body.sessionId)
+            if (!result.ok) {
+              replyJson(response, 400, result)
+              return
+            }
+            response.writeHead(204)
+            response.end()
+          })
+        },
+      }), 'chonkyfish: active session route')
+
+      ctx.effect(() => ctx.webServer.register({
+        kind: 'exact',
+        path: resources.routes.proactive,
+        handler: (request, response) => {
+          if (!authorized(request)) {
+            replyJson(response, 401, { ok: false, error: 'unauthorized' })
+            return
+          }
+          if (request.method === 'GET' || request.method === 'HEAD') {
+            const body = JSON.stringify(proactive.inspect())
+            response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+            response.end(request.method === 'HEAD' ? undefined : body)
+            return
+          }
+          if (request.method !== 'POST') {
+            replyJson(response, 405, { ok: false, error: 'method-not-allowed' })
+            return
+          }
+          readJsonBody(request, resources.limits.jsonBodyBytes).then((body) => proactive.send({
+            sessionId: body && typeof body.sessionId === 'string' ? body.sessionId : null,
+            narration: body && typeof body.narration === 'string' ? body.narration : null,
+            kind: body && typeof body.kind === 'string' ? body.kind : 'manual',
+          })).then((result) => {
+            replyJson(response, result.ok ? 200 : 409, result)
+          }).catch((error) => {
+            replyJson(response, 500, { ok: false, error: String((error && error.message) || error) })
+          })
+        },
+      }), 'chonkyfish: proactive route')
+    } catch (error) {
+      // 插件卸载中注册会被拒：收掉服务，避免留下半套路由。
+      warn('[chonkyfish] 主动消息路由注册失败', error)
+      proactive.dispose()
+      return () => {}
+    }
+
+    return () => proactive.dispose()
+  } catch (error) {
+    warn('[chonkyfish] 主动消息启动失败（面板不受影响）', error)
+    return () => {}
   }
 }
 

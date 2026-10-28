@@ -9,6 +9,10 @@
  *
  * `mountChonkyFishPage(wrap, chat)` returns a disposer that clears every timer
  * and listener it installed.
+ *
+ * 本文件由 build.mjs 原样嵌入 client.js，因此可以引用构建时注入的模块级
+ * `RESOURCES`（来自 src/resources/spec.js + src/assets.json）：存储 key、
+ * 路由、preset、立绘素材名都从那里读，不要在页面控制器里硬编码。
  */
 function mountChonkyFishPage(wrap, chat) {
   'use strict'
@@ -30,12 +34,16 @@ function mountChonkyFishPage(wrap, chat) {
   }
   var fileSaveTimer = null
 
-  var KEY = 'chonkyfish-mini-demo-v1'
-  var LEGACY_KEYS = ['dafeiyu-mini-demo-v1']
-  var DEFAULT_PROMPT = '你是一只喜欢吃白饭的蓝色大肥鱼。你有点傲娇，喜欢摸鱼，偶尔嘴硬，但实际上非常关心和你聊天的人。请用轻松可爱、简短自然的中文交流。'
+  // 存储 key 与素材目录都由资源管理模块在构建时注入（build.mjs ← src/resources/spec.js），
+  // 这里不再硬编码，避免 Host / Client 两端各写一份。
+  var STORAGE = RESOURCES.storageKeys
+  var ROUTE_SPEC = RESOURCES.routes
+  var KEY = STORAGE.panelState
+  var ASSET_SPEC = RESOURCES.assets || {}
+  var DEFAULT_PROMPT = RESOURCES.defaultPanelPrompt
   var GREETING = '哼哼！你终于来了！本鲸今天可是很认真地等你哦。\n\n……所以，今天有白饭吃吗？🍚'
-  var POSES = (typeof PET_POSES === 'object' && PET_POSES) || {}
-  var PET_AVATAR_SRC = typeof PET_AVATAR === 'string' ? PET_AVATAR : ''
+  var POSES = (ASSET_SPEC.poses && typeof ASSET_SPEC.poses === 'object') ? ASSET_SPEC.poses : {}
+  var PET_AVATAR_SRC = typeof ASSET_SPEC.avatar === 'string' ? ASSET_SPEC.avatar : ''
 
   function defaults() {
     return {
@@ -49,23 +57,11 @@ function mountChonkyFishPage(wrap, chat) {
 
   function readStored() {
     try {
-      var current = localStorage.getItem(KEY)
-      if (current) return current
-      for (var i = 0; i < LEGACY_KEYS.length; i += 1) {
-        var legacy = localStorage.getItem(LEGACY_KEYS[i])
-        if (legacy) {
-          try {
-            localStorage.setItem(KEY, legacy)
-          } catch (error) {
-            /* keep working from the legacy value even if the copy fails */
-          }
-          return legacy
-        }
-      }
+      return localStorage.getItem(KEY)
     } catch (error) {
       /* storage unavailable */
+      return null
     }
-    return null
   }
 
   var state
@@ -157,7 +153,7 @@ function mountChonkyFishPage(wrap, chat) {
       return response.ok ? response.json() : null
     }).then(function (payload) {
       if (!payload || !payload.state || typeof payload.state !== 'object') {
-        /* first run: migrate the existing localStorage/default state into the file */
+        /* first run: persist the localStorage/default state into the file */
         scheduleFileSave(0)
         return
       }
@@ -440,7 +436,7 @@ function mountChonkyFishPage(wrap, chat) {
       loading.textContent = '正在翻鱼鱼的记忆…'
       senseList.appendChild(loading)
     }
-    var endpoint = (stateBridge.eventsEndpoint || '/chonkyfish/events') + '?limit=30'
+    var endpoint = (stateBridge.eventsEndpoint || ROUTE_SPEC.events) + '?limit=30'
     fetch(endpoint, {
       headers: { 'x-chonkyfish-token': stateBridge.token },
       cache: 'no-store'
@@ -674,21 +670,6 @@ function mountChonkyFishPage(wrap, chat) {
     return reply
   }
 
-  function buildPayload(value, withSupplement) {
-    if (withSupplement && state.prompt && state.prompt !== DEFAULT_PROMPT) {
-      return '【角色补充设定】' + state.prompt + '\n\n【用户消息】\n' + value
-    }
-    return value
-  }
-  function hasUserMessage() {
-    if (!realChat) return false
-    var messages = realChat.getMessages()
-    for (var i = 0; i < messages.length; i += 1) {
-      if (messages[i].role === 'user') return true
-    }
-    return false
-  }
-
   function sendDemo(value) {
     var time = formatTime()
     state.messages.push({ role: 'user', text: value, time: time })
@@ -710,7 +691,7 @@ function mountChonkyFishPage(wrap, chat) {
     busy = true
     petReaction('think', '让我想想……', 0)
     renderChat()
-    realChat.send(buildPayload(value, !hasUserMessage())).then(function () {
+    realChat.send(value).then(function () {
       busy = false
       renderChat()
     }).catch(function (error) {
