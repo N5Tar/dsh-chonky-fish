@@ -77,7 +77,8 @@ export function createDiaryTool(service) {
     name: DIARY_TOOL_NAME,
     description:
       '大肥鱼日记：一个工具三种能力——action="write" 写某一天的日记（正文由你自己写，默认不覆盖已有日记）；' +
-      'action="read" 读某一天的日记；action="list" 列出已有日记日期。日期格式 YYYY-MM-DD。',
+      'action="read" 读某一天的日记；action="list" 列出已有日记日期。日期格式 YYYY-MM-DD。' +
+      '写日记的时间由你自己安排：想每天写，可以用 schedule_create 给自己排一个每日提醒。',
     parameters: {
       type: 'object',
       additionalProperties: false,

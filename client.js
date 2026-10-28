@@ -703,7 +703,7 @@ function mountChonkyFishPage(wrap, chat) {
     if (dates.length === 0) {
       if (diaryTitle) diaryTitle.textContent = '还没有日记'
       if (diaryBody) diaryBody.textContent = ''
-      diaryMessage('还没有写过日记，等鱼鱼今晚写一篇吧～', false)
+      diaryMessage('还没有写过日记；让鱼鱼写一篇，或者让她用定时任务排一个每日提醒吧～', false)
       return
     }
     dates.forEach(function (date) {

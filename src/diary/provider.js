@@ -175,7 +175,7 @@ export function createLocalDiaryProvider({ directory }) {
   }
 
   /**
-   * 某天是否已有日记（定时器用来避免重复提醒）。
+   * 某天是否已有日记（给调用方做存在性判断）。
    * @param {string} date
    * @returns {Promise<boolean>}
    */

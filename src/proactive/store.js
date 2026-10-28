@@ -65,23 +65,6 @@ function sanitize(raw) {
 }
 
 /**
- * 只读地取「面板当前会话 id」，供其它模块（例如日记定时器）在需要时
- * 重新读盘拿到最新值，不持有 store 实例、也不参与写入。
- * 文件缺失/坏 JSON 一律返回 null。
- * @param {string} file
- * @returns {string|null}
- */
-export function readActiveSessionId(file) {
-  try {
-    const raw = JSON.parse(readFileSync(file, 'utf8'))
-    if (!raw || typeof raw !== 'object' || raw.version !== STORE_VERSION) return null
-    return typeof raw.activeSessionId === 'string' && raw.activeSessionId.length > 0 ? raw.activeSessionId : null
-  } catch (error) {
-    return null
-  }
-}
-
-/**
  * @param {{ file: string, now?: () => number }} options
  */
 export function createProactiveStore({ file, now = Date.now }) {

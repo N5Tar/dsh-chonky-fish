@@ -1,6 +1,6 @@
 {
   "name": "@local/chonkyfish-dashboard",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "type": "module",
   "description": "ChonkyFish（大肥鱼）· 小鱼塘管理台：安装本插件会同时注册「大肥鱼」agent preset（含通用工具），对话接入 DSH 会话；插件数据全部收拢在自己的 home（$DSH_HOME/chonkyfish/），面板补充人格设定作为 system prompt 补充动态生效，路径/路由/配置由资源管理模块统一提供。",

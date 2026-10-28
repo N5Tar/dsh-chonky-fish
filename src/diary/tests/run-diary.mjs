@@ -4,7 +4,7 @@
  *   node src/diary/tests/run-diary.mjs
  *
  * 覆盖：日期/正文/limit/action 校验、Local Provider 行为、单工具契约、
- * 每日 20:00 判断（时区/catchUp/去重/已写/无会话/agent busy）、旁白文案。
+ * 面板只读路由、模块装配（确认没有定时器）。
  */
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -16,10 +16,7 @@ import { isValidDateText } from '../date.js'
 import { DIARY_CODES, DiaryError } from '../errors.js'
 import { handleDiaryRequest } from '../http.js'
 import { createDiaryModule } from '../index.js'
-import { diaryNarration, timeLabel } from '../narration.js'
 import { createLocalDiaryProvider } from '../provider.js'
-import { createDiaryScheduler, isDue, zonedParts } from '../schedule.js'
-import { createDiaryState } from '../state.js'
 import { createDiaryTool, DIARY_TOOL_NAME, renderDiaryResult } from '../tools.js'
 
 const results = []
@@ -44,8 +41,6 @@ function makeRoot() {
   return {
     root,
     diary: join(root, '日记'),
-    state: join(root, 'diary.json'),
-    proactive: join(root, 'proactive.json'),
     config: join(root, 'config.json'),
     cleanup() {
       rmSync(root, { recursive: true, force: true })
@@ -222,194 +217,6 @@ await test('tool: 单工具 diary，action 枚举，成功/失败都可渲染', 
   }
 })
 
-/* ------------------------------------------------------------ 旁白 */
-
-await test('narration: 口语时间 / 日期 / 写完不用汇报', () => {
-  assert.equal(timeLabel(20), '晚上八点')
-  assert.equal(timeLabel(8), '早上八点')
-  assert.equal(timeLabel(23), '晚上十一点')
-  assert.equal(timeLabel(0), '深夜十二点')
-  const text = diaryNarration({ date: '2026-10-28', hour: 20 })
-  assert.ok(text.includes('2026-10-28'))
-  assert.ok(text.includes('不用跟我汇报'))
-  assert.ok(text.includes('diary(action="read"'))
-})
-
-/* ----------------------------------------------------------- 定时器 */
-
-await test('schedule: 时区拆分与到点判断（20:00 / catchUp）', () => {
-  const at2000 = Date.UTC(2026, 9, 28, 12, 0, 0) // Asia/Shanghai 20:00
-  assert.deepEqual(zonedParts(at2000, 'Asia/Shanghai'), { date: '2026-10-28', hour: 20, minute: 0 })
-  assert.equal(isDue({ now: at2000, hour: 20, minute: 0, timeZone: 'Asia/Shanghai' }), true)
-  assert.equal(isDue({ now: at2000 - 60_000, hour: 20, minute: 0, timeZone: 'Asia/Shanghai' }), false)
-  assert.equal(isDue({ now: at2000 + 60_000, hour: 20, minute: 0, timeZone: 'Asia/Shanghai' }), true)
-  assert.equal(
-    isDue({ now: at2000 + 60_000, hour: 20, minute: 0, timeZone: 'Asia/Shanghai', catchUp: false }),
-    false,
-  )
-  const nextDay = Date.UTC(2026, 9, 28, 16, 1, 0) // Asia/Shanghai 次日 00:01
-  assert.equal(isDue({ now: nextDay, hour: 20, minute: 0, timeZone: 'Asia/Shanghai' }), false)
-})
-
-function makeSchedulerFixture({
-  workspace,
-  now,
-  config,
-  deliver = async () => ({ ok: true, sessionId: 's1' }),
-  files = {},
-}) {
-  mkdirSync(workspace.root, { recursive: true })
-  for (const [name, content] of Object.entries(files)) {
-    writeFileSync(join(workspace.root, name), content, 'utf8')
-  }
-  const provider = createLocalDiaryProvider({ directory: workspace.diary })
-  const state = createDiaryState({ file: workspace.state })
-  const resources = {
-    getConfig: () => config,
-    paths: { proactive: workspace.proactive, diary: workspace.diary },
-  }
-  const calls = []
-  const deliverer = {
-    async deliver(sessionId, text) {
-      calls.push({ sessionId, text })
-      return deliver(sessionId, text)
-    },
-  }
-  const scheduler = createDiaryScheduler({ resources, provider, state, deliverer, now: () => now })
-  return { scheduler, provider, state, calls, resources }
-}
-
-const BASE_CONFIG = (overrides = {}) => ({
-  diary: {
-    enabled: true,
-    maxContentChars: 50000,
-    schedule: { enabled: true, hour: 20, minute: 0, timezone: 'Asia/Shanghai', catchUp: true, ...overrides },
-  },
-})
-
-const AT_2000 = Date.UTC(2026, 9, 28, 12, 0, 0)
-
-await test('schedule: 到点投递 → 标记 → 同一天不重复', async () => {
-  const workspace = makeRoot()
-  try {
-    const { scheduler, state, calls } = makeSchedulerFixture({
-      workspace,
-      now: AT_2000,
-      config: BASE_CONFIG(),
-      files: { 'proactive.json': JSON.stringify({ version: 2, activeSessionId: 'fish-session' }) },
-    })
-    const first = await scheduler.checkOnce()
-    assert.equal(first.status, 'delivered')
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0].sessionId, 'fish-session')
-    assert.ok(calls[0].text.includes('2026-10-28'))
-    const saved = await state.read()
-    assert.equal(saved.lastNudgeDate, '2026-10-28')
-    assert.equal(saved.lastNudgeStatus, 'delivered')
-
-    const second = await scheduler.checkOnce()
-    assert.equal(second.reason, 'already-nudged')
-    assert.equal(calls.length, 1)
-  } finally {
-    workspace.cleanup()
-  }
-})
-
-await test('schedule: 未到点 / 当天已有日记 / 无面板会话 / 投递失败重试', async () => {
-  const workspace = makeRoot()
-  try {
-    // 未到点
-    {
-      const ws = makeRoot()
-      const fixture = makeSchedulerFixture({
-        workspace: ws,
-        now: AT_2000 - 60_000,
-        config: BASE_CONFIG(),
-        files: { 'proactive.json': JSON.stringify({ version: 2, activeSessionId: 'fish-session' }) },
-      })
-      const result = await fixture.scheduler.checkOnce()
-      assert.equal(result.reason, 'not-due')
-      ws.cleanup()
-    }
-
-    // 当天已有日记 → 标记 already-written，不投递
-    {
-      const ws = makeRoot()
-      const fixture = makeSchedulerFixture({
-        workspace: ws,
-        now: AT_2000,
-        config: BASE_CONFIG(),
-        files: { 'proactive.json': JSON.stringify({ version: 2, activeSessionId: 'fish-session' }) },
-      })
-      mkdirSync(ws.diary, { recursive: true })
-      writeFileSync(join(ws.diary, '2026-10-28.md'), 'already\n', 'utf8')
-      const result = await fixture.scheduler.checkOnce()
-      assert.equal(result.reason, 'diary-exists')
-      assert.equal(fixture.calls.length, 0)
-      assert.equal((await fixture.state.read()).lastNudgeStatus, 'already-written')
-      ws.cleanup()
-    }
-
-    // 没有面板会话 → 跳过，不投递
-    {
-      const ws = makeRoot()
-      const fixture = makeSchedulerFixture({ workspace: ws, now: AT_2000, config: BASE_CONFIG() })
-      const result = await fixture.scheduler.checkOnce()
-      assert.equal(result.reason, 'no-panel-session')
-      assert.equal(fixture.calls.length, 0)
-      ws.cleanup()
-    }
-
-    // agent busy → 不标记，下次成功
-    {
-      const ws = makeRoot()
-      let deliver = async () => ({ ok: false, error: 'agent-busy' })
-      const fixture = makeSchedulerFixture({
-        workspace: ws,
-        now: AT_2000,
-        config: BASE_CONFIG(),
-        files: { 'proactive.json': JSON.stringify({ version: 2, activeSessionId: 'fish-session' }) },
-        deliver: (...args) => deliver(...args),
-      })
-      const failed = await fixture.scheduler.checkOnce()
-      assert.equal(failed.status, 'deliver-failed')
-      assert.equal((await fixture.state.read()).lastNudgeDate, null)
-      deliver = async () => ({ ok: true, sessionId: 'fish-session' })
-      const retried = await fixture.scheduler.checkOnce()
-      assert.equal(retried.status, 'delivered')
-      assert.equal(fixture.calls.length, 2)
-      ws.cleanup()
-    }
-  } finally {
-    workspace.cleanup()
-  }
-})
-
-await test('schedule: enabled/disabled 与 catchUp=false', async () => {
-  const workspace = makeRoot()
-  try {
-    const disabled = makeSchedulerFixture({
-      workspace,
-      now: AT_2000,
-      config: { diary: { enabled: false, schedule: { enabled: true, hour: 20, minute: 0, timezone: 'Asia/Shanghai' } } },
-      files: { 'proactive.json': JSON.stringify({ version: 2, activeSessionId: 's' }) },
-    })
-    assert.equal((await disabled.scheduler.checkOnce()).reason, 'disabled')
-
-    const lateWs = makeRoot()
-    const late = makeSchedulerFixture({
-      workspace: lateWs,
-      now: AT_2000 + 5 * 60_000,
-      config: BASE_CONFIG({ catchUp: false }),
-      files: { 'proactive.json': JSON.stringify({ version: 2, activeSessionId: 's' }) },
-    })
-    assert.equal((await late.scheduler.checkOnce()).reason, 'not-due')
-    lateWs.cleanup()
-  } finally {
-    workspace.cleanup()
-  }
-})
-
 /* --------------------------------------------------------- 面板路由 */
 
 await test('http: 鉴权 / 列表 / 读取 / 404 / 参数校验', async () => {
@@ -479,22 +286,17 @@ await test('http: 鉴权 / 列表 / 读取 / 404 / 参数校验', async () => {
 
 /* ------------------------------------------------------------ 装配 */
 
-await test('module: 装配出单工具与 start/stop，不依赖 DSH', () => {
+await test('module: 只装配单工具（没有定时器）', () => {
   const workspace = makeRoot()
   try {
     const resources = {
-      paths: {
-        diary: workspace.diary,
-        diaryState: workspace.state,
-        proactive: workspace.proactive,
-        workspace: join(workspace.root, '小鱼塘'),
-      },
-      getConfig: () => BASE_CONFIG(),
+      paths: { diary: workspace.diary },
+      getConfig: () => ({ diary: { maxContentChars: 50000 } }),
     }
-    const diary = createDiaryModule({ ctx: {}, resources, logger: null, now: () => AT_2000 })
+    const diary = createDiaryModule({ resources })
     assert.equal(diary.tool.name, DIARY_TOOL_NAME)
-    diary.start()
-    diary.stop()
+    assert.equal('start' in diary, false)
+    assert.equal('stop' in diary, false)
   } finally {
     workspace.cleanup()
   }

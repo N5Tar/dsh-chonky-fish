@@ -316,7 +316,8 @@ export function apply(ctx) {
 
   /* ------------------------------------------------------------- diary */
 
-  // 日记模块：单工具 `diary`（write/read/list）+ 本地 Markdown + 每天 20:00 提醒。
+  // 日记模块：单工具 `diary`（write/read/list）+ 本地 Markdown + 面板只读路由。
+  // 写日记的时机由大肥鱼自己用 DSH 的 schedule 工具安排，模块本身没有定时器。
   // 工具全局注册；只有 config.diary.enabledPresets 里的 preset 能用，其它 Agent
   // 在创建时 restrict 掉，guard 再兜一层。日记模块整体失败不影响面板/聊天。
   const diaryConfig = resources.getConfig().diary
@@ -431,7 +432,7 @@ function service(ctx, name) {
 }
 
 /**
- * 启动日记模块：注册 diary 工具 + 起每日 20:00 定时器。
+ * 启动日记模块：注册 diary 工具 + 面板只读路由（没有定时器）。
  * 和事件引擎一样用动态 import + 整段 try/catch：日记挂了，面板和聊天照常。
  * @returns {Promise<{ stop: () => void } | null>}
  */
@@ -439,7 +440,7 @@ async function startDiary(ctx, { resources, ready, token, warn }) {
   try {
     await ready
     const [{ createDiaryModule }] = await Promise.all([import('./src/diary/index.js')])
-    const diary = createDiaryModule({ ctx, resources, logger: ctx.logger })
+    const diary = createDiaryModule({ resources })
     let disposeTool = () => {}
     try {
       disposeTool = ctx.tools.register(diary.tool)
@@ -447,7 +448,7 @@ async function startDiary(ctx, { resources, ready, token, warn }) {
       warn('[chonkyfish] diary 工具注册失败', error)
       return null
     }
-    // 面板「日记」弹窗的只读路由（list / read）。注册失败不影响工具与定时器。
+    // 面板「日记」弹窗的只读路由（list / read）。注册失败不影响工具本身。
     try {
       const { handleDiaryRequest } = await import('./src/diary/http.js')
       ctx.effect(() => ctx.webServer.register({
@@ -481,14 +482,8 @@ async function startDiary(ctx, { resources, ready, token, warn }) {
     } catch (error) {
       warn('[chonkyfish] 日记面板路由注册失败（日记工具仍可用）', error)
     }
-    diary.start()
     return {
       stop() {
-        try {
-          diary.stop()
-        } catch (ignored) {
-          /* already gone */
-        }
         try {
           disposeTool()
         } catch (ignored) {

@@ -86,21 +86,6 @@ async function writeJsonAtomic(file, value) {
   }
 }
 
-/**
- * IANA 时区是否合法；空字符串表示跟随系统，也允许。
- * Intl 遇到未知时区会抛 RangeError，这里只用来做配置消毒。
- */
-function isValidTimeZone(value) {
-  if (typeof value !== 'string') return false
-  if (value === '') return true
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: value })
-    return true
-  } catch (error) {
-    return false
-  }
-}
-
 /** agent preset 白名单：去重、去空白、只接受非空字符串。 */
 function sanitizePresetList(value, fallback) {
   if (!Array.isArray(value)) return [...fallback]
@@ -119,14 +104,13 @@ function sanitizePresetList(value, fallback) {
 /**
  * 配置消毒：未知字段一律丢弃，非法字段回退默认值。
  * @param {unknown} raw
- * @returns {{ version: number, proactive: { enabled: boolean }, eventEngine: { enabled: boolean, extractTickMs: number, extractBatch: number, maxRecordsPerTurn: number }, diary: { enabled: boolean, enabledPresets: string[], maxContentChars: number, schedule: { enabled: boolean, hour: number, minute: number, timezone: string, catchUp: boolean } } }}
+ * @returns {{ version: number, proactive: { enabled: boolean }, eventEngine: { enabled: boolean, extractTickMs: number, extractBatch: number, maxRecordsPerTurn: number }, diary: { enabled: boolean, enabledPresets: string[], maxContentChars: number } }}
  */
 function sanitizeConfig(raw) {
   const source = isPlainObject(raw) ? raw : {}
   const proactive = isPlainObject(source.proactive) ? source.proactive : {}
   const eventEngine = isPlainObject(source.eventEngine) ? source.eventEngine : {}
   const diary = isPlainObject(source.diary) ? source.diary : {}
-  const schedule = isPlainObject(diary.schedule) ? diary.schedule : {}
   const defaults = DEFAULT_CONFIG
   return {
     version: VERSIONS.config,
@@ -155,13 +139,6 @@ function sanitizeConfig(raw) {
         max: 200000,
         fallback: defaults.diary.maxContentChars,
       }),
-      schedule: {
-        enabled: typeof schedule.enabled === 'boolean' ? schedule.enabled : defaults.diary.schedule.enabled,
-        hour: clampInt(schedule.hour, { min: 0, max: 23, fallback: defaults.diary.schedule.hour }),
-        minute: clampInt(schedule.minute, { min: 0, max: 59, fallback: defaults.diary.schedule.minute }),
-        timezone: isValidTimeZone(schedule.timezone) ? schedule.timezone : defaults.diary.schedule.timezone,
-        catchUp: typeof schedule.catchUp === 'boolean' ? schedule.catchUp : defaults.diary.schedule.catchUp,
-      },
     },
   }
 }
@@ -172,16 +149,11 @@ function mergeConfig(current, patch) {
   const proactive = isPlainObject(source.proactive) ? source.proactive : {}
   const eventEngine = isPlainObject(source.eventEngine) ? source.eventEngine : {}
   const diary = isPlainObject(source.diary) ? source.diary : {}
-  const schedule = isPlainObject(diary.schedule) ? diary.schedule : {}
   return sanitizeConfig({
     version: VERSIONS.config,
     proactive: { ...current.proactive, ...proactive },
     eventEngine: { ...current.eventEngine, ...eventEngine },
-    diary: {
-      ...current.diary,
-      ...diary,
-      schedule: { ...current.diary.schedule, ...schedule },
-    },
+    diary: { ...current.diary, ...diary },
   })
 }
 
@@ -207,7 +179,7 @@ function resolveDshHome(env, homeRoot) {
  * @returns {{
  *   dshHome: string,
  *   home: string,
- *   paths: { home: string, config: string, state: string, proactive: string, events: string, diaryState: string, diary: string, workspace: string },
+ *   paths: { home: string, config: string, state: string, proactive: string, events: string, diary: string, workspace: string },
  *   routes: typeof ROUTES,
  *   limits: typeof LIMITS,
  *   versions: typeof VERSIONS,
@@ -227,7 +199,6 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     state: join(home, FILES.state),
     proactive: join(home, FILES.proactive),
     events: join(home, FILES.events),
-    diaryState: join(home, FILES.diaryState),
     diary: join(home, DIARY_DIR),
     workspace: join(home, WORKSPACE_DIR),
   }

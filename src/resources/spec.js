@@ -30,7 +30,6 @@ export const FILES = Object.freeze({
   state: 'state.json',
   proactive: 'proactive.json',
   events: 'events.db',
-  diaryState: 'diary.json',
 })
 
 /** Host 暴露给面板的本地 HTTP 路由（都按 activation token 鉴权）。 */
@@ -99,19 +98,14 @@ export const DEFAULT_CONFIG = Object.freeze({
   /**
    * 日记模块：同一个大肥鱼会话里写日记，正文落本地 Markdown。
    * - enabledPresets：哪些 agent preset 能看到 diary 工具（其它 preset 默认关闭）
-   * - schedule：每天固定时刻提醒同一个鱼鱼会话写日记
-   * - catchUp：当天错过时间点后，Host 再启动时补一次
+   * - maxContentChars：单篇日记正文上限
+   *
+   * 注意：模块本身**没有定时器**。写日记的时间由大肥鱼自己用 DSH 的
+   * `schedule_create` 安排（想每天写就排一个 daily 提醒）。
    */
   diary: Object.freeze({
     enabled: true,
     enabledPresets: Object.freeze([PRESET]),
     maxContentChars: 50000,
-    schedule: Object.freeze({
-      enabled: true,
-      hour: 20,
-      minute: 0,
-      timezone: '',
-      catchUp: true,
-    }),
   }),
 })
