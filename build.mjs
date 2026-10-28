@@ -115,6 +115,25 @@ css += `
 .dfy-page .modal-backdrop { position:absolute; }
 .dfy-page .toast { position:absolute; }
 .dfy-page .dfy-confirm { position:absolute; }
+
+/* Section pages share the shell but hide the chat layout: the existing
+   .cf-section markup is moved out of the modal into a full-page card. */
+.dfy-page.cf-section-view > .app { display: none; }
+.dfy-page.cf-section-view > .modal-backdrop { display: none; }
+.cf-page { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 36px 40px 48px; background: linear-gradient(180deg,#ffffff 0%,#f6fbff 100%); }
+.cf-page-inner { width: min(780px, 100%); margin: 0 auto; }
+.cf-page-head { display: flex; align-items: center; gap: 14px; margin: 0 0 22px; }
+.cf-page-icon { flex: none; width: 46px; height: 46px; border-radius: 15px; display: grid; place-items: center; font-size: 22px; background: linear-gradient(150deg,#ecf7ff,#d5e9ff); box-shadow: 0 6px 16px #81b2eb26; }
+.cf-page-title { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: .2px; color: #22456b; }
+.cf-page-sub { margin: 5px 0 0; font-size: 12px; line-height: 1.7; color: #9aacc4; }
+.cf-page-body { background: #fff; border: 1px solid #e8f1fb; border-radius: 20px; padding: 22px 24px 26px; box-shadow: 0 18px 46px #87b2e01f; }
+@container (max-width: 620px) {
+  .cf-page { padding: 22px 16px 30px; }
+  .cf-page-head { gap: 10px; margin-bottom: 16px; }
+  .cf-page-icon { width: 38px; height: 38px; border-radius: 12px; font-size: 18px; }
+  .cf-page-title { font-size: 18px; }
+  .cf-page-body { padding: 16px 14px 20px; border-radius: 16px; }
+}
 `
 
 /* ------------------------------------------------------------------ runtime */
@@ -126,12 +145,13 @@ const runtime = readFileSync(join(here, 'src/runtime.js'), 'utf8')
 const moduleSource = `/**
  * 大肥鱼 · chat UI — browser half.
  *
- * Registers one sidebar panel entry (\`sidebar.panellist\`) and the matching
- * main panel (\`main\`). The panel renders the ported chat design inside a
- * Shadow DOM subtree: the concept UI keeps its own palette and its generic class
- * names (.app/.message/…) never reach the Harness stylesheet. Chat data lives in
- * the DSH Session log; the panel's own state (persona/name, wallet, ledger)
- * stays in this browser's localStorage.
+ * Registers six flat sidebar panel entries (\`sidebar.panellist\`) and their
+ * matching main panels (\`main\`): the chat, wallet, persona, senses, diary and
+ * social pages. The panel renders the ported design inside a Shadow DOM
+ * subtree: the concept UI keeps its own palette and its generic class names
+ * (.app/.message/…) never reach the Harness stylesheet. Chat data lives in the
+ * DSH Session log; the panel's own state (persona/name, wallet, ledger) stays
+ * on the Host (\`$DSH_HOME/chonkyfish/state.json\`) with localStorage as cache.
  *
  * While active, the module also stacks the fish-pond palette onto the Harness
  * theme as a token override layer, so the whole application — not just this
@@ -150,10 +170,20 @@ window.__ModuleLoader__.load({
 
     var zh = {
       nav: '大肥鱼',
+      navWallet: '零花钱',
+      navPersona: '人格',
+      navSense: '感知',
+      navDiary: '日记',
+      navSocial: '社交',
       title: '大肥鱼 · 小鱼塘管理台',
     }
     var en = {
       nav: 'ChonkyFish',
+      navWallet: 'Wallet',
+      navPersona: 'Persona',
+      navSense: 'Senses',
+      navDiary: 'Diary',
+      navSocial: 'Social',
       title: 'ChonkyFish · Little Fish Pond',
     }
 
@@ -685,80 +715,147 @@ ${runtime}
       }
     }
 
-    /** The main panel: mounts the ported page into a shadow tree. */
-    function ChonkyFishPage() {
-      var hostRef = React.useRef(null)
+    /**
+     * One main panel per sidebar entry: mount the same ported page into its own
+     * shadow tree. The chat entry gets the DSH Session bridge; the section
+     * entries mount their standalone page (wallet / persona / senses / diary /
+     * social) inside the same shell and pass no bridge.
+     */
+    function createPanelPage(view) {
+      return function FishPanelPage() {
+        var hostRef = React.useRef(null)
 
-      React.useEffect(function () {
-        var host = hostRef.current
-        if (!host) return undefined
-        var shadow
-        try {
-          shadow = host.shadowRoot || host.attachShadow({ mode: 'open' })
-        } catch (error) {
-          console.error('[chonkyfish] shadow root unavailable', error)
-          host.textContent = '大肥鱼面板无法初始化：当前浏览器不支持 Shadow DOM。'
-          return undefined
-        }
-
-        shadow.innerHTML = ''
-        var style = document.createElement('style')
-        style.textContent = CSS
-        var wrap = document.createElement('div')
-        wrap.className = 'dfy-page'
-        wrap.innerHTML = PAGE_HTML
-        shadow.appendChild(style)
-        shadow.appendChild(wrap)
-
-        var dispose = function () {}
-        try {
-          dispose = mountChonkyFishPage(wrap, fishChat) || dispose
-        } catch (error) {
-          console.error('[chonkyfish] page mount failed', error)
-          wrap.textContent = '大肥鱼面板初始化失败：' + (error && error.message ? error.message : String(error))
-        }
-
-        return function () {
+        React.useEffect(function () {
+          var host = hostRef.current
+          if (!host) return undefined
+          var shadow
           try {
-            dispose()
+            shadow = host.shadowRoot || host.attachShadow({ mode: 'open' })
           } catch (error) {
-            console.error('[chonkyfish] page dispose failed', error)
+            console.error('[chonkyfish] shadow root unavailable', error)
+            host.textContent = '大肥鱼面板无法初始化：当前浏览器不支持 Shadow DOM。'
+            return undefined
           }
+
           shadow.innerHTML = ''
-        }
-      }, [])
+          var style = document.createElement('style')
+          style.textContent = CSS
+          var wrap = document.createElement('div')
+          wrap.className = 'dfy-page'
+          wrap.innerHTML = PAGE_HTML
+          shadow.appendChild(style)
+          shadow.appendChild(wrap)
 
-      return h('div', {
-        ref: hostRef,
-        className: 'chonkyfish-host',
-        style: { display: 'block', height: '100%', minHeight: 0, overflow: 'hidden' },
-      })
-    }
+          var chat = view === 'chat' ? fishChat : null
+          var dispose = function () {}
+          try {
+            dispose = mountChonkyFishPage(wrap, chat, { view: view }) || dispose
+          } catch (error) {
+            console.error('[chonkyfish] page mount failed', error)
+            wrap.textContent = '大肥鱼面板初始化失败：' + (error && error.message ? error.message : String(error))
+          }
 
-    /** The sidebar entry: a fish glyph that follows the host's icon color. */
-    function ChonkyFishIcon(props) {
-      var size = (props && props.size) || 18
-      var active = props && props.active === true
-      return h('svg', {
-        viewBox: '0 0 24 24',
-        width: size,
-        height: size,
-        'aria-hidden': true,
-        focusable: false,
-        style: { display: 'block', opacity: active ? 1 : 0.82 },
-      },
-        h('path', {
-          fill: 'currentColor',
-          fillRule: 'evenodd',
-          clipRule: 'evenodd',
-          d: 'M2.6 12.2c2.3 3.9 6 6.1 9.9 6.1 4.7 0 8.1-3 9.2-6.1-1.1-3.1-4.5-6.1-9.2-6.1-3.9 0-7.6 2.2-9.9 6.1Zm15 0a1.4 1.4 0 1 1-2.8 0 1.4 1.4 0 0 1 2.8 0Z',
-        }),
-        h('path', {
-          fill: 'currentColor',
-          d: 'M8.3 6.5c-.8-1.5-.7-2.6.4-3.5.3 1.1.9 1.7 1.7 2.1a8.6 8.6 0 0 1-2.1 1.4Z',
+          return function () {
+            try {
+              dispose()
+            } catch (error) {
+              console.error('[chonkyfish] page dispose failed', error)
+            }
+            shadow.innerHTML = ''
+          }
+        }, [])
+
+        return h('div', {
+          ref: hostRef,
+          className: 'chonkyfish-host',
+          style: { display: 'block', height: '100%', minHeight: 0, overflow: 'hidden' },
         })
-      )
+      }
     }
+
+    /**
+     * Sidebar glyphs: each follows the host's icon color. Stroke icons reuse the
+     * design's own symbol geometry; the fish stays filled.
+     */
+    function makePanelIcon(parts, filled) {
+      return function PanelIcon(props) {
+        var size = (props && props.size) || 18
+        var active = props && props.active === true
+        var style = { display: 'block', opacity: active ? 1 : 0.82 }
+        if (filled) {
+          style.fill = 'currentColor'
+        } else {
+          style.fill = 'none'
+          style.stroke = 'currentColor'
+          style.strokeWidth = 1.7
+          style.strokeLinecap = 'round'
+          style.strokeLinejoin = 'round'
+        }
+        return h('svg', {
+          viewBox: '0 0 24 24',
+          width: size,
+          height: size,
+          'aria-hidden': true,
+          focusable: false,
+          style: style,
+        }, parts)
+      }
+    }
+
+    var ICON_CHAT = makePanelIcon([
+      h('path', {
+        key: 'body',
+        fill: 'currentColor',
+        fillRule: 'evenodd',
+        clipRule: 'evenodd',
+        d: 'M2.6 12.2c2.3 3.9 6 6.1 9.9 6.1 4.7 0 8.1-3 9.2-6.1-1.1-3.1-4.5-6.1-9.2-6.1-3.9 0-7.6 2.2-9.9 6.1Zm15 0a1.4 1.4 0 1 1-2.8 0 1.4 1.4 0 0 1 2.8 0Z',
+      }),
+      h('path', {
+        key: 'tail',
+        fill: 'currentColor',
+        d: 'M8.3 6.5c-.8-1.5-.7-2.6.4-3.5.3 1.1.9 1.7 1.7 2.1a8.6 8.6 0 0 1-2.1 1.4Z',
+      }),
+    ], true)
+
+    var ICON_WALLET = makePanelIcon([
+      h('rect', { key: 'body', x: 3, y: 6, width: 18, height: 15, rx: 3 }),
+      h('path', { key: 'flap', d: 'M3 9V6a3 3 0 0 1 3-3h11' }),
+      h('path', { key: 'clasp', d: 'M17 14h4' }),
+    ])
+
+    var ICON_PERSONA = makePanelIcon([
+      h('circle', { key: 'head', cx: 12, cy: 8, r: 3.4 }),
+      h('path', { key: 'body', d: 'M5 20c.8-3.8 3.5-6 7-6s6.2 2.2 7 6' }),
+    ])
+
+    var ICON_SENSE = makePanelIcon([
+      h('path', { key: 'spark', d: 'M11 3l1.7 5.1L18 10l-5.3 1.9L11 17l-1.7-5.1L4 10l5.3-1.9z' }),
+      h('path', { key: 'star', d: 'M18 16l.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7z' }),
+    ])
+
+    var ICON_DIARY = makePanelIcon([
+      h('path', { key: 'book', d: 'M7 3h11a2 2 0 0 1 2 2v16H8a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Z' }),
+      h('path', { key: 'spine', d: 'M8 3v18' }),
+      h('path', { key: 'lines', d: 'M11 8h6M11 12h6M11 16h4' }),
+    ])
+
+    var ICON_SOCIAL = makePanelIcon([
+      h('rect', { key: 'frame', x: 3, y: 3, width: 18, height: 18, rx: 2 }),
+      h('path', { key: 'split', d: 'M9 3v18' }),
+    ])
+
+    /**
+     * Sidebar entries. Each id addresses the main panel with the same id, so the
+     * layout can switch both together; the fish chat stays first.
+     */
+    var PANELS = [
+      { id: 'chonkyfish', view: 'chat', label: 'nav', icon: ICON_CHAT, order: 20 },
+      { id: 'chonkyfish-wallet', view: 'wallet', label: 'navWallet', icon: ICON_WALLET, order: 21 },
+      { id: 'chonkyfish-persona', view: 'settings', label: 'navPersona', icon: ICON_PERSONA, order: 22 },
+      { id: 'chonkyfish-sense', view: 'sense', label: 'navSense', icon: ICON_SENSE, order: 23 },
+      { id: 'chonkyfish-diary', view: 'diary', label: 'navDiary', icon: ICON_DIARY, order: 24 },
+      { id: 'chonkyfish-social', view: 'social', label: 'navSocial', icon: ICON_SOCIAL, order: 25 },
+    ]
 
     function apply(ctx) {
       var t = ctx.locale.bind(NS)
@@ -785,22 +882,28 @@ ${runtime}
         return ctx.theme.overrideTokens(SKIN_SOURCE, SKIN)
       }, 'chonkyfish: fish-pond skin')
 
+      // One flat sidebar entry per destination (the shipped sidebar has no
+      // submenu API): each registration's id also addresses its main panel.
       ctx.slots.inject('main', function () {
-        return ctx.slots.register({
-          name: 'main',
-          key: 'chonkyfish',
-          locale: NS,
-        }, ChonkyFishPage)
+        return PANELS.map(function (panel) {
+          return ctx.slots.register({
+            name: 'main',
+            key: panel.id,
+            locale: NS,
+          }, createPanelPage(panel.view))
+        })
       })
 
       ctx.slots.inject('sidebar.panellist', function () {
-        return ctx.slots.register({
-          name: 'sidebar.panellist',
-          id: 'chonkyfish',
-          order: 20,
-          label: function () { return t('nav') },
-          locale: NS,
-        }, ChonkyFishIcon)
+        return PANELS.map(function (panel) {
+          return ctx.slots.register({
+            name: 'sidebar.panellist',
+            id: panel.id,
+            order: panel.order,
+            label: function () { return t(panel.label) },
+            locale: NS,
+          }, panel.icon)
+        })
       })
     }
 

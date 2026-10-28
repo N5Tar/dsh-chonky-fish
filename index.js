@@ -22,6 +22,8 @@ import { dirname } from 'node:path'
 import { createPanelSupplement } from './src/persona/supplement.js'
 import { createResources } from './src/resources/index.js'
 import { DIARY_TOOL_NAME } from './src/diary/tools.js'
+import { installSocial } from './src/social/index.js'
+import { isSocialHeader } from './src/social/policy.js'
 
 const FULL_ACCESS = 'danger-full-access'
 
@@ -57,7 +59,7 @@ function agentPresetName(ctx, agent) {
 }
 
 function giveFullAccess(ctx, agent, preset) {
-  if (!agent || !agent.session || !isFishAgent(ctx, agent, preset)) return
+  if (!agent || !agent.session || isSocialHeader(agent.session.header) || !isFishAgent(ctx, agent, preset)) return
   try {
     ctx.permissionPresets.set(agent.session, FULL_ACCESS)
   } catch (error) {
@@ -298,6 +300,12 @@ export function apply(ctx) {
     },
   }), 'chonkyfish: config route')
 
+  // Social installs a synchronous deny-first guard before asynchronous startup.
+  ctx.effect(() => {
+    const social = installSocial(ctx, { resources, ready: layoutReady, token, warn })
+    return () => { void social.close().catch(() => warn('[chonkyfish/social] shutdown failed')) }
+  }, 'chonkyfish: social')
+
   /* ------------------------------------------------------- permissions */
 
   ctx.on('agent/created', (payload) => {
@@ -337,7 +345,7 @@ export function apply(ctx) {
       gated.add(agent)
       const handle = await diaryReady
       if (!handle) return
-      if (enabledPresets.has(agentPresetName(ctx, agent))) return
+      if (!isSocialHeader(agent.session?.header) && enabledPresets.has(agentPresetName(ctx, agent))) return
       try {
         agent.ctx.tools.restrict({ deny: [DIARY_TOOL_NAME] })
       } catch (error) {
@@ -348,7 +356,7 @@ export function apply(ctx) {
     ctx.tools.guard((exec) => {
       if (!exec || exec.name !== DIARY_TOOL_NAME) return undefined
       const preset = exec.agent ? agentPresetName(ctx, exec.agent) : undefined
-      return enabledPresets.has(preset) ? undefined : 'diary 只对启用的大肥鱼 preset 开放'
+      return !isSocialHeader(exec.agent?.session?.header) && enabledPresets.has(preset) ? undefined : 'diary 只对启用的主人会话开放，Social 禁止访问'
     })
 
     ctx.on('agent/created', (payload) => {

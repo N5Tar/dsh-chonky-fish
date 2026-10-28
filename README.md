@@ -8,7 +8,7 @@
 
 ## 特性
 
-- **自有面板**：侧栏「大肥鱼」入口 + 主面板聊天 UI（顶栏、消息流、无边框鱼鱼舞台、快捷 chips、钱包 / 人格 / 感知弹窗）
+- **自有面板**：侧栏六个平级入口（大肥鱼 / 零花钱 / 人格 / 感知 / 日记 / 社交），各自一个主面板：聊天页保留顶栏、消息流、无边框鱼鱼舞台、快捷 chips，其余入口把原来的弹窗内容铺成独立整页（钱包账本、人格设定、感知事件、只读日记、社交连接）
 - **真实对话**：消息走 DSH Session，不是前端假回复；会话保存在 DSH 日志里，标准对话界面也能打开
 - **agent preset**：安装本插件即注册 `chonkyfish` preset（人格 + 通用工具），无需单独安装预设包
 - **通用工具**：bash / pwsh、文件读写与 glob/grep、后台任务、todo、web_search / web_fetch
@@ -22,7 +22,17 @@
 - **主动消息（能力）**：保留「让大肥鱼先开口」的能力——Host 往**面板当前会话**里注入一条隐藏旁白，她就会主动说一句；主动消息本身没有定时器，不会自己新建或另找会话
 - **日记（模块1）**：一个 `diary` 工具（write / read / list）+ 本地 Markdown（`$DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md`）；模块**不带定时器**，写日记的时间由大肥鱼自己用定时任务工具安排；面板右上角 📔 图标可查看已写日记（只读）；默认只有 `chonkyfish` preset 能用，写完不用汇报
 - **定时任务（DSH 原生）**：给 `chonkyfish` preset 挂了 `schedule_create / list / update / delete`，鱼鱼可以自己排一次性/每日/每周/cron 提醒（包括“每天几点写日记”），到点由 DSH 的 `schedule` 服务把提醒投回**同一条会话**
-- **零外部请求**：插图与头像以 WebP data URI 内嵌在 `client.js` 里，不下载图片
+- **内嵌图片资源**：插图与头像以 WebP data URI 内嵌在 [client.js](<client.js>) 里，不下载图片
+
+## Social 社交接入（V1.2 · 默认关闭）
+
+新增事件感知型社交模块：QQ / Discord 消息经过身份校验和去重后进入有界收件箱，只更新未读通知，**不自动调用模型、不自动回复**。明确选择查看后才尝试将批次交给独立受限社交会话；可以沉默，只有显式发送工具才发信。
+
+- QQ NapCatQQ / SnowLuma 共用 v11 Driver；Discord OneBots 使用 v12 Driver。真实平台兼容性和接收端验收尚未完成。
+- 独立 `chonkyfish-social` preset 不包含通用工具，不读取主人日记、私人补充人格和面板历史；未经安全桥接授权的 Agent 默认拒绝 Social 工具。
+- 面板顶栏「社交」入口：只填平台、接入方式、地址和凭证，再加未读会话与显式「查看」；没有开关、接收范围或允许名单。
+- 自动行动引擎尚未接入；配置默认关闭，不自动连接账号。
+- 参见 [Social 配置、接口、测试和限制](<src/social/README.md>)。不要把代码和模拟测试完成理解为真实平台生产可用。
 
 ## 主动消息
 
@@ -188,9 +198,10 @@ $DSH_HOME/chonkyfish/
    ```
 
 3. 安装完成后：
-   - 左侧会出现「大肥鱼」图标，点开即用
+   - 左侧会出现「大肥鱼」以及零花钱 / 人格 / 感知 / 日记 / 社交五个同级图标，点开即用
+     （DSH 侧栏没有子菜单 API，所以六个目的地用平级入口注册，id 与主面板 key 一一对应）
    - `chonkyfish` agent preset 会自动注册（设置里能看到「大肥鱼」）
-   - 第一次打开鱼鱼面板会创建 / 注册「小鱼塘」工作区并新建会话
+   - 第一次打开鱼鱼聊天面板会创建 / 注册「小鱼塘」工作区并新建会话；其它五个入口不建会话，只读本机数据
 
 ### 方式二：开发
 
@@ -218,7 +229,7 @@ node build.mjs      # 从 src/original.html + src/runtime.js 生成 client.js
 - 主动消息的「面板当前会话 id、发送计数、最近发送记录」保存在 `$DSH_HOME/chonkyfish/proactive.json`；旁白正文与鱼鱼回复都会进入 DSH 会话日志
 - 日记正文保存在 `$DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md`；定时任务由 DSH 自己保存（`$DSH_HOME` 下的 schedule 存储）
 - 路径、路由、上限、默认配置由 `src/resources/` 统一管理，可编辑配置在 `$DSH_HOME/chonkyfish/config.json`
-- 插件本身不访问外部网络；`web_search` / `web_fetch` 会走 DSH 配置的 Web 服务
+- Social 默认没有任何连接；配置一条连接后 Host 才会连它的 OneBot Endpoint 并缓存收到的消息。其余图片资源无外部请求；`web_search` / `web_fetch` 会走 DSH 配置的 Web 服务
 
 ## 仓库结构
 

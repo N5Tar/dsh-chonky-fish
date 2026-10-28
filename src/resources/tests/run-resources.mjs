@@ -99,6 +99,13 @@ await test('paths: 所有文件都在 home 下，工作区在 home/小鱼塘', (
     events: join(home, FILES.events),
     diary: join(home, '日记'),
     workspace: join(home, WORKSPACE_DIR),
+    social: join(home, 'social'),
+    socialConfig: join(home, 'social', 'config.json'),
+    socialIdentities: join(home, 'social', 'identities.json'),
+    socialInbox: join(home, 'social', 'inbox'),
+    socialBindings: join(home, 'social', 'session-bindings.json'),
+    socialOperations: join(home, 'social', 'operations.json'),
+    socialWorkspace: join(home, 'social', '会话'),
   })
   // 没有任何 legacy 路径字段
   assert.equal('legacyWorkspace' in resources.paths, false)

@@ -256,6 +256,34 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
 .cf-diary-date.active{background:#e5f2ff;border-color:#bcd9f7;color:#31577f}
 .cf-diary-title{margin:2px 0 8px;font-size:14px;font-weight:760;color:#31577f}
 .cf-diary-body{white-space:pre-wrap;word-break:break-word;background:#fbfdff;border:1px solid #e9f2fc;border-radius:14px;padding:12px 14px;color:#3f5f80;font-size:12px;line-height:1.9;max-height:320px;overflow:auto;min-height:120px}
+
+/* ===== 功能层：社交连接（Social V1.2）===== */
+.cf-social-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:4px 0 12px;color:#7b96b5;font-size:12px}
+.cf-social-status{display:grid;gap:5px;background:#f6faff;border:1px solid #e9f1f9;border-radius:11px;padding:11px 13px;font-size:12px;color:#6a86a4;line-height:1.75}
+.cf-social-status b{color:#31577f;font-weight:700}
+.cf-social-status .warn{color:#c98a8a}
+.cf-social-block{margin-top:14px}
+.cf-social-title{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12px;font-weight:750;color:#56708f;margin:0 0 8px}
+.cf-social-title b{color:#31577f;font-size:13px;margin-left:6px}
+.cf-social-list{display:grid;gap:8px;max-height:210px;overflow:auto;padding:1px}
+.cf-social-row{display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid #e9f2fc;border-radius:12px;padding:10px 12px;background:#fbfdff;font-size:12px;color:#5b7b9e;line-height:1.6}
+.cf-social-row small{display:block;color:#a9bcd2;margin-top:3px;font-size:11px;word-break:break-all}
+.cf-social-row .cf-social-actions{display:flex;gap:6px;flex:none}
+.cf-social-row button{border:1px solid #d9e9fa;background:#f6faff;color:#5b90c8;border-radius:9px;padding:7px 10px;font-size:11px;font-weight:650;white-space:nowrap}
+.cf-social-row button:hover{background:#e9f4ff}
+.cf-social-row button.primary-mini{background:linear-gradient(135deg,#6cb2f4,#4f93dc);border:0;color:#fff}
+.cf-social-chip{display:inline-block;border-radius:99px;padding:2px 8px;font-size:10px;background:#eef6ff;color:#5b90c8;margin:0 6px 0 0}
+.cf-social-chip.ok{background:#eefaf3;color:#51a788}
+.cf-social-chip.bad{background:#fdf0f0;color:#c98a8a}
+.cf-social-empty{color:#a9bcd2;font-size:12px;padding:12px 0;text-align:center}
+.cf-social-error{background:#fdf3f3;border:1px solid #f4dede;border-radius:11px;padding:10px 12px;color:#b97878;font-size:12px;line-height:1.7}
+.cf-social-form{display:grid;gap:10px;margin-top:16px;border-top:1px solid #eef4fb;padding-top:14px}
+.cf-social-form .cf-field{margin-top:0}
+.cf-social-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.cf-social-form select{background:#fbfdff;border:1px solid #dce9f8;border-radius:11px;padding:11px 13px;font-size:13px;color:#3d5f84;outline:none;width:100%}
+.cf-social-checks{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:#56708f}
+.cf-social-checks label{display:flex;align-items:center;gap:6px;cursor:pointer}
+.cf-social-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:4px}
 </style>
 </head>
 <body>
@@ -287,6 +315,7 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
         <button class="top-action" id="wallet-button" type="button"><span>🐚</span> <span id="top-balance">128</span> 贝壳</button>
         <button class="top-action icon-only" id="sense-button" type="button" aria-label="查看鱼鱼的感知"><svg class="icon"><use href="#i-spark"/></svg></button>
         <button class="top-action icon-only" id="diary-button" type="button" aria-label="查看鱼鱼的日记"><svg class="icon"><use href="#i-diary"/></svg></button>
+        <button class="top-action icon-only" id="social-button" type="button" aria-label="查看鱼鱼的社交连接"><svg class="icon"><use href="#i-panel"/></svg></button>
         <button class="top-action" id="settings-button" type="button"><svg class="icon small"><use href="#i-gear"/></svg>设置</button>
         <button class="top-action icon-only hide-narrow" id="info-button" type="button" aria-label="关于本界面"><svg class="icon"><use href="#i-info"/></svg></button>
       </div>
@@ -356,6 +385,32 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
       <h3 class="cf-diary-title" id="diary-title">选一篇看看</h3>
       <div class="cf-diary-body" id="diary-body">还没有写过日记。</div>
       <div class="cf-note">🔒 日记保存在本机 $DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md；面板只读，写日记由鱼鱼自己调用 diary 工具完成，不会上传。</div>
+    </div>
+    <div class="cf-section" id="social-panel" hidden>
+      <div class="cf-social-head"><span id="social-summary">正在读取社交连接…</span><button class="cf-refresh" id="social-refresh" type="button">刷新</button></div>
+      <div class="cf-social-status" id="social-status"></div>
+      <div class="cf-social-block">
+        <div class="cf-social-title"><span>未读会话</span><b id="social-unread-count">0</b></div>
+        <div class="cf-social-list" id="social-notices"></div>
+      </div>
+      <div class="cf-social-block">
+        <div class="cf-social-title"><span>连接</span><button class="cf-refresh" id="social-new" type="button">新增连接</button></div>
+        <div class="cf-social-list" id="social-list"></div>
+      </div>
+      <form class="cf-social-form" id="social-form" autocomplete="off">
+        <div class="cf-social-title"><span id="social-form-title">新增连接</span></div>
+        <div class="cf-social-grid">
+          <div class="cf-field"><label for="social-id">连接 ID</label><input id="social-id" maxlength="80" placeholder="qq-main"/></div>
+          <div class="cf-field"><label for="social-platform">平台</label><select id="social-platform"><option value="qq">QQ</option><option value="discord">Discord</option></select></div>
+        </div>
+        <div class="cf-social-grid">
+          <div class="cf-field"><label for="social-provider">接入方式</label><select id="social-provider"><option value="napcat">NapCatQQ</option><option value="snowluma">SnowLuma</option><option value="onebots-discord">OneBots（Discord）</option></select></div>
+          <div class="cf-field"><label for="social-token-env">凭证环境变量名</label><input id="social-token-env" maxlength="128" placeholder="DSH_QQ_MAIN_ONEBOT_TOKEN"/></div>
+        </div>
+        <div class="cf-field"><label for="social-endpoint">连接地址（ws:// 或本机 wss://）</label><input id="social-endpoint" maxlength="2048" placeholder="ws://127.0.0.1:3001/"/></div>
+        <div class="cf-actions"><button class="cf-ghost" type="button" id="social-delete">删除这条</button><button class="primary" type="button" id="social-save">保存</button></div>
+      </form>
+      <div class="cf-note">🔒 保存即启用，私聊、群和频道消息默认都接收。凭证明文不写进配置，这里只填环境变量名。消息到达只进收件箱并更新未读数，不会自动调用模型或回复；「查看」是你主动让鱼鱼看这一批消息，之后她可以不回复。</div>
     </div>
   </section>
 </div>

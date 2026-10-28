@@ -9,6 +9,8 @@
  * localStorage key、preset 名或素材目录时，**只改这里**，其它模块不许再硬编码。
  */
 
+import { DEFAULT_INBOX_LIMITS } from '../social/limits.js'
+
 /** 插件自己的 home 目录名：$DSH_HOME/chonkyfish/ */
 export const HOME_DIR = 'chonkyfish'
 
@@ -17,6 +19,13 @@ export const WORKSPACE_DIR = '小鱼塘'
 
 /** 日记目录名：$DSH_HOME/chonkyfish/日记/（一天一个 YYYY-MM-DD.md） */
 export const DIARY_DIR = '日记'
+
+/** Social is disabled until a strict, separate configuration is explicitly enabled. */
+export const SOCIAL = Object.freeze({
+  directory: 'social', preset: 'chonkyfish-social', workspace: '会话',
+  files: Object.freeze({ config: 'config.json', identities: 'identities.json', inbox: 'inbox', bindings: 'session-bindings.json', operations: 'operations.json' }),
+  limits: Object.freeze({ notificationMs: 250, maxSendChars: 8000, sendIntervalMs: 2000, maxOperations: 10000, inbox: DEFAULT_INBOX_LIMITS }),
+})
 
 /** agent preset 名：鱼鱼会话 =（cwd 在工作区内, header.agentPreset === 该值） */
 export const PRESET = 'chonkyfish'
@@ -40,6 +49,7 @@ export const ROUTES = Object.freeze({
   proactive: '/chonkyfish/proactive',
   config: '/chonkyfish/config',
   diary: '/chonkyfish/diary',
+  social: '/chonkyfish/social',
 })
 
 /** 请求体上限（字节）。state 是整份面板状态，其它是小型控制 JSON。 */

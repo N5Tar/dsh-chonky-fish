@@ -111,6 +111,20 @@ test('非主人来源的 user 消息不进抽取（定时提醒 / 主动消息�
   }
 })
 
+test('Social 会话的 user 与 assistant 都不进入主人记忆，即使配置成同一 preset/workspace', () => {
+  const { file, cleanup } = tempDb()
+  const engine = createEventEngine({ file, workspaceRoot: POND, preset: 'chonkyfish-social', now })
+  try {
+    const session = { id: 'social', header: { agentPreset: 'chonkyfish-social', cwd: POND } }
+    assert.equal(engine.feed(session, turnStart(1, 1)), false)
+    assert.equal(engine.feed(session, userMessage(2, '陌生人的偏好')), false)
+    assert.equal(engine.feed(session, assistantMessage(3, '社交回复')), false)
+    engine.feed(session, turnEnd(4, 1))
+    assert.equal(engine.stats().jobs.pending, 0)
+    assert.equal(engine.getCursor(session.id), -1)
+  } finally { engine.close(); cleanup() }
+})
+
 test('非小鱼塘工作区的 chonkyfish 会话必须被忽略', () => {
   const { file, cleanup } = tempDb()
   const engine = createEventEngine({ file, workspaceRoot: POND, now })

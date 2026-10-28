@@ -20,7 +20,8 @@
     "src/resources/**",
     "src/event-engine/**",
     "src/proactive/**",
-    "src/diary/**"
+    "src/diary/**",
+    "src/social/**"
   ],
   "scripts": {
     "test:event-engine": "node src/event-engine/tests/run-fixtures.mjs",
@@ -31,7 +32,8 @@
     "requeue:dead-letters": "node src/event-engine/diagnostics/maintenance.mjs",
     "test:proactive": "node src/proactive/tests/run-revisit.mjs && node src/proactive/tests/run-proactive.mjs",
     "test:diary": "node src/diary/tests/run-diary.mjs",
-    "test": "npm run test:event-engine:all && npm run test:resources && npm run test:persona && npm run test:proactive && npm run test:diary",
+    "test": "npm run test:event-engine:all && npm run test:resources && npm run test:persona && npm run test:proactive && npm run test:diary && npm run test:social",
+    "test:social": "node src/social/tests/run-core.mjs && node src/social/tests/run-inbox.mjs && node src/social/tests/run-service.mjs && node src/social/tests/run-bridge.mjs && node src/social/tests/run-http-tools.mjs && node src/social/tests/run-host.mjs && node src/social/tests/run-client.mjs",
     "test:resources": "node src/resources/tests/run-resources.mjs",
     "test:persona": "node src/persona/tests/run-supplement.mjs"
   },

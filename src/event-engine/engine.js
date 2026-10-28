@@ -22,6 +22,7 @@ import { randomUUID } from 'node:crypto'
 import { resolve, sep } from 'node:path'
 
 import { PRESET } from '../resources/spec.js'
+import { isSocialHeader } from '../social/policy.js'
 import { createTurnCollector } from './adapters/dsh-source.js'
 import { PROMPT_VERSION } from './extraction/prompt.js'
 import {
@@ -116,7 +117,7 @@ export function createEventEngine({
    */
   function isFishSession(session) {
     const header = session && session.header
-    if (!header) return false
+    if (!header || isSocialHeader(header)) return false
     // 鱼鱼派出去干活的孩子不是和主人的对话（它们继承父会话的 cwd）
     if (header.origin === 'subagent') return false
     if (Number(header.delegationDepth ?? 0) > 0) return false

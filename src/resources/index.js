@@ -28,6 +28,7 @@ import {
   LIMITS,
   PRESET,
   ROUTES,
+  SOCIAL,
   STORAGE_KEYS,
   VERSIONS,
   WORKSPACE_DIR,
@@ -201,6 +202,13 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     events: join(home, FILES.events),
     diary: join(home, DIARY_DIR),
     workspace: join(home, WORKSPACE_DIR),
+    social: join(home, SOCIAL.directory),
+    socialConfig: join(home, SOCIAL.directory, SOCIAL.files.config),
+    socialIdentities: join(home, SOCIAL.directory, SOCIAL.files.identities),
+    socialInbox: join(home, SOCIAL.directory, SOCIAL.files.inbox),
+    socialBindings: join(home, SOCIAL.directory, SOCIAL.files.bindings),
+    socialOperations: join(home, SOCIAL.directory, SOCIAL.files.operations),
+    socialWorkspace: join(home, SOCIAL.directory, SOCIAL.workspace),
   }
 
   /** ensureLayout 传进来的 logger 会留给 updateConfig 的写盘失败告警用。 */
@@ -211,6 +219,7 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     HOME_DIR,
     WORKSPACE_DIR,
     DIARY_DIR,
+    SOCIAL,
     PRESET,
     FILES,
     ROUTES,
