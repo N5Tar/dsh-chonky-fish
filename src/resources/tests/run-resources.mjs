@@ -97,6 +97,7 @@ await test('paths: 所有文件都在 home 下，工作区在 home/小鱼塘', (
     state: join(home, FILES.state),
     proactive: join(home, FILES.proactive),
     events: join(home, FILES.events),
+    abs: join(home, FILES.abs),
     diary: join(home, '日记'),
     workspace: join(home, WORKSPACE_DIR),
     social: join(home, 'social'),
@@ -180,6 +181,7 @@ await test('config: 文件缺失/坏 JSON 时回退默认值', () => {
     const resources = createResources({ homeRoot: workspace.dshHome })
     assert.deepEqual(resources.getConfig(), JSON.parse(JSON.stringify({
       version: VERSIONS.config,
+      abs: DEFAULT_CONFIG.abs,
       proactive: { enabled: true },
       eventEngine: { enabled: true, extractTickMs: 5000, extractBatch: 2, maxRecordsPerTurn: 400 },
       diary: {

@@ -207,12 +207,14 @@ export function countEvents(db) {
   return Number(row.n)
 }
 
-export function listEvents(db, { sessionId = null, limit = 50, sinceSeq = 0 } = {}) {
+export function listEvents(db, { sessionId = null, limit = 50, sinceSeq = 0, latest = false } = {}) {
+  const order = latest === true ? 'DESC' : 'ASC'
+  const boundedLimit = Math.min(200, Math.max(1, Number.isSafeInteger(limit) ? limit : 50))
   const rows = sessionId
     ? db.prepare(
-      'SELECT * FROM semantic_events WHERE session_id = ? AND event_seq > ? ORDER BY event_seq ASC LIMIT ?',
-    ).all(sessionId, sinceSeq, limit)
-    : db.prepare('SELECT * FROM semantic_events WHERE event_seq > ? ORDER BY event_seq ASC LIMIT ?').all(sinceSeq, limit)
+      `SELECT * FROM semantic_events WHERE session_id = ? AND event_seq > ? ORDER BY event_seq ${order} LIMIT ?`,
+    ).all(sessionId, sinceSeq, boundedLimit)
+    : db.prepare(`SELECT * FROM semantic_events WHERE event_seq > ? ORDER BY event_seq ${order} LIMIT ?`).all(sinceSeq, boundedLimit)
   return rows.map(mapEventRow)
 }
 

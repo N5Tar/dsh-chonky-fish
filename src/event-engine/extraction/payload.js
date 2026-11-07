@@ -25,7 +25,18 @@ export async function loadTurnRecords({ sessionQuery, sessionId, fromSeq, toSeq 
   }
   const events = await sessionQuery.listEvents(sessionId)
   const records = []
-  for (const record of events ?? []) {
+  // Replayed/pre-existing jobs must not reintroduce autonomous assistant output.
+  // Scan source messages from the containing turn start, even when fromSeq points
+  // at its assistant output (older collectors omitted the injected user message).
+  const ordered = [...(events ?? [])].sort((a, b) => Number(a.seq) - Number(b.seq))
+  const start = ordered.filter((event) => event.type === 'turn/start' && Number(event.seq) <= fromSeq).at(-1)
+  for (const record of ordered) {
+    if (record.type !== 'user/message' || Number(record.seq) < Number(start?.seq ?? 0) || Number(record.seq) > toSeq) continue
+    const window = await sessionQuery.readEvent({ sessionId, seq: Number(record.seq), before: 0, after: 0 })
+    const source = window?.target?.data?.source
+    if (source && source.kind !== 'user') return []
+  }
+  for (const record of ordered) {
     const seq = Number(record.seq)
     if (!Number.isInteger(seq) || seq < fromSeq || seq > toSeq) continue
     if (!MESSAGE_TYPES.has(record.type)) continue

@@ -1,0 +1,352 @@
+// Browser source embedded by build.mjs; React/h/RESOURCES belong to the plugin module.
+async function requestAbsLab(body) {
+  var bootstrap = window.__CHONKYFISH_STATE__ || {}
+  var endpoint = (bootstrap.routes || {}).abs || RESOURCES.routes.abs
+  if (!endpoint) throw new Error('ABS 接口地址缺失，请更新插件并刷新页面。')
+  var response = await fetch(endpoint, {
+    method: body ? 'POST' : 'GET',
+    headers: { 'x-chonkyfish-token': bootstrap.token || '', 'content-type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  var raw = await response.text()
+  var status = 'HTTP ' + response.status
+  if (response.status === 404) throw new Error('ABS 后端接口未注册（' + status + '）。请更新或重载 Host 插件／重启 DSH，然后刷新页面；仅更新前端不会加载后端。')
+  if (response.status === 401 || response.status === 403) throw new Error('ABS 请求未授权（' + status + '），请刷新页面以更新访问凭证。')
+  if (!raw.trim()) throw new Error('ABS 接口返回空响应（' + status + '），请检查 Host 插件状态。')
+  var payload
+  try { payload = JSON.parse(raw) }
+  catch (error) { throw new Error('ABS 接口返回非 JSON 响应（' + status + '），请检查 Host 插件及请求地址。') }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('ABS 接口响应格式无效（' + status + '）。')
+  if (!response.ok || payload.ok !== true) throw new Error(String(payload.error || 'ABS 请求失败') + '（' + status + '）' + (payload.reason ? '：' + payload.reason : ''))
+  return payload
+}
+// Presentation only: persisted timestamps and exported audit data remain UTC.
+var ABS_TIME_FORMAT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+})
+function formatAbsTime(value) {
+  if (value === null || value === undefined || value === '') return '—'
+  var date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return String(value)
+  var parts = {}
+  ABS_TIME_FORMAT.formatToParts(date).forEach(function (part) { parts[part.type] = part.value })
+  return parts.year + '-' + parts.month + '-' + parts.day + ' ' + parts.hour + ':' + parts.minute + ':' + parts.second + ' UTC+8'
+}
+function stringifyAbsDisplay(value) {
+  return JSON.stringify(value, function (key, item) {
+    return typeof item === 'string' && /(?:At|Time)$|^(?:at|time)$/.test(key) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(item) ? formatAbsTime(item) : item
+  }, 2)
+}
+var ABS_LAB_SURFACE = '.cf-abs-lab{background:var(--dsw-alias-bg-layer-2,#f5faff);border:1px solid var(--dsw-alias-border-l2,rgba(150,175,195,.22));box-shadow:inset 0 1px 0 rgba(255,255,255,.22);font-variant-numeric:tabular-nums;}' +
+  '@supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.cf-abs-lab{background:color-mix(in srgb,var(--dsw-alias-bg-layer-2,#f5faff) 76%,transparent);backdrop-filter:blur(24px) saturate(115%);-webkit-backdrop-filter:blur(24px) saturate(115%);}}' +
+  '@media (prefers-reduced-transparency:reduce){.cf-abs-lab{background:var(--dsw-alias-bg-layer-2,#f5faff);backdrop-filter:none;-webkit-backdrop-filter:none;}}'
+var ABS_AUDIT_WORDS = {
+  off: '已关闭', shadow: '观察模式', active: '投递模式',
+  timer: '定时审查', manual: '手动审查', transition: '模式切换',
+  DUE: '到期', SHADOW_PREVIEW_ONLY: '观察模式只预览，不投递', ABS_OFF: 'ABS 已关闭',
+  ACTIVATION_COOLDOWN: '仍在启用冷却期', NOT_DUE: '尚未到达审查时间', TIME_PAUSED: '状态自然变化已暂停',
+  DELIVERED: '已提交给大肥鱼',
+  'no-panel-session': '面板尚未绑定会话', 'session-not-live': '目标会话当前未运行',
+  'agent-busy': '大肥鱼正在处理其他输入', 'host-closed': 'ABS 已停止',
+  'empty-review': '状态审查文本为空', 'followup-failed': '无法提交到会话',
+  'persistence-unacknowledged': '尚未确认已持久化', 'session-binding-mismatch': '会话身份不匹配',
+  'resolve-failed': '无法取得会话', 'session-controller-unavailable': '宿主会话接口不可用',
+  'search-capability-unavailable': '搜索能力当前不可用',
+  owner_message: '主人消息', exploration: '探索', explore_content_found: '取得可用资料',
+  explore_no_usable_content: '没有可用内容', failed: '执行失败',
+  social: '社交满足度', curiosity: '好奇满足度', proposal: '动机提案', decision: '行动决策', 'execution-turn': '执行轮次',
+}
+function absAuditWord(value) { return Object.prototype.hasOwnProperty.call(ABS_AUDIT_WORDS, value) ? ABS_AUDIT_WORDS[value] : String(value == null ? '未记录' : value) }
+function describeAbsAudit(record) {
+  var row = record || {}, facts = [], title = '系统记录', summary = '此类型尚无中文解读，可展开查看原始记录。'
+  var acceptance = row.acceptance || {}, outcome = row.outcome || {}
+  var number = function (value) { return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(3) : '未记录' }
+  switch (row.type) {
+    case 'WakeRecord':
+      title = '开始一次状态审查'
+      summary = absAuditWord(row.cause) + '，当前为' + absAuditWord(row.mode) + '；本次判断：' + absAuditWord(row.gate) + '。'
+      if (row.nextWakeRealAt) facts.push(['下次审查', formatAbsTime(row.nextWakeRealAt)])
+      break
+    case 'ReviewDelivered':
+      title = '状态审查已提交给大肥鱼'
+      summary = '审查已作为内部状态记录送入主人会话，由大肥鱼自己决定是否行动。请求被接纳不等于它已经行动，也不等于主人已经看到或回复。'
+      if (row.reviewId) facts.push(['审查 ID', row.reviewId])
+      if (acceptance.reason) facts.push(['说明', absAuditWord(acceptance.reason)])
+      break
+    case 'ReviewFailed':
+      title = '状态审查未提交成功'
+      summary = acceptance.reason ? absAuditWord(acceptance.reason) : '本次没有取得明确的投递接纳。'
+      break
+    case 'ReviewSkipped':
+      title = '本次状态审查没有投递'
+      summary = absAuditWord(row.reason) + '；没有产生新的模型轮次。'
+      break
+    case 'Observation':
+      title = row.observation && row.observation.kind === 'owner_message' ? '观察到真实的主人消息' : '观察到真实的探索结果'
+      summary = row.observation && row.observation.kind === 'owner_message'
+        ? '记录到主人在会话中的真实发言，据此更新社交满足度。'
+        : '记录到一次严格关联的工具结果：' + ((row.observation && ABS_CHANGE_REASONS[row.observation.result]) || absAuditWord(row.observation && row.observation.result)) + '。'
+      if (row.observation) facts.push(['来源', (row.observation.sessionId || '未记录') + ' #' + row.observation.seq])
+      break
+    case 'FeedbackApplied':
+      title = '已根据客观事件更新满足度'
+      summary = '来源：' + absAuditWord(row.source) + '。满足度由 ABS 按真实事件计算，不采信模型自述。'
+      facts.push([absAuditWord(row.driveId), (row.delta > 0 ? '+' : '') + number(row.delta)])
+      break
+    case 'ModeChanged':
+      title = '运行模式已切换'
+      summary = absAuditWord(row.previous) + ' → ' + absAuditWord(row.mode)
+      if (row.activationAllowedRealAt) facts.push(['启用冷却至', formatAbsTime(row.activationAllowedRealAt)])
+      break
+    case 'ClockScaleChanged':
+      title = '状态变化倍率已调整'
+      summary = row.previous + '× → ' + row.timeScale + '×。只调整状态变化与审查频率，不重置已累计的变化，不代表已经审查或行动。'
+      facts.push(['生效时间', formatAbsTime(row.realAt)])
+      break
+    case 'StateMigrated':
+      title = '旧版状态已归档'
+      summary = '旧版动机与执行记录已归档，不再参与运行；需求数值与时钟保留。'
+      if (row.archived) facts.push(['归档数量', '动机 ' + row.archived.motivations + ' · 执行 ' + row.archived.executions])
+      break
+    case 'Recovery':
+      title = 'ABS 状态已恢复'
+      summary = '重启后从保存的状态继续；不会补发错过的审查。'
+      break
+    case 'ModelBudgetReserved':
+      title = '预留模型预算（历史策略）'
+      summary = '当前版本已取消此限制。'
+      break
+    case 'ModelLaunchRecorded':
+      title = '准备发起模型调用'
+      summary = '用途：' + absAuditWord(row.purpose) + '。仅记录尝试，不代表调用成功。'
+      break
+    default:
+      facts.push(['记录类型', row.type || '未记录'])
+  }
+  return { title: title, summary: summary, facts: facts, time: formatAbsTime(row.realAt) }
+}
+function AbsAuditTimeline(props) {
+  var rows = Array.isArray(props.records) ? props.records.slice(-30).reverse() : []
+  if (!rows.length) return h('p', null, '还没有审计记录。发生审查、投递或观察到真实事件后，会在这里说明。')
+  return h('ol', { style: { listStyle: 'none', padding: 0, margin: 0 } }, rows.map(function (row, index) {
+    var view = describeAbsAudit(row)
+    return h('li', { key: index, style: { padding: '18px 0 18px 18px', borderLeft: '2px solid var(--dsw-alias-border-l2,#9aa8b555)', borderBottom: '1px solid var(--dsw-alias-border-l2,#9aa8b533)', overflowWrap: 'anywhere' } },
+      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px 20px', justifyContent: 'space-between', alignItems: 'baseline' } },
+        h('strong', { style: { fontSize: 15, fontWeight: 600 } }, view.title),
+        h('span', { style: { fontSize: 12, opacity: .7 } }, view.time)),
+      h('p', { style: { margin: '8px 0', lineHeight: 1.7 } }, view.summary),
+      view.facts.length ? h('dl', { style: { margin: '8px 0', lineHeight: 1.7 } }, view.facts.map(function (fact, i) {
+        return h('div', { key: i, style: { display: 'flex', flexWrap: 'wrap', gap: '4px 12px' } }, h('dt', { style: { opacity: .7 } }, fact[0]), h('dd', { style: { margin: 0 } }, fact[1]))
+      })) : null,
+      h('details', { style: { marginTop: 10, fontSize: 12 } }, h('summary', { style: { cursor: 'pointer', opacity: .75 } }, '技术详情 · 原始记录'),
+        h('pre', { style: { whiteSpace: 'pre-wrap', maxHeight: 300, overflow: 'auto' } }, JSON.stringify(row, null, 2))))
+  }))
+}
+function describeAbsNeeds(state) {
+  var data = state || {}, drives = data.drives || {}
+  var valid = function (value) { return typeof value === 'number' && Number.isFinite(value) }
+  return ['social', 'curiosity'].map(function (id) {
+    var drive = drives[id] || {}
+    var available = valid(drive.satisfaction) && drive.satisfaction >= 0 && drive.satisfaction <= 1 && valid(drive.setpoint) && drive.setpoint > 0 && drive.setpoint <= 1
+    var demand = available ? Math.max(0, Math.min(1, (drive.setpoint - drive.satisfaction) / drive.setpoint)) : null
+    return {
+      id: id, title: id === 'social' ? '社交满足程度' : '探索满足程度', available: available, demand: demand,
+      satisfaction: available ? drive.satisfaction : null, setpoint: available ? drive.setpoint : null,
+      level: !available ? '暂无有效数据' : demand === 0 ? '处于平常的满足水平' : demand < .35 ? '缺口较小' : demand < .7 ? '缺口中等' : '缺口较大',
+      decay: valid(drive.decayPerHour) && drive.decayPerHour >= 0 ? drive.decayPerHour : null,
+      lastFeedbackAt: drive.lastFeedbackRealAt,
+    }
+  })
+}
+function AbsNeedsPanel(props) {
+  var state = props.state || {}, rows = describeAbsNeeds(state)
+  var available = rows.filter(function (row) { return row.available })
+  var summary = '暂时没有可展示的有效状态数据。'
+  if (available.length) {
+    var highest = Math.max.apply(null, available.map(function (row) { return row.demand }))
+    var leading = available.filter(function (row) { return Math.abs(row.demand - highest) < .000001 }).map(function (row) { return row.title })
+    summary = highest === 0 ? '两项满足程度都处于平常水平。' : leading.join('与') + (leading.length > 1 ? '的缺口相同。' : '的缺口当前最大。')
+  }
+  var percent = function (value) { return value === null ? '—' : (value * 100).toFixed(1) + '%' }
+  return h('section', { 'aria-label': '当前内部状态', style: { margin: '24px 0' } },
+    h('h2', null, '当前内部状态'),
+    h('p', { style: { lineHeight: 1.7 } }, summary + ' 这些是供大肥鱼感知的内部数值，不代表真实情绪，也不构成行动命令。'),
+    h('p', { style: { fontSize: 12, opacity: .75, lineHeight: 1.7 } },
+      state.mode === 'shadow' ? '观察模式：只生成审查，不投递给大肥鱼。' : state.mode === 'off' ? 'ABS 已关闭，展示暂停前最后保存的状态。' : '投递模式：审查会交给大肥鱼，由它自己决定是否行动。'),
+    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,280px),1fr))', gap: 24 } }, rows.map(function (row) {
+      return h('article', { key: row.id, style: { padding: '18px 0', borderTop: '1px solid var(--dsw-alias-border-l2,#9aa8b555)' } },
+        h('h3', { style: { margin: '0 0 8px', fontSize: 17 } }, row.title),
+        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8 } },
+          h('strong', { style: { fontSize: 28, fontWeight: 600 } }, percent(row.demand)), h('span', null, row.level)),
+        h('p', { style: { fontSize: 12, opacity: .75, margin: '4px 0' } }, '缺口 · 越高表示距离平常的满足水平越远'),
+        row.available ? h('meter', { min: 0, max: 1, value: row.demand, 'aria-label': row.title + '缺口', style: { width: '100%', height: 14 } }, percent(row.demand)) : null,
+        h('p', null, '当前满足度 ' + percent(row.satisfaction)),
+        h('p', { style: { fontSize: 13 } }, row.decay === null ? '自然变化速度未记录' : '1× 时，满足度每小时下降 ' + (row.decay * 100).toFixed(2) + ' 个百分点；实际速度乘以当前倍率'),
+        h('p', { style: { fontSize: 12, opacity: .75 } }, '最近真实反馈：' + (row.lastFeedbackAt ? formatAbsTime(row.lastFeedbackAt) : '暂无')))
+    })),
+    h('details', { style: { marginTop: 12, fontSize: 12, lineHeight: 1.7 } }, h('summary', { style: { cursor: 'pointer' } }, '这些数值如何理解？'),
+      h('p', null, '缺口 =（平常满足水平 − 当前满足度）÷ 平常满足水平，限制在 0–100%。高于平常水平时缺口为 0。'),
+      h('p', null, '满足度只由真实观察更新：主人的真实发言提高社交满足度；有来源的搜索、非空阅读、图片内容和工作区实际创作结果提高探索满足度。本地活动每轮最多计一次，相同证据不重复计入；普通回复、任意命令成功、模型自述不会加分。'),
+      h('p', null, '缺口大小只用于描述当前状态，ABS 不据此替大肥鱼选择行为。')))
+}
+function parseAbsTimeScale(value) {
+  if (typeof value !== 'string' || !value.trim()) return null
+  var scale = Number(value)
+  return Number.isFinite(scale) && scale >= 0 && scale <= 120 ? scale : null
+}
+function formatAbsRealWait(clock) {
+  if (!clock) return '时钟数据尚不可用'
+  if (clock.paused || clock.timeScale === 0) return '状态自然变化已暂停；恢复倍率后再估算'
+  if (typeof clock.realWaitMs !== 'number' || !Number.isFinite(clock.realWaitMs) || clock.realWaitMs < 0) return '尚未安排'
+  var seconds = Math.ceil(clock.realWaitMs / 1000)
+  return seconds === 0 ? '已到期，等待调度（不保证投递）' : seconds < 60 ? '约 ' + seconds + ' 秒' : '约 ' + (seconds / 60).toFixed(1) + ' 分钟'
+}
+function AbsClockPanel(props) {
+  var state = props.state || {}, clock = state.clockView
+  // Null follows the server-applied scale; a draft survives every polling update.
+  var draftState = React.useState(null), draft = draftState[0], setDraft = draftState[1]
+  var applied = clock && clock.timeScale
+  var known = typeof applied === 'number' && Number.isFinite(applied) && applied >= 0 && applied <= 120
+  var input = draft === null ? (known ? String(applied) : '') : draft
+  var scale = parseAbsTimeScale(input)
+  var pending = draft !== null && scale !== applied
+  var paused = clock && (clock.paused || applied === 0)
+  var configured = state.config && state.config.timeScale
+  async function apply() {
+    if (props.busy || !known || scale === null || scale === applied) return
+    if (await props.onAction({ action: 'time-scale', timeScale: scale })) setDraft(null)
+  }
+  return h('section', { 'aria-label': '状态变化倍率', style: { margin: '24px 0', lineHeight: 1.7 } },
+    h('h2', null, '时间与变化速度'),
+    h('p', { role: 'status' }, known ? '当前已应用：' + applied + '× · ' + (paused ? '状态自然变化暂停' : '状态自然变化运行中') + (state.mode === 'off' ? ' · 运行模式已关闭（与时钟暂停不同）' : '') : '等待服务端时钟快照，暂不能调整倍率。'),
+    h('p', null, '现实时间：' + formatAbsTime(clock && clock.realNow)),
+    h('p', null, '预计现实等待：' + (state.mode === 'off' ? '运行模式已关闭，不安排审查' : formatAbsRealWait(clock))),
+    h('p', null, '预计现实审查时间：' + (clock && clock.nextWakeRealAt ? formatAbsTime(clock.nextWakeRealAt) : '尚不可估算')),
+    h('p', { style: { fontSize: 12, opacity: .75 } }, '以上为服务端采样快照，每 15 秒刷新；预计等待不是实时倒计时，也不保证投递。'),
+    h('label', { htmlFor: 'cf-abs-time-scale', style: { display: 'block' } }, '状态变化倍率（0–120，支持小数）'),
+    h('input', { id: 'cf-abs-time-scale', type: 'number', min: 0, max: 120, step: 'any', value: input, disabled: props.busy || !known, 'aria-describedby': 'cf-abs-scale-help', 'aria-invalid': scale === null, onChange: function (event) { setDraft(event.target.value) }, style: { padding: 8, width: 130, maxWidth: '100%', boxSizing: 'border-box', margin: '8px 8px 8px 0' } }),
+    h('button', { type: 'button', disabled: props.busy || !known || scale === null || scale === applied, onClick: apply, style: { padding: '8px 12px' } }, '应用 Apply'),
+    h('div', { 'aria-label': '倍率预设' }, [0, .5, 1, 10, 60, 120].map(function (value) {
+      return h('button', { key: value, type: 'button', disabled: props.busy || !known, onClick: function () { setDraft(String(value)) }, style: { padding: '6px 10px', margin: '0 8px 8px 0' } }, value === 0 ? '0× 暂停' : value + '×')
+    })),
+    h('p', { id: 'cf-abs-scale-help', role: 'status' }, scale === null ? '请输入 0 到 120 之间的有限数值。' : pending ? '输入尚未应用；仍按 ' + applied + '× 运行。点击 Apply 后才生效。' : '预设只填写输入框，必须点击 Apply；调整倍率不会自动审查或投递。'),
+    known && configured !== undefined && configured !== applied ? h('p', null, '配置倍率 ' + configured + '× 尚未应用到时钟；实际仍为 ' + applied + '×。') : null,
+    h('p', null, '这不是独立沙箱：仍使用真实全权限会话，工具和网络效果不会隔离。切回 1× 不会重置已累计的状态变化。'),
+    h('p', null, '0× 暂停状态自然变化并阻止新的审查投递，不会取消已在途的外部工具或暂停正在运行的模型；真实观察仍可记入反馈。'))
+}
+function AbsReviewPanel(props) {
+  var state = props.state || {}, last = state.lastReview
+  var statusText = !last ? '尚未投递过审查。'
+    : last.status === 'delivered' ? '上次投递：已提交给大肥鱼（' + formatAbsTime(last.realAt) + '）。接纳不等于已经行动，也不等于主人已读。'
+      : '上次投递未成功：' + absAuditWord(last.reason) + '（' + formatAbsTime(last.realAt) + '）。'
+  return h('section', { 'aria-label': '自身精神状态审查', style: { margin: '24px 0' } },
+    h('h2', null, '自身精神状态审查'),
+    h('p', { style: { fontSize: 12, opacity: .75, lineHeight: 1.7 } }, '这是当前会交给大肥鱼的文本：只描述内部状态与真实观察，不包含任务、渠道或行动要求。'),
+    h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.8, padding: '16px 18px', margin: '12px 0', background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-2,#f5faff) 70%, transparent)', border: '1px solid var(--dsw-alias-border-l2,#9aa8b555)', borderRadius: 12, fontFamily: 'inherit', fontSize: 14 } }, (typeof state.reviewPreview === 'string' ? state.reviewPreview : state.reviewPreview && state.reviewPreview.text) || '状态审查暂不可用。'),
+    h('p', null, statusText),
+    h('div', null,
+      h('button', { type: 'button', disabled: props.busy, onClick: function () { props.onAction({ action: 'preview' }) }, style: { padding: '8px 12px', marginRight: 8 } }, '刷新预览'),
+      h('button', { type: 'button', disabled: props.busy || !state.mode || state.mode === 'off' || (state.clockView && state.clockView.paused), onClick: function () { props.onAction({ action: 'wake' }) }, style: { padding: '8px 12px' } }, state.mode === 'active' ? '手动投递审查' : '手动运行一次审查')),
+    h('p', { style: { fontSize: 12, opacity: .75 } }, '手动运行同样遵守模式与暂停；观察模式下只记录，不投递。'))
+}
+function AbsEnvironmentPanel(props) {
+  var environment = props.environment || {}, owner = environment.ownerSession || {}, search = environment.search || {}
+  return h('section', { 'aria-label': '感知条件', style: { margin: '24px 0' } },
+    h('h2', null, '感知条件'),
+    h('p', null, '大肥鱼会话：' + (owner.available ? '已绑定且空闲' : '当前不可投递（' + absAuditWord(owner.reason) + '）')),
+    h('p', null, '搜索能力：' + (search.available ? '可用' : '当前不可用（' + absAuditWord(search.reason) + '）')),
+    h('p', { style: { fontSize: 12, opacity: .75 } }, '这些只描述当前环境是否允许感知与投递；ABS 不会替大肥鱼选择渠道，也不会主动调用工具。'))
+}
+function AbsObservationsPanel(props) {
+  var state = props.state || {}, rows = Array.isArray(state.observations) ? state.observations.slice(-20).reverse() : []
+  if (!rows.length) return h('section', { 'aria-label': '真实观察', style: { margin: '24px 0' } }, h('h2', null, '真实观察'), h('p', null, '还没有记录到可用于反馈的真实事件。'))
+  return h('section', { 'aria-label': '真实观察', style: { margin: '24px 0' } },
+    h('h2', null, '真实观察'),
+    h('p', { style: { fontSize: 12, opacity: .75 } }, '只记录严格关联的客观事件；模型自述与普通回复不进入反馈。'),
+    h('ul', { style: { listStyle: 'none', padding: 0, margin: 0 } }, rows.map(function (row, index) {
+      var label = row.kind === 'owner_message' ? '主人真实发言' : (row.activity ? '本地活动（' + row.activity + '）：' : '搜索工具结果：') + (ABS_CHANGE_REASONS[row.resultKind] || absAuditWord(row.resultKind))
+      return h('li', { key: index, style: { padding: '10px 0', borderBottom: '1px solid var(--dsw-alias-border-l2,#9aa8b533)', display: 'flex', flexWrap: 'wrap', gap: '6px 16px', justifyContent: 'space-between' } },
+        h('span', null, label), h('span', { style: { fontSize: 12, opacity: .7 } }, formatAbsTime(row.realAt)))
+    })))
+}
+var ABS_CHANGE_REASONS = {
+  natural_decay: '自然衰减', owner_message: '主人真实发言', explore_content_found: '搜索取得可用资料',
+  local_content_found: '本地活动有可验证结果', unverified_activity: '没有可验证的收获证据，不加分',
+  duplicate_evidence: '相同内容已计入，不重复加分', local_turn_limit: '本轮本地活动已计入，不逐工具累加',
+  feedback_capacity: '去重记录已满，停止加分', failed: '工具失败，不加分', explore_no_usable_content: '搜索无可用内容，不加分',
+}
+function AbsChangeLedger(props) {
+  var rows = (props.state && props.state.changeLedger || []).slice(-40).reverse()
+  var percent = function (value) { return Number.isFinite(value) ? (value * 100).toFixed(2) + '%' : '—' }
+  return h('section', { 'aria-label': '满足度变化账本', style: { margin: '24px 0' } },
+    h('h2', null, '满足度变化账本'),
+    h('p', null, '满足度增加会降低需求缺口；自然衰减会提高缺口。以下是结算时的变化，不是每秒采样。保留最近 200 条，展示最近 40 条；旧活动不补记或补分。'),
+    rows.length ? h('ul', { style: { listStyle: 'none', padding: 0 } }, rows.map(function (row, index) {
+      return h('li', { key: index, style: { padding: '12px 0', borderBottom: '1px solid var(--dsw-alias-border-l2,#9aa8b533)', lineHeight: 1.8 } },
+        h('div', null, formatAbsTime(row.realAt) + ' · ' + absAuditWord(row.driveId) + ' · ' + (ABS_CHANGE_REASONS[row.reason] || row.reason) + (row.activity ? '（' + row.activity + '）' : '')),
+        h('div', null, percent(row.before) + ' → ' + percent(row.after) + '；' + (row.delta > 0 ? '+' : '') + (row.delta * 100).toFixed(2) + ' 个百分点' + (row.timeScale !== undefined ? ' · ' + row.timeScale + '×' : '')))
+    })) : h('p', null, '暂无变化记录；新版启用后的变化会从这里开始记录。'))
+}
+function AbsLabPage() {
+  var dataState = React.useState(null), data = dataState[0], setData = dataState[1]
+  var errorState = React.useState(''), error = errorState[0], setError = errorState[1]
+  var busyState = React.useState(false), busy = busyState[0], setBusy = busyState[1]
+  var confirmState = React.useState(false), confirmed = confirmState[0], setConfirmed = confirmState[1]
+  var resultState = React.useState(null), result = resultState[0], setResult = resultState[1]
+  var mounted = React.useRef(false)
+  var request = requestAbsLab
+  async function refresh() {
+    try { var value = await request(); if (mounted.current) { setData(value); setError('') } }
+    catch (e) { if (mounted.current) setError(e.message) }
+  }
+  React.useEffect(function () {
+    mounted.current = true
+    refresh()
+    var timer = setInterval(refresh, 15000)
+    return function () { mounted.current = false; clearInterval(timer) }
+  }, [])
+  async function action(body) {
+    setBusy(true); setError('')
+    try {
+      var value = await request(body)
+      if (!mounted.current) return
+      setResult(value.result)
+      if (body.action === 'export') {
+        var url = URL.createObjectURL(new Blob([value.result.content], { type: 'application/x-ndjson' }))
+        var link = document.createElement('a'); link.href = url; link.download = 'abs-audit.jsonl'; link.click()
+        setTimeout(function () { URL.revokeObjectURL(url) }, 1000)
+      }
+      await refresh()
+      return true
+    } catch (e) { if (mounted.current) setError(e.message); return false }
+    finally { if (mounted.current) setBusy(false) }
+  }
+  var state = data && data.state
+  var button = function (text, body, disabled) { return h('button', { type: 'button', disabled: busy || disabled, onClick: function () { action(body) }, style: { padding: '8px 12px', marginRight: 8, marginBottom: 8, cursor: 'pointer' } }, text) }
+  return h('main', { className: 'cf-abs-lab', style: { padding: 28, overflow: 'auto', height: '100%', boxSizing: 'border-box', color: 'var(--dsw-alias-label-primary)', fontSize: 14 } },
+    h('style', null, ABS_LAB_SURFACE),
+    h('h1', null, 'ABS 实验台'),
+    h('p', { style: { opacity: .72, fontSize: 12 } }, '显示时区：东八区（UTC+8） · 原始记录与导出保留 UTC'),
+    h('p', null, '内部状态 → 自然语言状态审查 → 大肥鱼自己决定行为 → 真实观察回到状态。'),
+    h('p', { style: { maxWidth: 850 } }, 'ABS 不再生成动机、挑选渠道或指派行动。审查只是内部状态记录；投递后是否说话、是否搜索、是否保持安静，由大肥鱼自己决定。接纳审查不等于已经行动，也不等于主人已读。'),
+    error ? h('p', { role: 'alert', style: { color: '#c0525c' } }, error) : null,
+    !state ? h('p', null, '正在读取；若模块尚未加载，请重启宿主并刷新页面。') : h(React.Fragment, null,
+      h('h2', null, '运行状态'),
+      h('p', null, '模式：' + absAuditWord(state.mode) + ' · 模型调用：不限额'),
+      button('关闭', { action: 'mode', mode: 'off' }), button('观察模式', { action: 'mode', mode: 'shadow' }),
+      button('开始投递审查', { action: 'mode', mode: 'active', confirmActive: true }, !confirmed),
+      h('label', { style: { display: 'block', marginBottom: 16 } }, h('input', { type: 'checkbox', checked: confirmed, onChange: function (event) { setConfirmed(event.target.checked) } }), '我确认投递会唤醒大肥鱼会话并消耗模型费用；ABS 只提供状态审查，不指派行为。'),
+      button('隔离回放 +72 小时', { action: 'replay', hours: 72 }), button('导出近期审计', { action: 'export' }),
+      h('p', null, '隔离回放不调用模型或工具，只投影状态与审查文本。'),
+      h(AbsClockPanel, { state: state, busy: busy, onAction: action }),
+      h(AbsNeedsPanel, { state: state }),
+      h(AbsReviewPanel, { state: state, busy: busy, onAction: action }),
+      h(AbsEnvironmentPanel, { environment: data.environment }),
+      h(AbsObservationsPanel, { state: state }),
+      h(AbsChangeLedger, { state: state }),
+      h('h2', null, '近期活动与决策'),
+      h('p', { style: { opacity: .7, fontSize: 12 } }, '最近 30 条记录，最新在前。记录时间均为现实时间；中文说明只解释已记录事实。'),
+      h(AbsAuditTimeline, { records: data.records }),
+      result ? h('details', { open: false }, h('summary', null, '上次操作结果'), h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 360, overflow: 'auto' } }, stringifyAbsDisplay(result))) : null))
+}

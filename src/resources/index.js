@@ -14,6 +14,7 @@
  *   - 所有写盘都是「临时文件 + rename」，进程被杀不会留下半截 JSON。
  */
 import { randomUUID } from 'node:crypto'
+import { sanitizeAbsConfig, mergeAbsConfig } from '../abs/config.js'
 import { readFileSync } from 'node:fs'
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -115,6 +116,7 @@ function sanitizeConfig(raw) {
   const defaults = DEFAULT_CONFIG
   return {
     version: VERSIONS.config,
+    abs: sanitizeAbsConfig(source.abs),
     proactive: {
       enabled: typeof proactive.enabled === 'boolean' ? proactive.enabled : defaults.proactive.enabled,
     },
@@ -152,6 +154,7 @@ function mergeConfig(current, patch) {
   const diary = isPlainObject(source.diary) ? source.diary : {}
   return sanitizeConfig({
     version: VERSIONS.config,
+    abs: mergeAbsConfig(current.abs, source.abs),
     proactive: { ...current.proactive, ...proactive },
     eventEngine: { ...current.eventEngine, ...eventEngine },
     diary: { ...current.diary, ...diary },
@@ -200,6 +203,7 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     state: join(home, FILES.state),
     proactive: join(home, FILES.proactive),
     events: join(home, FILES.events),
+    abs: join(home, FILES.abs),
     diary: join(home, DIARY_DIR),
     workspace: join(home, WORKSPACE_DIR),
     social: join(home, SOCIAL.directory),

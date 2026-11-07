@@ -10,6 +10,7 @@
  */
 
 import { DEFAULT_INBOX_LIMITS } from '../social/limits.js'
+import { ABS_DEFAULTS } from '../abs/config.js'
 
 /** 插件自己的 home 目录名：$DSH_HOME/chonkyfish/ */
 export const HOME_DIR = 'chonkyfish'
@@ -38,6 +39,7 @@ export const FILES = Object.freeze({
   config: 'config.json',
   state: 'state.json',
   proactive: 'proactive.json',
+  abs: 'abs',
   events: 'events.db',
 })
 
@@ -50,6 +52,7 @@ export const ROUTES = Object.freeze({
   config: '/chonkyfish/config',
   diary: '/chonkyfish/diary',
   social: '/chonkyfish/social',
+  abs: '/chonkyfish/abs',
 })
 
 /** 请求体上限（字节）。state 是整份面板状态，其它是小型控制 JSON。 */
@@ -98,6 +101,7 @@ export const ASSETS = Object.freeze({
  */
 export const DEFAULT_CONFIG = Object.freeze({
   version: VERSIONS.config,
+  abs: ABS_DEFAULTS,
   proactive: Object.freeze({ enabled: true }),
   eventEngine: Object.freeze({
     enabled: true,

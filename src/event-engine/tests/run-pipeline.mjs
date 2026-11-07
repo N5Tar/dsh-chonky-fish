@@ -103,8 +103,8 @@ test('非主人来源的 user 消息不进抽取（定时提醒 / 主动消息�
     engine.feed(session, turnEnd(4, 1))
 
     const job = engine.db.prepare('SELECT * FROM extraction_jobs').get()
-    assert.equal(Number(job.from_seq), 3, '旁白不进入抽取区间')
-    assert.equal(Number(job.to_seq), 3)
+    assert.equal(job, undefined, '旁白及其自主回复均不进入抽取，防止自我强化')
+    assert.equal(engine.stats().pending, 0)
   } finally {
     engine.close()
     cleanup()

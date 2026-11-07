@@ -40,6 +40,7 @@ export function createTurnCollector({ maxRecordsPerTurn = 400, onTurn, onSkip })
 
   function collect(sessionId, event, sourceKind) {
     const buffer = buffers.get(sessionId)
+    if (buffer?.provenance) return
     if (!buffer) return // 没收到 turn/start（重启后中途接入）：忽略，交给 turn/end 记审计
     if (!isAppendSurface(event)) return
     if (buffer.records.length >= maxRecordsPerTurn) {
@@ -76,7 +77,14 @@ export function createTurnCollector({ maxRecordsPerTurn = 400, onTurn, onSkip })
         case 'user/message':
           // 不是主人打字的 user 消息（定时提醒、主动消息旁白、系统注入……）不算「主人说了」，
           // 否则旁白里的第三人称说明会被抽成主人的事实。老日志没有 source 时按主人处理。
-          if (event.data && event.data.source && event.data.source.kind !== 'user') return
+          if (data.source && data.source.kind !== 'user') {
+            const buffer = buffers.get(sessionId)
+            if (buffer) {
+              buffer.provenance = { ...data.source }
+              buffer.records = []
+            }
+            return
+          }
           collect(sessionId, event, 'user_message')
           return
         case 'assistant/message':
@@ -87,6 +95,10 @@ export function createTurnCollector({ maxRecordsPerTurn = 400, onTurn, onSkip })
           buffers.delete(sessionId)
           if (!buffer) {
             onSkip({ sessionId, turn: Number(data.turn ?? 0), reason: 'turn_not_buffered' })
+            return
+          }
+          if (buffer.provenance) {
+            onSkip({ sessionId, turn: buffer.turn, reason: 'autonomous_or_injected_turn', provenance: buffer.provenance })
             return
           }
           if (buffer.records.length === 0) {

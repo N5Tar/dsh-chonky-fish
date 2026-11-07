@@ -106,6 +106,11 @@ test('查询参数：limit 截断、sinceSeq、sessionId 过滤', () => {
 
     const afterFirst = readEvents(engine, { limit: 10, sessionId: null, sinceSeq: all.events[0].eventSeq })
     assert.equal(afterFirst.count, 2)
+    const latest = engine.listEvents({ latest: true, limit: 1 })
+    assert.equal(latest.length, 1)
+    assert.equal(latest[0].eventSeq, all.events[2].eventSeq, 'latest returns newest bounded window')
+    const latestB = engine.listEvents({ latest: true, limit: 1, sessionId: 'session-b' })
+    assert.equal(latestB[0].eventSeq, onlyB.events[0].eventSeq)
   } finally {
     cleanup()
   }

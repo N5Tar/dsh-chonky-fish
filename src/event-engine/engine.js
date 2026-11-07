@@ -159,7 +159,8 @@ export function createEventEngine({
       }
     },
     onSkip(skip) {
-      audit({ sessionId: skip.sessionId, turn: skip.turn, decision: 'skipped', reasonCode: skip.reason })
+      audit({ sessionId: skip.sessionId, turn: skip.turn, decision: 'skipped', reasonCode: skip.reason,
+        ...(skip.provenance ? { details: { provenance: skip.provenance } } : {}) })
     },
   })
 

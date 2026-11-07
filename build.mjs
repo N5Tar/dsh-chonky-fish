@@ -139,6 +139,7 @@ css += `
 /* ------------------------------------------------------------------ runtime */
 
 const runtime = readFileSync(join(here, 'src/runtime.js'), 'utf8')
+const absLab = readFileSync(join(here, 'src/abs/lab.js'), 'utf8')
 
 /* -------------------------------------------------------------- client.js */
 
@@ -175,6 +176,7 @@ window.__ModuleLoader__.load({
       navSense: '感知',
       navDiary: '日记',
       navSocial: '社交',
+      navAbs: 'ABS 实验台',
       title: '大肥鱼 · 小鱼塘管理台',
     }
     var en = {
@@ -184,6 +186,7 @@ window.__ModuleLoader__.load({
       navSense: 'Senses',
       navDiary: 'Diary',
       navSocial: 'Social',
+      navAbs: 'ABS Lab',
       title: 'ChonkyFish · Little Fish Pond',
     }
 
@@ -314,6 +317,7 @@ window.__ModuleLoader__.load({
     }
 
 ${runtime}
+${absLab}
 
     /**
      * Bridge between the fish panel and a real DSH Session.
@@ -855,6 +859,7 @@ ${runtime}
       { id: 'chonkyfish-sense', view: 'sense', label: 'navSense', icon: ICON_SENSE, order: 23 },
       { id: 'chonkyfish-diary', view: 'diary', label: 'navDiary', icon: ICON_DIARY, order: 24 },
       { id: 'chonkyfish-social', view: 'social', label: 'navSocial', icon: ICON_SOCIAL, order: 25 },
+      { id: 'abs-lab', view: 'abs', label: 'navAbs', icon: ICON_SENSE, order: 26 },
     ]
 
     function apply(ctx) {
@@ -890,7 +895,7 @@ ${runtime}
             name: 'main',
             key: panel.id,
             locale: NS,
-          }, createPanelPage(panel.view))
+          }, panel.view === 'abs' ? AbsLabPage : createPanelPage(panel.view))
         })
       })
 

@@ -23,6 +23,7 @@ import { createPanelSupplement } from './src/persona/supplement.js'
 import { createResources } from './src/resources/index.js'
 import { DIARY_TOOL_NAME } from './src/diary/tools.js'
 import { installSocial } from './src/social/index.js'
+import { installAbs } from './src/abs/index.js'
 import { isSocialHeader } from './src/social/policy.js'
 
 const FULL_ACCESS = 'danger-full-access'
@@ -406,6 +407,11 @@ export function apply(ctx) {
 
   // 事件引擎（模块0）：采集 → 提取 → 查询。任何失败都不许影响面板本身。
   void startEventEngine(ctx, { resources, ready: layoutReady, token, warn })
+
+  ctx.effect(() => {
+    const abs = installAbs(ctx, { resources, ready: layoutReady, token, warn })
+    return () => { void abs.close().catch((error) => warn('[chonkyfish/abs] shutdown failed', error)) }
+  }, 'chonkyfish: abs')
 
   // 主动消息：只保留「往面板当前会话主动发一句」的能力，没有任何定时器/自动触发。
   // 同样整段 try/catch：主动消息挂了，聊天照常。
