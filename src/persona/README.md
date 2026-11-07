@@ -9,7 +9,7 @@
 这样 system 性质的内容和用户消息混在同一个 user message 里，模型看到的是「主人说了这一大段设定」。现在改成：
 
 ```text
-panel state.json (state.prompt)
+panel state.json (state.prompt + state.profileDirectory)
   → Host 注册 system prompt 变量 {{chonkyfish_supplement}}
   → 预设 persona 模板引用该变量（模板行内 `...如实说明。{{chonkyfish_supplement}}`）
   → 每次 assembly 动态渲染进 system prompt
@@ -21,9 +21,11 @@ panel state.json (state.prompt)
 - **预设**（`cordis.patch.yml` / `preset/cordis.patch.yml`）的 persona `prefix` 末尾有一行
   `{{chonkyfish_supplement}}`，persona 仍然 `complete: true`，system prompt 依旧只有这一份人格；
 - **Host**（[supplement.js](supplement.js)，在 [index.js](../../index.js) 注册）提供同名 system prompt 变量：
-  - 读 `$DSH_HOME/chonkyfish/state.json` 的 `state.prompt`，按 mtime 缓存；
-  - 等于默认文案 `DEFAULT_PANEL_PROMPT` 或为空时返回 `''`，渲染时该行自然消失；
-  - 文件缺失/JSON 坏时返回 `''`，绝不抛错（system prompt 组装失败会拖垮整个会话）。
+  - 读取 `state.prompt` 和 `state.profileDirectory`，按 mtime/ctime/大小/inode 缓存；
+  - 自定义人格非空且不等于默认文案时追加人格正文，随后总是在最后追加 `你的个人资料在XXX`；
+  - 默认目录为 `$DSH_HOME/chonkyfish/个人资料`，启动时创建并在界面展示真实绝对路径；空设置、旧状态或坏 JSON 也会保留默认目录提示；
+  - 自定义目录支持绝对路径和 `~/`，保存时展开为绝对路径并创建目录；拒绝多行/控制字符和相对路径。不移动旧目录内容，也不自动读取目录里的文件进 prompt；
+  - 保存操作失败时不报告成功；成功后下一次人格组装使用新目录，恢复默认同时恢复目录设置。
 - **面板**（`src/runtime.js`）发送消息时不再拼接任何人格文案，用户消息只有用户输入。
 
 ## 注意

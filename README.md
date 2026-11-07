@@ -126,16 +126,19 @@ Host 会把消息投到面板当前会话。事件回访计划器 `src/proactive
 
 ## chonkyFish home 与资源管理
 
-插件有自己的 home，所有数据都收在 `$DSH_HOME/chonkyfish/` 下（`$DSH_HOME` 默认 `~/.dsh`）：
+插件的 home 就是**大肥鱼的默认主目录**：所有数据都收在 `$DSH_HOME/chonkyfish/` 下（`$DSH_HOME` 默认 `~/.dsh`）。人格页的个人档案目录默认取 `个人资料` 子目录：
 
 ```text
-$DSH_HOME/chonkyfish/
+$DSH_HOME/chonkyfish/            # 大肥鱼默认主目录
   config.json        # 可编辑配置（主动消息开关 / 事件引擎节奏 / 上限）
-  state.json         # 面板状态：名字、补充人格、钱包、账本、演示对话
+  state.json         # 面板状态：名字、补充人格、个人档案目录、钱包、账本、演示对话
   proactive.json     # 主动消息：面板当前会话 id、发送计数、最近记录
   events.db          # 模块0 事件库（SQLite，含 -wal/-shm）
+  个人资料/          # 人格页默认个人档案目录（对话时追加到人格 prompt 最后）
   日记/              # 日记正文：YYYY-MM-DD.md（一天一个文件）
   小鱼塘/            # 鱼鱼工作区（DSH 会话的 cwd）
+  abs/               # ABS 状态与审计
+  skills/            # 活动技能库
 ```
 
 - **不做旧目录迁移**：插件只认 home 内的固定布局；旧版 `$DSH_HOME/小鱼塘` 不会被搬入、软链或识别。

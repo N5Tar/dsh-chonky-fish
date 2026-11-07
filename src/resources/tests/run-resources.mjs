@@ -100,6 +100,7 @@ await test('paths: 所有文件都在 home 下，工作区在 home/小鱼塘', (
     abs: join(home, FILES.abs),
     skills: join(home, FILES.skills),
     diary: join(home, '日记'),
+    personalProfile: join(home, '个人资料'),
     workspace: join(home, WORKSPACE_DIR),
     social: join(home, 'social'),
     socialConfig: join(home, 'social', 'config.json'),
@@ -127,6 +128,7 @@ await test('layout: 建 home/工作区目录和默认 config.json，不碰旧路
     assert.equal(existsSync(workspace.home), true)
     assert.equal(existsSync(join(workspace.home, WORKSPACE_DIR)), true)
     assert.equal(existsSync(resources.paths.diary), true)
+    assert.equal(existsSync(resources.paths.personalProfile), true)
     assert.equal(existsSync(resources.paths.config), true)
     // 规划里不包含旧 $DSH_HOME/小鱼塘：不会被创建/迁移
     assert.equal(existsSync(join(workspace.dshHome, WORKSPACE_DIR)), false)
@@ -320,6 +322,7 @@ await test('clientState: 路径/路由/预设齐全且不含 token、不含 lega
   assert.deepEqual(state.routes, ROUTES)
   assert.deepEqual(state.paths, {
     workspace: resources.paths.workspace,
+    personalProfile: resources.paths.personalProfile,
     workspaceParent: resources.home,
     workspaceName: WORKSPACE_DIR,
   })

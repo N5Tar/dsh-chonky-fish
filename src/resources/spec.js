@@ -21,6 +21,9 @@ export const WORKSPACE_DIR = '小鱼塘'
 /** 日记目录名：$DSH_HOME/chonkyfish/日记/（一天一个 YYYY-MM-DD.md） */
 export const DIARY_DIR = '日记'
 
+/** 人格页默认个人档案目录，独立于日记与会话工作区。 */
+export const PERSONAL_PROFILE_DIR = '个人资料'
+
 /** Social is disabled until a strict, separate configuration is explicitly enabled. */
 export const SOCIAL = Object.freeze({
   directory: 'social', preset: 'chonkyfish-social', workspace: '会话',

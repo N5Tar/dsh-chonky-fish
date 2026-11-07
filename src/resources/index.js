@@ -24,6 +24,7 @@ import {
   ASSETS,
   DEFAULT_CONFIG,
   DIARY_DIR,
+  PERSONAL_PROFILE_DIR,
   FILES,
   HOME_DIR,
   LIMITS,
@@ -192,6 +193,7 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     abs: join(home, FILES.abs),
     skills: join(home, FILES.skills),
     diary: join(home, DIARY_DIR),
+    personalProfile: join(home, PERSONAL_PROFILE_DIR),
     workspace: join(home, WORKSPACE_DIR),
     social: join(home, SOCIAL.directory),
     socialConfig: join(home, SOCIAL.directory, SOCIAL.files.config),
@@ -210,6 +212,7 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     HOME_DIR,
     WORKSPACE_DIR,
     DIARY_DIR,
+  PERSONAL_PROFILE_DIR,
     SOCIAL,
     PRESET,
     FILES,
@@ -288,6 +291,11 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     } catch (error) {
       warn(logger, '[chonkyfish] 日记目录创建失败', error)
     }
+    try {
+      await mkdir(paths.personalProfile, { recursive: true })
+    } catch (error) {
+      warn(logger, '[chonkyfish] 个人档案目录创建失败', error)
+    }
     return { home: paths.home, workspace: paths.workspace }
   }
 
@@ -302,6 +310,7 @@ export function createResources({ env = process.env, homeRoot } = {}) {
       routes: ROUTES,
       paths: {
         workspace: paths.workspace,
+        personalProfile: paths.personalProfile,
         workspaceParent: dirname(paths.workspace),
         workspaceName: WORKSPACE_DIR,
       },

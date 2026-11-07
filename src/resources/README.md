@@ -13,16 +13,19 @@ src/resources/
 
 ## home 布局
 
-`$DSH_HOME` 默认 `~/.dsh`。插件自己的 home 是 `$DSH_HOME/chonkyfish/`：
+`$DSH_HOME` 默认 `~/.dsh`。插件 home `$DSH_HOME/chonkyfish/` 同时是**大肥鱼的默认主目录**；人格页个人档案目录默认取其中的 `个人资料/`：
 
 ```text
-$DSH_HOME/chonkyfish/
+$DSH_HOME/chonkyfish/            # 大肥鱼默认主目录
   config.json       可编辑配置（见下）
-  state.json        面板状态（名字 / 补充人格 / 钱包 / 账本 / 演示对话）
+  state.json        面板状态（名字 / 补充人格 / 个人档案目录 / 钱包 / 账本 / 演示对话）
   proactive.json    主动消息运行态（activeSessionId、发送计数、最近记录）
   events.db         模块0 事件库（SQLite，伴随 -wal/-shm）
+  个人资料/         默认个人档案目录（对话时追加到人格 prompt 最后）
   日记/             日记正文（一天一个 YYYY-MM-DD.md）
   小鱼塘/           鱼鱼工作区（DSH 会话 cwd）
+  abs/              ABS 状态与审计
+  skills/           活动技能库
 ```
 
 **不做迁移**：插件只认上面这套固定布局。旧版的 `$DSH_HOME/小鱼塘` 不会被搬入 home、不会建兼容

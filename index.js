@@ -20,6 +20,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import { createPanelSupplement } from './src/persona/supplement.js'
+import { normalizeProfileDirectory } from './src/persona/profile-directory.js'
 import { createResources } from './src/resources/index.js'
 import { installSocial } from './src/social/index.js'
 import { installAbs } from './src/abs/index.js'
@@ -110,21 +111,22 @@ export function apply(ctx) {
   // 面板「补充人格设定」→ system prompt 变量：预设里的 persona 模板用
   // {{chonkyfish_supplement}} 引用它，所以人格不再混进用户消息。
   ctx.effect(() => {
-    const supplement = createPanelSupplement({ statePath: resources.paths.state, logger: ctx.logger })
+    const supplement = createPanelSupplement({ statePath: resources.paths.state, defaultProfileDirectory: resources.paths.personalProfile, logger: ctx.logger })
     return ctx.systemPrompt.variable(supplement.variableName, supplement.provider)
   }, 'chonkyfish: panel persona supplement')
 
-  function writeState(body) {
-    writeChain = writeChain.then(async () => {
+  function writeState(body, profileDirectory) {
+    const pending = writeChain.then(async () => {
       await layoutReady
       await mkdir(dirname(resources.paths.state), { recursive: true })
+      await mkdir(profileDirectory, { recursive: true })
       const temporary = resources.paths.state + '.' + process.pid + '.' + randomUUID() + '.tmp'
       await writeFile(temporary, body, 'utf8')
       await rename(temporary, resources.paths.state)
-    }).catch((error) => {
-      warn('[chonkyfish] 状态文件写入失败', error)
     })
-    return writeChain
+    // Keep the queue usable, but report this operation's failure to its caller.
+    writeChain = pending.catch((error) => { warn('[chonkyfish] 状态文件写入失败', error) })
+    return pending
   }
 
   function replyJson(response, status, body) {
@@ -205,12 +207,18 @@ export function apply(ctx) {
           response.end('invalid json')
           return
         }
-        if (!payload || typeof payload !== 'object' || typeof payload.state !== 'object' || payload.state === null) {
+        if (!payload || typeof payload !== 'object' || typeof payload.state !== 'object' || payload.state === null || Array.isArray(payload.state)) {
           response.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
           response.end('missing state object')
           return
         }
-        writeState(JSON.stringify(payload)).then(() => {
+        try {
+          payload.state.profileDirectory = normalizeProfileDirectory(payload.state.profileDirectory, resources.paths.personalProfile)
+        } catch (error) {
+          replyJson(response, 400, { ok: false, error: error.message })
+          return
+        }
+        writeState(JSON.stringify(payload), payload.state.profileDirectory).then(() => {
           response.writeHead(204)
           response.end()
         }).catch(() => {

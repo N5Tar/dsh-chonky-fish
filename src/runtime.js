@@ -56,6 +56,7 @@ function mountChonkyFishPage(wrap, chat, options) {
     return {
       name: '大肥鱼',
       prompt: DEFAULT_PROMPT,
+      profileDirectory: stateBridge && stateBridge.paths && stateBridge.paths.personalProfile || '',
       balance: 128,
       messages: [{ role: 'fish', text: GREETING, time: '10:24' }],
       ledger: [{ title: '今日零花钱', amount: 128, date: '初始贝壳', id: 1 }],
@@ -1373,6 +1374,37 @@ function mountChonkyFishPage(wrap, chat, options) {
     if (!name || !prompt) return
     name.value = state.name
     prompt.value = state.prompt
+    var directory = $('fish-profile-directory')
+    var directoryHint = $('fish-profile-directory-default')
+    var defaultDirectory = defaults().profileDirectory
+    if (directory) directory.value = typeof state.profileDirectory === 'string' && state.profileDirectory.trim() ? state.profileDirectory : defaultDirectory
+    if (directoryHint) directoryHint.textContent = '默认目录：' + (defaultDirectory || '大肥鱼 home 下的「个人资料」') + '。保存时自动创建，不移动已有资料。'
+  }
+
+  function persistPersona(next, successMessage) {
+    if (!stateBridge || !stateBridge.endpoint) { toast('人格服务尚未连接，请刷新页面后再试。'); return }
+    if (fileSaveTimer) { clearTimeout(fileSaveTimer); timers.delete(fileSaveTimer); fileSaveTimer = null }
+    var saveButton = $('save-persona'), resetButton = $('reset-persona')
+    if (saveButton) saveButton.disabled = true
+    if (resetButton) resetButton.disabled = true
+    var payload = Object.assign({}, state, next)
+    fetch(stateBridge.endpoint, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: 1, savedAt: new Date().toISOString(), state: payload }),
+    }).then(function (response) {
+      if (!response.ok) return response.text().then(function (text) {
+        var message = '保存失败：请检查目录格式、目录权限或 Host 状态。'
+        try { var result = JSON.parse(text); if (typeof result.error === 'string') message = result.error } catch (ignored) {}
+        throw new Error(message)
+      })
+      Object.assign(state, next)
+      saveLocal()
+      renderPersona()
+      updateTitle()
+      renderChat(true)
+      toast(successMessage)
+    }).catch(function (error) { toast(error.message || '人格设定保存失败，请重试。') })
+      .finally(function () { if (saveButton) saveButton.disabled = false; if (resetButton) resetButton.disabled = false })
   }
 
   var savePersona = $('save-persona')
@@ -1383,24 +1415,14 @@ function mountChonkyFishPage(wrap, chat, options) {
         toast('先给鱼鱼起个名字吧')
         return
       }
-      state.name = name
-      state.prompt = $('fish-prompt').value.trim()
-      save()
-      updateTitle()
-      renderChat(true)
-      toast('人格设定保存好啦！🐳')
+      persistPersona({ name: name, prompt: $('fish-prompt').value.trim(), profileDirectory: $('fish-profile-directory').value.trim() || defaults().profileDirectory }, '人格设定保存好啦！🐳')
     })
   }
   var resetPersona = $('reset-persona')
   if (resetPersona) {
     resetPersona.addEventListener('click', function () {
       var d = defaults()
-      Object.assign(state, { name: d.name, prompt: d.prompt })
-      save()
-      renderPersona()
-      updateTitle()
-      renderChat(true)
-      toast('人格已经恢复默认')
+      persistPersona({ name: d.name, prompt: d.prompt, profileDirectory: d.profileDirectory }, '人格已经恢复默认')
     })
   }
 
