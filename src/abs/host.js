@@ -63,7 +63,7 @@ export function createAbsHost({ ctx, resources }) {
    * Deliver the rendered state review to the bound fish conversation.
    * Acceptance is not completion and not delivery to the owner.
    */
-  async function surfaceReview({ text: reviewText, reviewId }) {
+  async function surfaceReview({ text: reviewText, reviewId, canDeliver }) {
     if (closed) return { accepted: false, status: 'rejected', reason: 'host-closed' }
     if (!text(reviewText)) return { accepted: false, status: 'rejected', reason: 'empty-review' }
     const sessionId = boundSessionId()
@@ -84,6 +84,9 @@ export function createAbsHost({ ctx, resources }) {
       content: [{ type: 'text', text: reviewText }],
       source: { kind: 'chonkyfish-self-review', sourceKind: 'self-review', reviewId },
     }
+    if (closed) return { accepted: false, status: 'rejected', reason: 'host-closed' }
+    const blocked = canDeliver?.()
+    if (blocked) return { accepted: false, status: 'rejected', reason: blocked }
     try { agent.followup(message) } catch { return { accepted: false, status: 'rejected', reason: 'followup-failed' } }
     let persisted = true
     try { persisted = await sessions.flush(agent.session) } catch { persisted = false }

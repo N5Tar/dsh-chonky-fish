@@ -198,4 +198,15 @@ await test('local evidence requires correlated content, image or changed workspa
   f.cleanup()
 })
 
+await test('delivery gate is checked after async resolution before followup', async () => {
+  const f = fixture()
+  const resolve = f.services.sessionController.resolveAgent
+  let resting = false
+  f.services.sessionController.resolveAgent = async (...args) => { const result = await resolve(...args); resting = true; return result }
+  const result = await f.host.surfaceReview({ text: REVIEW, reviewId: 'boundary', canDeliver: () => resting ? 'REST_HOURS' : null })
+  assert.equal(result.accepted, false)
+  assert.equal(result.reason, 'REST_HOURS')
+  assert.equal(f.messages.length, 0)
+  f.cleanup()
+})
 console.log(`ABS host: ${checks} groups passed (offline; no model/network).`)

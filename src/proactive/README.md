@@ -55,7 +55,7 @@ src/proactive/
 
 ## 对外入口
 
-Host 路由（都需要注入页面的 `x-chonkyfish-token`）：
+Host 路由均无插件私有鉴权，无需 `x-chonkyfish-token`。可达接口即可请求投递，请勿无保护地对公网开放；DSH 宿主认证、目标会话绑定与身份校验仍保留：
 
 | 路由 | 作用 |
 |---|---|
@@ -66,8 +66,7 @@ Host 路由（都需要注入页面的 `x-chonkyfish-token`）：
 页面控制台验收：
 
 ```js
-const t = window.__CHONKYFISH_STATE__.token
-await fetch('/chonkyfish/proactive', { method: 'POST', headers: { 'x-chonkyfish-token': t } }).then(r => r.json())
+await fetch('/chonkyfish/proactive', { method: 'POST' }).then(r => r.json())
 ```
 
 以后接自动触发（空闲 / 事件 / 外部 webhook）时，只需要调用 `service.send({ narration?, kind? })`，
@@ -84,8 +83,7 @@ npm test                   # 模块0 全部 + 主动消息
 
 - **DSH 必须开着**：Host 进程不在就不会有主动消息。
 - **每条都花 token**：一次主动消息 = 一次真实模型调用。
-- **页面要刷新**：Host 重启后 token 和上报路由都会更新，旧页面拿不到新 token，需要刷新后
-  面板才能重新上报会话。
+- **更新后刷新页面**：加载最新客户端与上报路由配置，让面板重新上报当前会话；不再有私有 token 刷新步骤。
 - **回访计划器未接线**：`revisit.js` 与测试保留，等触发点确定后再接回（接的时候仍然只投面板会话）。
 - **路径与开关来自资源模块**：home / proactive.json / 工作区根 / preset 由 `src/resources/` 提供；
   `config.json` 的 `proactive.enabled` 关掉后，POST 会返回 `proactive-disabled`。

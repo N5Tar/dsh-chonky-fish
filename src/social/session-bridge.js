@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { digest, fail, plain, readJson, writeJson, serial, text } from './core.js'
-import { SOCIAL_PRESET, SOCIAL_TOOL_NAMES } from './policy.js'
+import { SOCIAL_PRESET } from './policy.js'
 
 const SOURCE = 'chonkyfish-social'
 const MAX_BINDINGS = 256
@@ -26,13 +26,12 @@ export async function createSocialBridge({ ctx, service, resources }) {
     try { return ctx[name] ?? (typeof ctx.get === 'function' ? ctx.get(name) : undefined) } catch { return undefined }
   }
   function capabilities() {
-    const agents = get('agents'), presets = get('agentPresets'), sessions = get('sessions'), persistence = get('sessionPersistence'), permissions = get('permissionPresets')
-    if (!agents?.create || !agents?.resume || !presets?.mount || !presets?.composedPreset || !sessions?.flush || !persistence?.open || persistence.identity === undefined || !permissions?.set) return { available: false, reason: 'SOCIAL_HOST_CAPABILITY_UNAVAILABLE' }
-    if (permissions.presets?.['read-only']?.sandbox !== 'read-only') return { available: false, reason: 'SOCIAL_READ_ONLY_UNAVAILABLE' }
+    const agents = get('agents'), presets = get('agentPresets'), sessions = get('sessions'), persistence = get('sessionPersistence')
+    if (!agents?.create || !agents?.resume || !presets?.mount || !sessions?.flush || !persistence?.open || persistence.identity === undefined) return { available: false, reason: 'SOCIAL_HOST_CAPABILITY_UNAVAILABLE' }
     let model
     try { model = get('agentDefaultModel')?.currentSelection() } catch {}
     if (!text(model?.provider) || !text(model?.model)) return { available: false, reason: 'SOCIAL_MODEL_UNAVAILABLE' }
-    return { available: true, agents, presets, sessions, persistence, backendIdentity: persistence.identity, permissions, model: { provider: model.provider, model: model.model } }
+    return { available: true, agents, presets, sessions, persistence, backendIdentity: persistence.identity, model: { provider: model.provider, model: model.model } }
   }
   function active() { if (closed) fail('SOCIAL_BRIDGE_CLOSED'); if (poisoned) fail('SOCIAL_BRIDGE_STORAGE_UNCERTAIN') }
   async function persist() {
@@ -40,7 +39,7 @@ export async function createSocialBridge({ ctx, service, resources }) {
     catch { poisoned = true; fail('SOCIAL_BRIDGE_STORAGE_UNCERTAIN') }
   }
   function checkHeader(header, row) {
-    if (!header || header.id !== row.sessionId || header.agentPreset !== SOCIAL_PRESET || typeof header.cwd !== 'string' || resolve(header.cwd) !== row.cwd) fail('SOCIAL_SESSION_BINDING_MISMATCH')
+    if (!header || header.id !== row.sessionId || typeof header.cwd !== 'string' || resolve(header.cwd) !== row.cwd) fail('SOCIAL_SESSION_BINDING_MISMATCH')
   }
   function scopeForAgent(agent) {
     if (closed || poisoned || !agent) return null
@@ -49,7 +48,6 @@ export async function createSocialBridge({ ctx, service, resources }) {
     try {
       if (agent.session?.id !== grant.row.sessionId) return null
       checkHeader(agent.session.header, grant.row)
-      if (get('agentPresets')?.composedPreset(agent.ctx) !== SOCIAL_PRESET) return null
       service.scopedIdentity(grant.scope)
       return grant.scope
     } catch { return null }
@@ -70,12 +68,8 @@ export async function createSocialBridge({ ctx, service, resources }) {
     const setup = async (agentCtx, agent) => {
       checkHeader(agent.session?.header, row)
       await cap.presets.mount(agentCtx, SOCIAL_PRESET)
-      if (cap.presets.composedPreset(agentCtx) !== SOCIAL_PRESET || !agentCtx.tools?.restrict || !agentCtx.tools?.guard || !agentCtx.tools?.presentAs) fail('SOCIAL_RESTRICTION_UNAVAILABLE')
-      agentCtx.tools.presentAs('native')
-      agentCtx.tools.restrict({ allow: [...SOCIAL_TOOL_NAMES] })
-      agentCtx.tools.guard(exec => exec.agent === agent && SOCIAL_TOOL_NAMES.includes(exec.name) && scopeForAgent(agent) ? undefined : 'Social restricted session denied')
-      cap.permissions.set(agent.session, 'read-only')
-      const scope = service.issueScope({ sessionId: row.sessionId, connectionId: row.connectionId, conversation: row.conversation, canSend: true })
+      agentCtx.tools?.presentAs?.('native')
+      const scope = service.issueScope({ sessionId: row.sessionId, connectionId: row.connectionId, conversation: row.conversation })
       if (scope.identityRevision !== row.identityRevision || scope.sessionKey !== row.sessionKey) { service.revokeScope(scope); fail('SOCIAL_SCOPE_STALE') }
       grants.set(agent, { row, scope }); admitted = agent
       if (typeof agentCtx.effect !== 'function') { revoke(agent); fail('SOCIAL_LIFECYCLE_UNAVAILABLE') }
@@ -144,7 +138,7 @@ export async function createSocialBridge({ ctx, service, resources }) {
   const bridge = {
     inspect() {
       const cap = capabilities()
-      return { available: !closed && !poisoned && cap.available, reason: closed ? 'SOCIAL_BRIDGE_CLOSED' : poisoned ? 'SOCIAL_BRIDGE_STORAGE_UNCERTAIN' : cap.reason, mode: 'explicit-view-only', bindingCount: state.bindings.length, permissionPreset: 'read-only' }
+      return { available: !closed && !poisoned && cap.available, reason: closed ? 'SOCIAL_BRIDGE_CLOSED' : poisoned ? 'SOCIAL_BRIDGE_STORAGE_UNCERTAIN' : cap.reason, mode: 'explicit-view-only', bindingCount: state.bindings.length }
     },
     scopeForAgent,
     view(input) {

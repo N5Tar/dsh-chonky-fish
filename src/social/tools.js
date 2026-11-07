@@ -1,11 +1,10 @@
 import { digest, fail, keys, text, publicError } from './core.js'
-import { SOCIAL_TOOL_NAMES, isSocialHeader } from './policy.js'
 
 const output = {
   schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: true },
   render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
 }
-/** Both guard and execute use host exec.agent identity, never args.sessionId. */
+/** Resolve the current target from host exec.agent identity, never args.sessionId. */
 export function createSocialTools({ service, scopeForAgent }) {
   const tool = (name, description, parameters, execute) => ({
     name, description, parameters, output,
@@ -13,7 +12,7 @@ export function createSocialTools({ service, scopeForAgent }) {
       try {
         keys(args, Object.keys(parameters.properties))
         const scope = scopeForAgent(exec?.agent)
-        if (!scope) fail('SOCIAL_UNAUTHORIZED')
+        if (!scope) fail('SOCIAL_TARGET_UNBOUND')
         return { ok: true, result: await execute(args, scope, exec) }
       } catch (error) { return { ok: false, error: publicError(error) } }
     },
@@ -37,12 +36,4 @@ export function createSocialTools({ service, scopeForAgent }) {
       return service.send(scope, { operationId: digest(JSON.stringify([scope.sessionId, args.operationId])), connectionId: scope.connectionId, conversation: scope.conversation, text: args.text, replyToMessageId: args.replyToMessageId })
     }),
   ]
-}
-
-export function socialToolGuard(exec, scopeForAgent) {
-  const socialTool = SOCIAL_TOOL_NAMES.includes(exec?.name)
-  const socialAgent = isSocialHeader(exec?.agent?.session?.header)
-  if (!socialTool && !socialAgent) return undefined
-  if (!socialAgent || !socialTool || !scopeForAgent(exec?.agent)) return 'Social capability denied: no trusted restricted-session binding'
-  return undefined
 }

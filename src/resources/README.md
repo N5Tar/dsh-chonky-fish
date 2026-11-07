@@ -42,7 +42,6 @@ $DSH_HOME/chonkyfish/
   },
   "diary": {
     "enabled": true,
-    "enabledPresets": ["chonkyfish"],
     "maxContentChars": 50000
   }
 }
@@ -52,11 +51,11 @@ $DSH_HOME/chonkyfish/
   `maxRecordsPerTurn` 50–5000（均截断为整数）。
 - 写入是「临时文件 + rename」原子写；`updateConfig(patch)` 深合并后落盘。
 - 文件缺失时由 `ensureLayout()` 写入默认值；已存在的文件不会被覆盖。
-- 运行时可通过 `GET /chonkyfish/config`（带 token）查看、`PUT /chonkyfish/config` 局部更新。
+- 运行时可通过 `GET /chonkyfish/config`（无需插件私有 token）查看、`PUT /chonkyfish/config` 局部更新。
 - `eventEngine.enabled` / `extractTickMs` / `extractBatch` 是启动时读取的，改完需要重启 Host 生效；
   `proactive.enabled` 每次发送前重读，改完即时生效。
-- `diary`：`maxContentChars` 1000–200000；`enabledPresets` 只收非空字符串。
-  `diary.enabled` / `enabledPresets` 是启动时读取的，改完需重启 Host；`maxContentChars` 每次写入时重读。
+- `diary`：`maxContentChars` 1000–200000；`diary.enabled` 是启动时读取的，改完需重启 Host；
+  `maxContentChars` 每次写入时重读。旧配置中的 `enabledPresets` 已移除，读取或更新时忽略，不再限制工具可见的预设。
 
 ## 对外接口
 
@@ -76,6 +75,6 @@ resources.clientState()   // 注入页面：home / preset / routes / paths（不
 ## 跑测试
 
 ```bash
-node src/resources/tests/run-resources.mjs   # 13 个用例
+node src/resources/tests/run-resources.mjs   # 14 个用例
 npm test                                     # 模块0 + 资源管理 + 人格 + 主动消息 + 日记
 ```

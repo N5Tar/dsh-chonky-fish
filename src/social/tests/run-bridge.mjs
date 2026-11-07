@@ -17,8 +17,7 @@ async function fixture() {
   const service = await createSocialService({ paths: resources.paths, limits: resources.spec.SOCIAL.limits, driverFactory: value => (driver = createFakeDriver(value)) })
   const logs = new Map(), agents = new Map()
   const counters = { created: 0, resumed: 0, followup: 0, read: 0, readClosed: 0, flush: 0 }
-  const flags = { flush: true, persist: true, permit: true }
-  const permissions = { presets: { 'read-only': { sandbox: 'read-only', approval: 'ask' } }, set(session, name) { assert.equal(name, 'read-only'); if (!flags.permit) throw new Error('permission unavailable'); session.permission = name } }
+  const flags = { flush: true, persist: true }
   const presets = { async mount(agentCtx, name) { agentCtx.preset = name }, composedPreset(agentCtx) { return agentCtx.preset } }
   const sessions = { async flush(session) {
     counters.flush++
@@ -41,13 +40,13 @@ async function fixture() {
     const cleanups = [], guards = []
     const agentCtx = { effect(fn) { cleanups.push(fn()) }, tools: {
       presentAs(mode) { assert.equal(mode, 'native') },
-      restrict(input) { assert.ok(input.allow.includes('social_send_message')); assert.ok(!input.allow.includes('bash')) },
-      guard(fn) { guards.push(fn) },
+      restrict() { assert.fail('social bridge must not restrict host tools') },
+      guard() { assert.fail('social bridge must not install tool guards') },
     } }
     const agent = { ctx: agentCtx, status: 'idle', inbox: { nextTurn: [], nextStep: [] }, session: { id: sessionId, header, snapshotEvents: () => events }, guards,
       followup(message) {
-        assert.equal(agent.session.permission, 'read-only', 'restriction must precede delivery')
-        assert.equal(guards[0]({ agent, name: 'bash' }), 'Social restricted session denied')
+        assert.equal(agent.session.permission, undefined, 'host permissions are unchanged')
+        assert.equal(guards.length, 0)
         counters.followup++
         events.push({ type: 'agent/inbox/spliced', data: { inserted: [structuredClone(message)] } })
         events.push({ type: 'user/message', data: structuredClone(message) })
@@ -58,7 +57,7 @@ async function fixture() {
     agents.set(sessionId, agent)
     return { agent, async dispose() { for (const fn of cleanups) fn?.(); agents.delete(sessionId) } }
   }
-  const ctx = { agents: { list: () => [...agents.values()], create: options => open(options, false), resume: options => open(options, true) }, agentPresets: presets, sessions, permissionPresets: permissions,
+  const ctx = { agents: { list: () => [...agents.values()], create: options => open(options, false), resume: options => open(options, true) }, agentPresets: presets, sessions,
     get(name) { if (name === 'sessionPersistence') return persistence; if (name === 'agentDefaultModel') return { currentSelection: () => ({ provider: 'test', model: 'test' }) } },
   }
   const bridge = await createSocialBridge({ ctx, service, resources })
@@ -83,7 +82,12 @@ await test('explicit view only; setup precedes message; silent ACK; trusted obje
     assert.ok(f.bridge.scopeForAgent(agent))
     assert.equal(f.bridge.scopeForAgent({ ...agent }), null)
     agent.ctx.preset = 'chonkyfish'
+    agent.session.header.agentPreset = 'ordinary'
+    assert.ok(f.bridge.scopeForAgent(agent), 'preset labels do not gate a bound target')
+    const originalId = agent.session.id
+    agent.session.id = 'unbound'
     assert.equal(f.bridge.scopeForAgent(agent), null)
+    agent.session.id = originalId
     agent.ctx.preset = 'chonkyfish-social'
     assert.equal((await f.bridge.view({ connectionId: 'qq', conversation: target })).status, 'empty')
     assert.equal(f.counters.followup, 1)
@@ -125,7 +129,7 @@ await test('bridge recreation safely resumes a uniquely bound Social session', a
     assert.equal(f.counters.created, 1); assert.equal(f.counters.resumed, 1); assert.equal(f.counters.followup, 2)
   } finally { await second?.close(); await f.close() }
 })
-await test('missing host and permission fail closed without disrupting inbox', async () => {
+await test('missing host fails without disrupting inbox; permission service is unnecessary', async () => {
   const f = await fixture()
   let unavailable
   try {
@@ -133,10 +137,9 @@ await test('missing host and permission fail closed without disrupting inbox', a
     assert.equal(unavailable.inspect().available, false)
     await f.emit('1')
     await assert.rejects(unavailable.view({ connectionId: 'qq', conversation: target }), { code: 'SOCIAL_HOST_CAPABILITY_UNAVAILABLE' })
-    f.flags.permit = false
-    await assert.rejects(f.bridge.view({ connectionId: 'qq', conversation: target }))
     assert.equal(f.counters.followup, 0)
     assert.equal((await f.service.listNotices())[0].unreadCount, 1)
+    assert.equal((await f.bridge.view({ connectionId: 'qq', conversation: target })).status, 'viewed')
   } finally { await unavailable?.close(); await f.close() }
 })
 await test('unknown delivery intent never replays; corrupt binding never overwritten', async () => {

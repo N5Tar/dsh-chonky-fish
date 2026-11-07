@@ -3,6 +3,8 @@
 一个给 **DeepSeek Harness（DSH）** 的公开插件：把「大肥鱼 · 小鱼塘管理台」作为一个自带面板装进 DSH，并**同时注册一个 `chonkyfish` agent preset**。装完就能和一只蓝色大肥鱼聊天，她会用真实 DSH 会话、带通用工具，还会把整个 Harness 皮肤换成小鱼塘蓝白配色。
 
 > 独立粉丝概念 UI · 非 DeepSeek 官方产品。
+>
+> **访问边界已变更：所有 ChonkyFish HTTP 接口均不再做插件私有鉴权，也不要求 `x-chonkyfish-token`。能访问这些路由的调用方即可读取数据或执行接口支持的写入/投递；不要将它们无保护地暴露到公网。** DSH 宿主自身的认证、权限与审批机制不因此移除；第三方平台凭证仍必需，目标会话/聊天绑定、数据校验和 ABS 休息规则仍保留。
 
 ![icon](icon.svg)
 
@@ -17,19 +19,19 @@
 - **主题皮肤**：加载插件后把 DSH 的 14 个语义 token 之外、整套 `--dsw-static-*` 调色板重映射成小鱼塘配色（明暗主题都适配），卸载即恢复
 - **角色养成**：名字 / 补充人格设定、贝壳钱包与账本、6 套姿态互动（点击害羞、投喂、思考/开心/睡着）；补充人格设定会作为 **system prompt 的补充**动态生效，不会混进用户消息
 - **资源管理**：路径、路由、请求体上限、schema 版本、localStorage key、素材目录、默认配置集中由 `src/resources/` 统一管理，Host / Client 构建 / 各功能模块都从这里读取，不各自硬编码；可编辑配置落在 home 下的 `config.json`
-- **状态落盘**：名字、补充人格、钱包、账本保存在 home 里的 `state.json`（Host 通过带一次性 token 的本地路由读写），HTTP API 与嵌入式浏览器存储只作为缓存/降级
+- **状态落盘**：名字、补充人格、钱包、账本保存在 home 里的 `state.json`（Host 通过无插件私有鉴权的本地路由读写），HTTP API 与嵌入式浏览器存储只作为缓存/降级
 - **事件感知（模块0）**：Host 侧监听 DSH 会话事件，把「小鱼塘 + chonkyfish」会话里每个 turn 交给该会话自己的模型抽取语义事件（说了喜欢 / 打算做 / 否认做过……），落 `$DSH_HOME/chonkyfish/events.db`，面板右上角「感知」可查看，每条都带原文引用与事实地位
 - **主动消息（能力）**：保留「让大肥鱼先开口」的能力——Host 往**面板当前会话**里注入一条隐藏旁白，她就会主动说一句；主动消息本身没有定时器，不会自己新建或另找会话
-- **日记（模块1）**：一个 `diary` 工具（write / read / list）+ 本地 Markdown（`$DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md`）；模块**不带定时器**，写日记的时间由大肥鱼自己用定时任务工具安排；面板右上角 📔 图标可查看已写日记（只读）；默认只有 `chonkyfish` preset 能用，写完不用汇报
+- **日记（模块1）**：一个 `diary` 工具（write / read / list）+ 本地 Markdown（`$DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md`）；模块**不带定时器**，写日记的时间由大肥鱼自己用定时任务工具安排；面板右上角 📔 图标可查看已写日记（只读）；不再按调用方 preset 限制工具，写完不用汇报
 - **定时任务（DSH 原生）**：给 `chonkyfish` preset 挂了 `schedule_create / list / update / delete`，鱼鱼可以自己排一次性/每日/每周/cron 提醒（包括“每天几点写日记”），到点由 DSH 的 `schedule` 服务把提醒投回**同一条会话**
 - **内嵌图片资源**：插图与头像以 WebP data URI 内嵌在 [client.js](<client.js>) 里，不下载图片
 
 ## Social 社交接入（V1.2 · 默认关闭）
 
-新增事件感知型社交模块：QQ / Discord 消息经过身份校验和去重后进入有界收件箱，只更新未读通知，**不自动调用模型、不自动回复**。明确选择查看后才尝试将批次交给独立受限社交会话；可以沉默，只有显式发送工具才发信。
+新增事件感知型社交模块：QQ / Discord 消息经过身份校验和去重后进入有界收件箱，只更新未读通知，**不自动调用模型、不自动回复**。明确选择查看后才尝试将批次交给独立社交会话；可以沉默，只有显式发送工具才发信。
 
 - QQ NapCatQQ / SnowLuma 共用 v11 Driver；Discord OneBots 使用 v12 Driver。真实平台兼容性和接收端验收尚未完成。
-- 独立 `chonkyfish-social` preset 不包含通用工具，不读取主人日记、私人补充人格和面板历史；未经安全桥接授权的 Agent 默认拒绝 Social 工具。
+- 独立 `chonkyfish-social` preset 不自动注入主人日记、私人补充人格和面板历史；插件不再按调用方身份限制工具。Social 工具仍需当前会话的明确目标绑定，不允许借此向任意聊天目标发送。
 - 面板顶栏「社交」入口：只填平台、接入方式、地址和凭证，再加未读会话与显式「查看」；没有开关、接收范围或允许名单。
 - 自动行动引擎尚未接入；配置默认关闭，不自动连接账号。
 - 参见 [Social 配置、接口、测试和限制](<src/social/README.md>)。不要把代码和模拟测试完成理解为真实平台生产可用。
@@ -59,20 +61,18 @@ turn，由鱼鱼自己生成回复。
 打开一次大肥鱼面板（让会话上报成功）后，在页面控制台：
 
 ```js
-const t = window.__CHONKYFISH_STATE__.token
-
 // 让大肥鱼在面板当前会话里主动说一句
-await fetch('/chonkyfish/proactive', { method: 'POST', headers: { 'x-chonkyfish-token': t } }).then(r => r.json())
+await fetch('/chonkyfish/proactive', { method: 'POST' }).then(r => r.json())
 
 // 可选：自定义旁白 / 指定会话（不指定时只用面板会话）
 await fetch('/chonkyfish/proactive', {
   method: 'POST',
-  headers: { 'content-type': 'application/json', 'x-chonkyfish-token': t },
+  headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ narration: '（鱼塘旁白：下午了，你想跟主人说句话。）' }),
 }).then(r => r.json())
 
 // 查看面板当前会话与最近发送记录
-await fetch('/chonkyfish/proactive', { headers: { 'x-chonkyfish-token': t } }).then(r => r.json())
+await fetch('/chonkyfish/proactive').then(r => r.json())
 ```
 
 以后要接自动触发（空闲、事件、外部 webhook），在对应触发点调用同一个 `send()` 就行：
@@ -97,10 +97,9 @@ Host 会把消息投到面板当前会话。事件回访计划器 `src/proactive
   详见下方「定时任务」。
 - **不新建会话、不做多会话聚合**：项目设定就是面板始终同一个会话。
 - **面板查看**：右上角 📔 图标打开「鱼鱼的日记」，按日期列出、点开只读正文；
-  走 token 鉴权的本地路由 `GET /chonkyfish/diary?limit=60` / `?date=YYYY-MM-DD`，不写文件。
-- **谁能用**：全局注册，但 `config.diary.enabledPresets` 默认只有 `["chonkyfish"]`；
-  其它 preset 的 Agent 创建时会被 `restrict` 掉，guard 再兜一层。
-- **生效时机**：`diary.enabled` / `enabledPresets` 在插件启动时读取，改完要重启 DSH Host；
+  走无插件私有鉴权的本地路由 `GET /chonkyfish/diary?limit=60` / `?date=YYYY-MM-DD`，不写文件。
+- **谁能用**：全局注册，不再按调用方 preset 限制；旧 `config.diary.enabledPresets` 字段已移除并忽略。
+- **生效时机**：`diary.enabled` 在插件启动时读取，改完要重启 DSH Host；
   `maxContentChars` 每次写入时重读。
 
 ### 手动验收
@@ -109,7 +108,7 @@ Host 会把消息投到面板当前会话。事件回访计划器 `src/proactive
 2. 再说一次“写今天的日记”，应返回 `DIARY_ALREADY_EXISTS`，文件不变；
 3. 对她说“以后每天 20:00 提醒我写日记”，她应调用 `schedule_create` 建一个 daily 任务；
    到点提醒回到面板会话，她再调用 `diary` 写；
-4. 标准 Agent 会话里应该看不到 `diary` 工具。
+4. 在宿主提供该工具的其它 Agent 会话中，插件不应再因 preset 不同而隐藏或拒绝 `diary`。
 
 ## 定时任务（DSH 原生）
 
@@ -163,7 +162,6 @@ $DSH_HOME/chonkyfish/
   },
   "diary": {
     "enabled": true,
-    "enabledPresets": ["chonkyfish"],
     "maxContentChars": 50000
   }
 }
@@ -171,7 +169,7 @@ $DSH_HOME/chonkyfish/
 
 - 文件缺失 / JSON 坏 / 字段非法时自动回退默认值，不会把 Host 搞挂；
 - `extractTickMs` 会被限制在 1000–60000，`extractBatch` 在 1–10，`maxRecordsPerTurn` 在 50–5000；
-- 也可以带 token 通过 `GET /chonkyfish/config` 查看、`PUT /chonkyfish/config` 局部更新（深合并后原子写盘）。
+- 无需插件私有 token，可通过 `GET /chonkyfish/config` 查看、`PUT /chonkyfish/config` 局部更新（深合并后原子写盘）。
 
 ## 安装
 
@@ -223,8 +221,8 @@ node build.mjs      # 从 src/original.html + src/runtime.js 生成 client.js
 ## 数据与隐私
 
 - 聊天记录保存在本机 DSH Session（`$DSH_HOME/sessions`）
-- 名字、补充人格、钱包、账本和地方演示记录保存在 `$DSH_HOME/chonkyfish/state.json`，由 Host 半通过本地 `/chonkyfish/state` 路由读写；路由要求每次 Host 启动随机生成、注入到页面的 token
-- 浏览器 localStorage（`chonkyfish-mini-demo-v1`）仅作为缓存和降级；首次安装/更新后刷新一次页面以拿到新的文件存储 token
+- 名字、补充人格、钱包、账本和地方演示记录保存在 `$DSH_HOME/chonkyfish/state.json`，由 Host 半通过本地 `/chonkyfish/state` 路由读写；路由不再要求插件私有 token，请依靠宿主认证与网络访问边界保护数据
+- 浏览器 localStorage（`chonkyfish-mini-demo-v1`）仅作为缓存和降级；首次安装/更新后刷新一次页面以加载最新客户端与路由配置
 - 「感知」事件保存在 `$DSH_HOME/chonkyfish/events.db`（只存抽取结果，原始对话仍在 DSH 会话日志里）；抽取会把该 turn 的对话原文发给当前配置的模型
 - 主动消息的「面板当前会话 id、发送计数、最近发送记录」保存在 `$DSH_HOME/chonkyfish/proactive.json`；旁白正文与鱼鱼回复都会进入 DSH 会话日志
 - 日记正文保存在 `$DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md`；定时任务由 DSH 自己保存（`$DSH_HOME` 下的 schedule 存储）

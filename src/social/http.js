@@ -1,13 +1,12 @@
 import { publicError, keys, fail } from './core.js'
 
-/** Local authenticated management only. No raw send/ack/agent injection endpoint. */
-export function createSocialHttpHandler({ service, bridge, token, maxBodyBytes = 16384 }) {
+/** Local management only. No raw send/ack/agent injection endpoint. */
+export function createSocialHttpHandler({ service, bridge, maxBodyBytes = 16384 }) {
   return async function handle(request, response) {
     const reply = (status, value) => {
       response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
       response.end(request.method === 'HEAD' ? undefined : JSON.stringify(value))
     }
-    if (!token || request.headers['x-chonkyfish-token'] !== token) { reply(401, { ok: false, error: 'SOCIAL_UNAUTHORIZED' }); return }
     try {
       if (request.method === 'GET' || request.method === 'HEAD') {
         // 配置损坏时仍返回状态：面板要能打开、看到错误，并用一次合法保存覆盖修好。

@@ -29,11 +29,10 @@ export async function createSocialService({ paths, limits, env = process.env, dr
     if (!entry || entry.status !== 'connected' || !entry.verified) fail('SOCIAL_NOT_CONNECTED')
     return entry
   }
-  function validateScope(scope, sending = false) {
+  function validateScope(scope) {
     scopes.check(scope)
     const entry = entryFor(scope.connectionId)
     if (scope.identityRevision !== entry.verified.identityRevision || scope.sessionKey !== sessionKey(entry.config.platform, entry.config.id, scope.conversation)) fail('SOCIAL_SCOPE_STALE')
-    if (sending && !scope.canSend) fail('SOCIAL_SEND_FORBIDDEN')
     return entry
   }
   function notify() {
@@ -127,9 +126,9 @@ export async function createSocialService({ paths, limits, env = process.env, dr
     subscribe(listener) { active(); if (typeof listener !== 'function') fail('SOCIAL_INVALID_LISTENER'); listeners.add(listener); return () => listeners.delete(listener) },
     listNotices,
     // Host-only issuance, never exposed directly as an HTTP/tool action.
-    issueScope({ sessionId, connectionId, conversation, canSend = false }) {
+    issueScope({ sessionId, connectionId, conversation }) {
       const entry = entryFor(connectionId)
-      return scopes.issue({ sessionId, connectionId, conversation, platform: entry.config.platform, identityRevision: entry.verified.identityRevision, canSend })
+      return scopes.issue({ sessionId, connectionId, conversation, platform: entry.config.platform, identityRevision: entry.verified.identityRevision })
     },
     revokeScope: scope => scopes.revoke(scope),
     scopedIdentity(scope) { const entry = validateScope(scope); return structuredClone(entry.verified.identity) },
@@ -150,7 +149,7 @@ export async function createSocialService({ paths, limits, env = process.env, dr
     send(scope, input) {
       input = structuredClone(input)
       return lifecycle(async () => {
-      const entry = validateScope(scope, true)
+      const entry = validateScope(scope)
       const sendingEpoch = entry.epoch
       if (!plain(input) || !text(input.operationId, 128) || !text(input.text, limits.maxSendChars)) fail('SOCIAL_INVALID_SEND')
       if (input.connectionId !== scope.connectionId || sessionKey(entry.config.platform, input.connectionId, input.conversation) !== scope.sessionKey) fail('SOCIAL_TARGET_FORBIDDEN')
@@ -165,7 +164,7 @@ export async function createSocialService({ paths, limits, env = process.env, dr
       operations.operations.push(row)
       try { await writeJson(paths.socialOperations, operations) }
       catch { operations.operations.pop(); fail('SOCIAL_STORAGE_FAILED') }
-      if (validateScope(scope, true) !== entry || sendingEpoch !== entry.epoch) fail('SOCIAL_SCOPE_STALE')
+      if (validateScope(scope) !== entry || sendingEpoch !== entry.epoch) fail('SOCIAL_SCOPE_STALE')
       entry.lastSendAt = now()
       let result
       try { result = await entry.driver.sendText({ conversation: scope.conversation, text: input.text, replyToMessageId: input.replyToMessageId }) }

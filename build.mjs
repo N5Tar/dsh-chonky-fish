@@ -140,15 +140,16 @@ css += `
 
 const runtime = readFileSync(join(here, 'src/runtime.js'), 'utf8')
 const absLab = readFileSync(join(here, 'src/abs/lab.js'), 'utf8')
+const skillsPanel = readFileSync(join(here, 'src/skills/panel.js'), 'utf8')
 
 /* -------------------------------------------------------------- client.js */
 
 const moduleSource = `/**
  * 大肥鱼 · chat UI — browser half.
  *
- * Registers six flat sidebar panel entries (\`sidebar.panellist\`) and their
- * matching main panels (\`main\`): the chat, wallet, persona, senses, diary and
- * social pages. The panel renders the ported design inside a Shadow DOM
+ * Registers flat sidebar panel entries (\`sidebar.panellist\`) and their
+ * matching main panels (\`main\`): chat, wallet, persona, senses, diary,
+ * social, skills and ABS pages. The panel renders the ported design inside a Shadow DOM
  * subtree: the concept UI keeps its own palette and its generic class names
  * (.app/.message/…) never reach the Harness stylesheet. Chat data lives in the
  * DSH Session log; the panel's own state (persona/name, wallet, ledger) stays
@@ -318,6 +319,7 @@ window.__ModuleLoader__.load({
 
 ${runtime}
 ${absLab}
+${skillsPanel}
 
     /**
      * Bridge between the fish panel and a real DSH Session.
@@ -387,14 +389,13 @@ ${absLab}
       function reportActiveSession(sessionId) {
         try {
           var bridge = typeof window !== 'undefined' ? window.__CHONKYFISH_STATE__ : null
-          if (!bridge || typeof bridge.token !== 'string' || typeof sessionId !== 'string' || sessionId === '') return
+          if (!bridge || typeof sessionId !== 'string' || sessionId === '') return
           if (typeof fetch !== 'function') return
           var endpoint = bridge.sessionEndpoint || RESOURCES.routes.session
           fetch(endpoint, {
             method: 'PUT',
             headers: {
               'content-type': 'application/json',
-              'x-chonkyfish-token': bridge.token,
             },
             body: JSON.stringify({ sessionId: sessionId }),
             keepalive: true,
@@ -843,6 +844,11 @@ ${absLab}
       h('path', { key: 'lines', d: 'M11 8h6M11 12h6M11 16h4' }),
     ])
 
+    var ICON_SKILLS = makePanelIcon([
+      h('path', { key: 'book', d: 'M12 5C8 2 4 3 3 4v15c3-2 6-1 9 1 3-2 6-3 9-1V4c-3-2-6-1-9 1Z' }),
+      h('path', { key: 'spine', d: 'M12 5v15M6 8l3 1M6 12l3 1M15 9l3-1M15 13l3-1' }),
+    ])
+
     var ICON_SOCIAL = makePanelIcon([
       h('rect', { key: 'frame', x: 3, y: 3, width: 18, height: 18, rx: 2 }),
       h('path', { key: 'split', d: 'M9 3v18' }),
@@ -859,6 +865,7 @@ ${absLab}
       { id: 'chonkyfish-sense', view: 'sense', label: 'navSense', icon: ICON_SENSE, order: 23 },
       { id: 'chonkyfish-diary', view: 'diary', label: 'navDiary', icon: ICON_DIARY, order: 24 },
       { id: 'chonkyfish-social', view: 'social', label: 'navSocial', icon: ICON_SOCIAL, order: 25 },
+      { id: 'chonkyfish-skills', view: 'skills', label: 'navSkills', icon: ICON_SKILLS, order: 25.5 },
       { id: 'abs-lab', view: 'abs', label: 'navAbs', icon: ICON_SENSE, order: 26 },
     ]
 
@@ -895,7 +902,7 @@ ${absLab}
             name: 'main',
             key: panel.id,
             locale: NS,
-          }, panel.view === 'abs' ? AbsLabPage : createPanelPage(panel.view))
+          }, panel.view === 'abs' ? AbsLabPage : panel.view === 'skills' ? createSkillsPage(t) : createPanelPage(panel.view))
         })
       })
 

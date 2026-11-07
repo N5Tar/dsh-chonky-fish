@@ -40,10 +40,11 @@ export const FILES = Object.freeze({
   state: 'state.json',
   proactive: 'proactive.json',
   abs: 'abs',
+  skills: 'skills',
   events: 'events.db',
 })
 
-/** Host 暴露给面板的本地 HTTP 路由（都按 activation token 鉴权）。 */
+/** Host 暴露给面板的本地 HTTP 路由（无插件私有 token 鉴权）。 */
 export const ROUTES = Object.freeze({
   state: '/chonkyfish/state',
   events: '/chonkyfish/events',
@@ -51,6 +52,7 @@ export const ROUTES = Object.freeze({
   proactive: '/chonkyfish/proactive',
   config: '/chonkyfish/config',
   diary: '/chonkyfish/diary',
+  skills: '/chonkyfish/skills',
   social: '/chonkyfish/social',
   abs: '/chonkyfish/abs',
 })
@@ -61,11 +63,28 @@ export const LIMITS = Object.freeze({
   jsonBodyBytes: 16 * 1024,
 })
 
+/** 活动技能库的有界存储与读取限制。 */
+export const SKILL_LIMITS = Object.freeze({
+  maxFileBytes: 512 * 1024,
+  maxRevisions: 64,
+  maxExperiences: 128,
+  maxGuideChars: 16000,
+  maxClaimChars: 2000,
+  maxReasonChars: 500,
+  maxEvidenceRefs: 12,
+  maxEvidenceRefChars: 500,
+  defaultPageSize: 10,
+  maxPageSize: 50,
+  defaultGuideChars: 2000,
+  maxReadGuideChars: 8000,
+});
+
 /** 各类落盘 JSON 的 schema 版本；读到不匹配的版本按「恢复默认」处理。 */
 export const VERSIONS = Object.freeze({
   config: 1,
   state: 1,
   proactive: 2,
+  skills: 1,
 })
 
 /**
@@ -102,6 +121,7 @@ export const ASSETS = Object.freeze({
 export const DEFAULT_CONFIG = Object.freeze({
   version: VERSIONS.config,
   abs: ABS_DEFAULTS,
+  skills: Object.freeze({ enabled: true }),
   proactive: Object.freeze({ enabled: true }),
   eventEngine: Object.freeze({
     enabled: true,
@@ -111,7 +131,6 @@ export const DEFAULT_CONFIG = Object.freeze({
   }),
   /**
    * 日记模块：同一个大肥鱼会话里写日记，正文落本地 Markdown。
-   * - enabledPresets：哪些 agent preset 能看到 diary 工具（其它 preset 默认关闭）
    * - maxContentChars：单篇日记正文上限
    *
    * 注意：模块本身**没有定时器**。写日记的时间由大肥鱼自己用 DSH 的
@@ -119,7 +138,6 @@ export const DEFAULT_CONFIG = Object.freeze({
    */
   diary: Object.freeze({
     enabled: true,
-    enabledPresets: Object.freeze([PRESET]),
     maxContentChars: 50000,
   }),
 })

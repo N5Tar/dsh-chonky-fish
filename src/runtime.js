@@ -33,7 +33,7 @@ function mountChonkyFishPage(wrap, chat, options) {
 
   var stateBridge = null
   try {
-    if (typeof window !== 'undefined' && window.__CHONKYFISH_STATE__ && typeof window.__CHONKYFISH_STATE__.token === 'string') {
+    if (typeof window !== 'undefined' && window.__CHONKYFISH_STATE__ ) {
       stateBridge = window.__CHONKYFISH_STATE__
     }
   } catch (error) {
@@ -137,7 +137,6 @@ function mountChonkyFishPage(wrap, chat, options) {
         method: 'PUT',
         headers: {
           'content-type': 'application/json',
-          'x-chonkyfish-token': stateBridge.token,
         },
         body: JSON.stringify({ version: 1, savedAt: new Date().toISOString(), state: state }),
       }).catch(function () {
@@ -154,7 +153,6 @@ function mountChonkyFishPage(wrap, chat, options) {
   function hydrateFromFile() {
     if (!stateBridge || typeof fetch !== 'function') return
     fetch(stateBridge.endpoint, {
-      headers: { 'x-chonkyfish-token': stateBridge.token },
       cache: 'no-store',
     }).then(function (response) {
       return response.ok ? response.json() : null
@@ -180,7 +178,7 @@ function mountChonkyFishPage(wrap, chat, options) {
       renderWallet()
       renderChat(true)
     }).catch(function () {
-      /* no token (page not refreshed yet) or route offline: localStorage only */
+      /* bootstrap unavailable or route offline: localStorage only */
     })
   }
 
@@ -447,7 +445,7 @@ function mountChonkyFishPage(wrap, chat, options) {
   function renderSense() {
     if (!senseList) return
     if (!stateBridge || typeof fetch !== 'function') {
-      renderSenseError('感知服务还没连上：刷新一下页面拿到新的令牌后再试。')
+      renderSenseError('感知服务还没连上：刷新页面或检查 Host 插件是否启动。')
       return
     }
     var request = ++senseRequest
@@ -459,7 +457,6 @@ function mountChonkyFishPage(wrap, chat, options) {
     }
     var endpoint = (stateBridge.eventsEndpoint || ROUTE_SPEC.events) + '?limit=30'
     fetch(endpoint, {
-      headers: { 'x-chonkyfish-token': stateBridge.token },
       cache: 'no-store'
     }).then(function (response) {
       if (!response.ok) throw new Error('HTTP ' + response.status)
@@ -520,7 +517,7 @@ function mountChonkyFishPage(wrap, chat, options) {
   function loadDiary(date) {
     var route = diaryRoute()
     if (!route || !stateBridge || typeof fetch !== 'function') {
-      diaryMessage('日记服务还没连上：刷新一下页面拿到新的令牌后再试。', true)
+      diaryMessage('日记服务还没连上：刷新页面或检查 Host 插件是否启动。', true)
       return
     }
     diarySelected = date
@@ -529,7 +526,6 @@ function mountChonkyFishPage(wrap, chat, options) {
     if (diaryBody) diaryBody.textContent = '正在翻开这一页…'
     var request = ++diaryRequest
     fetch(route + '?date=' + encodeURIComponent(date), {
-      headers: { 'x-chonkyfish-token': stateBridge.token },
       cache: 'no-store',
     }).then(function (response) {
       return response.json().catch(function () { return null }).then(function (payload) {
@@ -574,7 +570,7 @@ function mountChonkyFishPage(wrap, chat, options) {
   function renderDiary() {
     var route = diaryRoute()
     if (!route || !stateBridge || typeof fetch !== 'function') {
-      diaryMessage('日记服务还没连上：刷新一下页面拿到新的令牌后再试。', true)
+      diaryMessage('日记服务还没连上：刷新页面或检查 Host 插件是否启动。', true)
       return
     }
     var request = ++diaryRequest
@@ -585,7 +581,6 @@ function mountChonkyFishPage(wrap, chat, options) {
       diaryDates.appendChild(loading)
     }
     fetch(route + '?limit=60', {
-      headers: { 'x-chonkyfish-token': stateBridge.token },
       cache: 'no-store',
     }).then(function (response) {
       if (!response.ok) throw new Error('HTTP ' + response.status)
@@ -645,14 +640,14 @@ function mountChonkyFishPage(wrap, chat, options) {
     identity_changed: '待确认新账号'
   }
   var SOCIAL_ERROR_LABELS = {
-    SOCIAL_UNAUTHORIZED: '令牌失效，刷新页面后再试',
+    SOCIAL_TARGET_UNBOUND: '当前会话未绑定社交目标，请先选择对应消息会话',
     SOCIAL_BRIDGE_UNAVAILABLE: '宿主桥接不可用（需要宿主支持受限会话）',
     SOCIAL_BRIDGE_CLOSED: '桥接已关闭，重启 DSH 后再试',
     SOCIAL_MODEL_UNAVAILABLE: '还没有可用的默认模型',
     SOCIAL_READ_ONLY_UNAVAILABLE: '宿主没有 read-only 权限预设',
     SOCIAL_PERSISTENCE_UNVERIFIED: '无法确认会话已持久化，已拒绝继续',
     SOCIAL_DELIVERY_UNCERTAIN: '上一批投递状态不确定，已停止以免重复',
-    SOCIAL_SCOPE_STALE: '身份或授权已变化，请刷新后重新查看',
+    SOCIAL_SCOPE_STALE: '账号身份或消息绑定已变化，请重新查看对应会话',
     SOCIAL_NOT_CONNECTED: '连接还没建立（检查地址、凭证和 Provider）',
     SOCIAL_INVALID_CONFIG: '配置不合法（检查平台、接入方式、地址）',
     SOCIAL_INVALID_CONNECTION: '连接字段不合法或 ID 重复',
@@ -682,7 +677,7 @@ function mountChonkyFishPage(wrap, chat, options) {
     if (!route || !stateBridge || typeof fetch !== 'function') return Promise.reject(new Error('social-unavailable'))
     var options = {
       method: method,
-      headers: Object.assign({ 'x-chonkyfish-token': stateBridge.token }, body ? { 'content-type': 'application/json' } : {}),
+      headers: body ? { 'content-type': 'application/json' } : {},
       cache: 'no-store'
     }
     if (body) options.body = JSON.stringify(body)
@@ -1031,7 +1026,7 @@ function mountChonkyFishPage(wrap, chat, options) {
   function renderSocial() {
     if (!socialPanel) return
     if (!stateBridge || typeof fetch !== 'function' || !socialRoute()) {
-      if (socialSummary) socialSummary.textContent = '社交服务还没连上：刷新一下页面拿到新的令牌后再试。'
+      if (socialSummary) socialSummary.textContent = '社交服务还没连上：刷新页面或检查 Host 插件是否启动。'
       if (socialStatusBox) clearNode(socialStatusBox)
       if (socialNotices) clearNode(socialNotices)
       if (socialList) clearNode(socialList)

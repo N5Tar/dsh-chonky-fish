@@ -21,7 +21,7 @@ async function setup(overrides = {}, seed, options = {}) {
   }
   const host = {
     async environment() { return { ownerSession: { available: true, sessionId: 'fish' }, search: { available: true } } },
-    async surfaceReview(payload) { deliveries.push(structuredClone(payload)); return acceptance() },
+    async surfaceReview({ canDeliver, ...payload }) { const reason = canDeliver?.(); if (reason) return { accepted: false, reason }; deliveries.push(structuredClone(payload)); return acceptance() },
     subscribeObservation(fn) { callback = fn; return () => { callback = null } },
     close() {},
   }
@@ -41,6 +41,53 @@ async function setup(overrides = {}, seed, options = {}) {
 }
 let passed = 0
 async function test(name, fn) { await fn(); console.log('PASS', name); passed++ }
+
+await test('rest blocks timer/manual/activation at 120x and resumes once at 08:00', async () => {
+  const realStart = Date.parse('2026-11-07T23:00:00+08:00')
+  const f = await setup({ mode: 'active', timeScale: 120, activationCooldownMinutes: 0 }, null, { realStart })
+  for (const cause of ['timer', 'manual', 'transition']) assert.equal((await f.service.wake(cause)).reason, 'REST_HOURS')
+  assert.equal(f.deliveries.length, 0)
+  const view = f.service.inspect().clockView
+  assert.equal(view.rest.resting, true)
+  assert.equal(view.nextWakeRealAt, '2026-11-08T00:00:00.000Z')
+  f.observe({ kind: 'owner_message', sessionId: 'fish', seq: 1, at: new Date(f.now()).toISOString() })
+  await f.service.syncClock()
+  assert.ok(f.state.lastOwnerMessage)
+  const seed = f.state; await f.close()
+  const g = await setup({ mode: 'active', timeScale: 120, activationCooldownMinutes: 0 }, seed, { realStart: realStart + 8 * 3600000 })
+  assert.equal((await g.service.wake('manual')).reason, 'REST_HOURS')
+  g.advanceMinutes(60)
+  assert.equal((await g.service.wake('timer')).delivered, true)
+  assert.equal((await g.service.wake('timer')).reason, 'NOT_DUE')
+  assert.equal(g.deliveries.length, 1)
+  await g.close()
+})
+
+await test('future deadlines inside rest are shown at morning and disabling rest takes effect', async () => {
+  const f = await setup({ mode: 'active', activationCooldownMinutes: 0 }, null, { realStart: Date.parse('2026-11-07T22:00:00+08:00') })
+  assert.equal((await f.service.wake('timer')).delivered, true)
+  assert.equal(f.service.inspect().clockView.nextWakeRealAt, '2026-11-08T00:00:00.000Z')
+  f.advanceMinutes(120)
+  assert.equal((await f.service.wake('manual')).reason, 'REST_HOURS')
+  f.configure({ restHours: { enabled: false } })
+  assert.equal((await f.service.wake('timer')).delivered, true)
+  await f.close()
+})
+
+await test('rest timer polls configuration without repeated wakes or audit writes', async () => {
+  let callback, delay
+  const timers = { setTimeout(fn, ms) { callback = fn; delay = ms; return { unref() {} } }, clearTimeout() {} }
+  const f = await setup({ mode: 'active', activationCooldownMinutes: 0 }, null, { realStart: Date.parse('2026-11-07T23:30:00+08:00'), timers })
+  await f.service.wake('manual'); f.service.start()
+  const count = f.records.length
+  assert.equal(delay, 30000)
+  for (let i = 0; i < 3; i++) { f.advanceMinutes(.5); callback(); await f.service.syncClock() }
+  assert.equal(f.records.length, count)
+  assert.equal(f.deliveries.length, 0)
+  f.configure({ timeScale: 0 }); await f.service.syncClock()
+  assert.equal(f.service.inspect().clockView.nextWakeRealAt, null)
+  await f.close()
+})
 
 await test('shadow computes and previews without delivering anything', async () => {
   const f = await setup()
@@ -266,10 +313,10 @@ await test('clock scale changes are persisted without delivering', async () => {
   await f.close()
 })
 
-async function request(handler, method, body, token = 'token') {
+async function request(handler, method, body, token) {
   const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))])
   req.method = method
-  req.headers = { 'x-chonkyfish-token': token }
+  req.headers = token === undefined ? {} : { 'x-chonkyfish-token': token }
   const result = {}
   await handler(req, { writeHead(status) { result.status = status }, end(text) { result.body = text ? JSON.parse(text) : null } })
   return result
@@ -278,7 +325,7 @@ async function request(handler, method, body, token = 'token') {
 await test('HTTP exposes state/environment and preview without side effects', async () => {
   const f = await setup()
   const handler = createAbsHttpHandler({ service: f.service, resources: { async updateConfig() {} }, token: 'token' })
-  assert.equal((await request(handler, 'GET', undefined, 'bad')).status, 401)
+  assert.equal((await request(handler, 'GET', undefined, 'bad')).status, 200)
   const current = await request(handler, 'GET')
   assert.equal(current.status, 200)
   assert.ok(current.body.state.reviewPreview.includes('自身精神状态审查'))
@@ -290,6 +337,19 @@ await test('HTTP exposes state/environment and preview without side effects', as
   assert.equal(JSON.stringify(f.state), before)
   assert.equal(f.deliveries.length, deliveries)
   assert.equal((await request(handler, 'POST', { action: 'report', satisfactionDelta: 1 })).status, 400)
+  await f.close()
+})
+
+await test('HTTP without tokens preserves method, payload and input validation', async () => {
+  const f = await setup()
+  const handler = createAbsHttpHandler({ service: f.service, resources: {}, maxBodyBytes: 32 })
+  assert.equal((await request(handler, 'GET')).status, 200)
+  assert.deepEqual(await request(handler, 'HEAD'), { status: 200, body: null })
+  assert.equal((await request(handler, 'DELETE')).status, 405)
+  assert.equal((await request(handler, 'POST')).status, 400)
+  assert.equal((await request(handler, 'POST', [])).status, 400)
+  assert.equal((await request(handler, 'POST', { action: 'preview', x: 1 })).status, 409)
+  assert.equal((await request(handler, 'POST', { action: 'preview', padding: 'x'.repeat(33) })).status, 413)
   await f.close()
 })
 
@@ -308,6 +368,20 @@ await test('HTTP mode activation requires confirmation and isolated replay stays
   const activated = await request(handler, 'POST', { action: 'mode', mode: 'active', confirmActive: true })
   assert.equal(activated.status, 200)
   assert.equal(f.cfg().mode, 'active')
+  await f.close()
+})
+
+await test('HTTP rest settings validate, persist and never wake on save', async () => {
+  const f = await setup()
+  const handler = createAbsHttpHandler({ service: f.service, resources: { async updateConfig(patch) { f.configure(patch.abs) } }, token: 'token' })
+  const input = { action: 'rest-hours', enabled: true, start: '22:30', end: '07:30' }
+  assert.equal((await request(handler, 'POST', input, 'bad')).status, 200)
+  for (const patch of [{ enabled: 'true' }, { start: '24:00' }, { end: '22:30' }, { start: null }, { timeZone: 'UTC' }]) assert.equal((await request(handler, 'POST', { ...input, ...patch })).status, 409)
+  const result = await request(handler, 'POST', input)
+  assert.equal(result.status, 200)
+  assert.deepEqual(f.cfg().restHours, { enabled: true, start: '22:30', end: '07:30' })
+  assert.equal(f.deliveries.length, 0)
+  assert.equal(result.body.result.rest.start, '22:30')
   await f.close()
 })
 

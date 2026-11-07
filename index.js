@@ -21,9 +21,9 @@ import { dirname } from 'node:path'
 
 import { createPanelSupplement } from './src/persona/supplement.js'
 import { createResources } from './src/resources/index.js'
-import { DIARY_TOOL_NAME } from './src/diary/tools.js'
 import { installSocial } from './src/social/index.js'
 import { installAbs } from './src/abs/index.js'
+import { installSkills } from './src/skills/index.js'
 import { isSocialHeader } from './src/social/policy.js'
 
 const FULL_ACCESS = 'danger-full-access'
@@ -38,24 +38,6 @@ function isFishAgent(ctx, agent, preset) {
     return composed === preset
   } catch (error) {
     return false
-  }
-}
-
-/**
- * 取 Agent 实际运行的 preset 名（header 优先，其次 composed preset）。
- * 日记工具的 preset 白名单判断和 guard 都用它。
- * @param {any} ctx
- * @param {any} agent
- * @returns {string|undefined}
- */
-function agentPresetName(ctx, agent) {
-  try {
-    const header = agent && agent.session && agent.session.header
-    if (header && typeof header.agentPreset === 'string' && header.agentPreset !== '') return header.agentPreset
-    const composed = ctx.agentPresets.composedPreset(agent.ctx)
-    return typeof composed === 'string' && composed !== '' ? composed : undefined
-  } catch (error) {
-    return undefined
   }
 }
 
@@ -109,7 +91,6 @@ function readJsonBody(request, limit) {
 export function apply(ctx) {
   const resources = createResources({ env: process.env })
   const { routes, limits, spec } = resources
-  const token = randomUUID()
   let writeChain = Promise.resolve()
 
   function warn(message, error) {
@@ -146,10 +127,6 @@ export function apply(ctx) {
     return writeChain
   }
 
-  function authorized(request) {
-    return request.headers['x-chonkyfish-token'] === token
-  }
-
   function replyJson(response, status, body) {
     response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
     response.end(body === undefined ? undefined : JSON.stringify(body))
@@ -161,7 +138,6 @@ export function apply(ctx) {
       kind: 'script',
       placement: 'body',
       text: 'window.__CHONKYFISH_STATE__ = ' + JSON.stringify({
-        token,
         // 兼容旧字段
         endpoint: routes.state,
         eventsEndpoint: routes.events,
@@ -184,11 +160,6 @@ export function apply(ctx) {
     path: routes.state,
     handler: (request, response) => {
       if (request.method === 'GET' || request.method === 'HEAD') {
-        if (!authorized(request)) {
-          response.writeHead(401)
-          response.end()
-          return
-        }
         readFile(resources.paths.state, 'utf8').then((text) => {
           response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
           response.end(request.method === 'HEAD' ? undefined : text)
@@ -205,11 +176,6 @@ export function apply(ctx) {
       }
       if (request.method !== 'PUT' && request.method !== 'POST') {
         response.writeHead(405)
-        response.end()
-        return
-      }
-      if (!authorized(request)) {
-        response.writeHead(401)
         response.end()
         return
       }
@@ -267,10 +233,6 @@ export function apply(ctx) {
     kind: 'exact',
     path: routes.config,
     handler: (request, response) => {
-      if (!authorized(request)) {
-        replyJson(response, 401, { ok: false, error: 'unauthorized' })
-        return
-      }
       if (request.method === 'GET' || request.method === 'HEAD') {
         const body = JSON.stringify({
           ok: true,
@@ -301,9 +263,9 @@ export function apply(ctx) {
     },
   }), 'chonkyfish: config route')
 
-  // Social installs a synchronous deny-first guard before asynchronous startup.
+  // Social retains target binding, without a plugin-wide tool permission gate.
   ctx.effect(() => {
-    const social = installSocial(ctx, { resources, ready: layoutReady, token, warn })
+    const social = installSocial(ctx, { resources, ready: layoutReady, warn })
     return () => { void social.close().catch(() => warn('[chonkyfish/social] shutdown failed')) }
   }, 'chonkyfish: social')
 
@@ -323,50 +285,25 @@ export function apply(ctx) {
     return () => {}
   }, 'chonkyfish: home layout')
 
+  // Skills are a local knowledge library; no timer, approval state or website deployment.
+  ctx.effect(() => {
+    const skills = installSkills(ctx, { resources, ready: layoutReady })
+    return () => skills.close()
+  }, 'chonkyfish: skills')
+
   /* ------------------------------------------------------------- diary */
 
   // 日记模块：单工具 `diary`（write/read/list）+ 本地 Markdown + 面板只读路由。
   // 写日记的时机由大肥鱼自己用 DSH 的 schedule 工具安排，模块本身没有定时器。
-  // 工具全局注册；只有 config.diary.enabledPresets 里的 preset 能用，其它 Agent
-  // 在创建时 restrict 掉，guard 再兜一层。日记模块整体失败不影响面板/聊天。
+  // 全局提供日记工具，不设置 preset 或会话访问门禁；保留模块启停与存储校验。
   const diaryConfig = resources.getConfig().diary
   if (diaryConfig.enabled) {
-    const enabledPresets = new Set(diaryConfig.enabledPresets)
-    const gated = new WeakSet()
     let diaryHandle = null
     let diaryDisposed = false
-    let resolveDiaryReady = () => {}
-    const diaryReady = new Promise((resolve) => {
-      resolveDiaryReady = resolve
-    })
-
-    /** 非日记 preset 的 Agent：把全局 diary 工具从它的可见集合里去掉。 */
-    async function gateDiaryAgent(agent) {
-      if (!agent || gated.has(agent)) return
-      gated.add(agent)
-      const handle = await diaryReady
-      if (!handle) return
-      if (!isSocialHeader(agent.session?.header) && enabledPresets.has(agentPresetName(ctx, agent))) return
-      try {
-        agent.ctx.tools.restrict({ deny: [DIARY_TOOL_NAME] })
-      } catch (error) {
-        warn('[chonkyfish] 非日记 preset 隐藏 diary 工具失败（不影响使用）', error)
-      }
-    }
-
-    ctx.tools.guard((exec) => {
-      if (!exec || exec.name !== DIARY_TOOL_NAME) return undefined
-      const preset = exec.agent ? agentPresetName(ctx, exec.agent) : undefined
-      return !isSocialHeader(exec.agent?.session?.header) && enabledPresets.has(preset) ? undefined : 'diary 只对启用的主人会话开放，Social 禁止访问'
-    })
-
-    ctx.on('agent/created', (payload) => {
-      void gateDiaryAgent(payload && payload.agent)
-    })
 
     ctx.effect(() => {
       diaryDisposed = false
-      startDiary(ctx, { resources, ready: layoutReady, token, warn }).then((handle) => {
+      startDiary(ctx, { resources, ready: layoutReady, warn }).then((handle) => {
         if (diaryDisposed) {
           if (handle) {
             try {
@@ -375,21 +312,11 @@ export function apply(ctx) {
               /* already gone */
             }
           }
-          resolveDiaryReady(null)
           return
         }
         diaryHandle = handle
-        resolveDiaryReady(handle)
-        if (handle) {
-          try {
-            for (const agent of ctx.agents.list()) void gateDiaryAgent(agent)
-          } catch (error) {
-            /* no live agents is the normal case at boot */
-          }
-        }
       }).catch((error) => {
         warn('[chonkyfish] 日记模块启动失败（面板不受影响）', error)
-        resolveDiaryReady(null)
       })
       return () => {
         diaryDisposed = true
@@ -406,10 +333,10 @@ export function apply(ctx) {
   }
 
   // 事件引擎（模块0）：采集 → 提取 → 查询。任何失败都不许影响面板本身。
-  void startEventEngine(ctx, { resources, ready: layoutReady, token, warn })
+  void startEventEngine(ctx, { resources, ready: layoutReady, warn })
 
   ctx.effect(() => {
-    const abs = installAbs(ctx, { resources, ready: layoutReady, token, warn })
+    const abs = installAbs(ctx, { resources, ready: layoutReady, warn })
     return () => { void abs.close().catch((error) => warn('[chonkyfish/abs] shutdown failed', error)) }
   }, 'chonkyfish: abs')
 
@@ -418,7 +345,7 @@ export function apply(ctx) {
   ctx.effect(() => {
     let disposed = false
     let stop = () => {}
-    startProactive(ctx, { resources, ready: layoutReady, token, warn }).then((dispose) => {
+    startProactive(ctx, { resources, ready: layoutReady, warn }).then((dispose) => {
       if (disposed) dispose()
       else stop = dispose
     }).catch((error) => {
@@ -450,7 +377,7 @@ function service(ctx, name) {
  * 和事件引擎一样用动态 import + 整段 try/catch：日记挂了，面板和聊天照常。
  * @returns {Promise<{ stop: () => void } | null>}
  */
-async function startDiary(ctx, { resources, ready, token, warn }) {
+async function startDiary(ctx, { resources, ready, warn }) {
   try {
     await ready
     const [{ createDiaryModule }] = await Promise.all([import('./src/diary/index.js')])
@@ -478,8 +405,7 @@ async function startDiary(ctx, { resources, ready, token, warn }) {
             service: diary.service,
             headers: request.headers,
             url: request.url,
-            token,
-          }).then((result) => {
+              }).then((result) => {
             const body = JSON.stringify(result.body)
             response.writeHead(result.status, { 'content-type': 'application/json; charset=utf-8' })
             response.end(request.method === 'HEAD' ? undefined : body)
@@ -515,7 +441,7 @@ async function startDiary(ctx, { resources, ready, token, warn }) {
  * 启动模块0事件引擎。故意用动态 import + 整段 try/catch：
  * 事件引擎挂了，鱼鱼面板和聊天也必须照常工作。
  */
-async function startEventEngine(ctx, { resources, ready, token, warn }) {
+async function startEventEngine(ctx, { resources, ready, warn }) {
   try {
     await ready
     const engineConfig = resources.getConfig().eventEngine
@@ -557,7 +483,7 @@ async function startEventEngine(ctx, { resources, ready, token, warn }) {
           response.end()
           return
         }
-        const result = handleEventsRequest({ engine, headers: request.headers, url: request.url, token })
+        const result = handleEventsRequest({ engine, headers: request.headers, url: request.url })
         const body = JSON.stringify(result.body)
         response.writeHead(result.status, { 'content-type': 'application/json; charset=utf-8' })
         response.end(request.method === 'HEAD' ? undefined : body)
@@ -611,15 +537,12 @@ async function startEventEngine(ctx, { resources, ready, token, warn }) {
  *   POST /chonkyfish/proactive    让她往面板当前会话主动说一句（可选自定义旁白）
  * 返回一个幂等的 stop 函数。
  */
-async function startProactive(ctx, { resources, ready, token, warn }) {
+async function startProactive(ctx, { resources, ready, warn }) {
   try {
     await ready
     const [{ createProactiveService }] = await Promise.all([import('./src/proactive/proactive.js')])
     const proactive = createProactiveService({ ctx, resources, logger: ctx.logger })
 
-    function authorized(request) {
-      return request.headers['x-chonkyfish-token'] === token
-    }
     function replyJson(response, status, body) {
       response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
       response.end(body === undefined ? undefined : JSON.stringify(body))
@@ -631,10 +554,6 @@ async function startProactive(ctx, { resources, ready, token, warn }) {
         kind: 'exact',
         path: resources.routes.session,
         handler: (request, response) => {
-          if (!authorized(request)) {
-            replyJson(response, 401, { ok: false, error: 'unauthorized' })
-            return
-          }
           if (request.method !== 'PUT' && request.method !== 'POST') {
             replyJson(response, 405, { ok: false, error: 'method-not-allowed' })
             return
@@ -655,10 +574,6 @@ async function startProactive(ctx, { resources, ready, token, warn }) {
         kind: 'exact',
         path: resources.routes.proactive,
         handler: (request, response) => {
-          if (!authorized(request)) {
-            replyJson(response, 401, { ok: false, error: 'unauthorized' })
-            return
-          }
           if (request.method === 'GET' || request.method === 'HEAD') {
             const body = JSON.stringify(proactive.inspect())
             response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })

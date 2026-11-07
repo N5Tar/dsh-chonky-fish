@@ -1,7 +1,7 @@
 /**
  * 大肥鱼 · 日记模块（Host 侧）· 面板只读 HTTP 接口。
  *
- * 面板「日记」弹窗用这一条 token 鉴权的本地路由读日记：
+ * 面板「日记」弹窗用这一条本地路由读日记：
  *
  *   GET /chonkyfish/diary?limit=60          → { ok:true, action:'list', dates:[...] }
  *   GET /chonkyfish/diary?date=2026-10-28   → { ok:true, action:'read', date, content }
@@ -22,16 +22,11 @@ function reply(status, body) {
 /**
  * @param {{
  *   service: { run: (args: unknown) => Promise<Record<string, unknown>> },
- *   headers: Record<string, string | string[] | undefined>,
  *   url: string | undefined,
- *   token: string,
  * }} options
  * @returns {Promise<{ status: number, body: unknown }>}
  */
-export async function handleDiaryRequest({ service, headers, url, token }) {
-  if (!headers || headers['x-chonkyfish-token'] !== token) {
-    return reply(401, { ok: false, error: { code: 'UNAUTHORIZED', message: 'unauthorized' } })
-  }
+export async function handleDiaryRequest({ service, url }) {
 
   let parsed
   try {

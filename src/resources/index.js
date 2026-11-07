@@ -88,25 +88,10 @@ async function writeJsonAtomic(file, value) {
   }
 }
 
-/** agent preset 白名单：去重、去空白、只接受非空字符串。 */
-function sanitizePresetList(value, fallback) {
-  if (!Array.isArray(value)) return [...fallback]
-  const seen = new Set()
-  const presets = []
-  for (const item of value) {
-    if (typeof item !== 'string') continue
-    const preset = item.trim()
-    if (preset === '' || seen.has(preset)) continue
-    seen.add(preset)
-    presets.push(preset)
-  }
-  return presets.length > 0 ? presets : [...fallback]
-}
-
 /**
  * 配置消毒：未知字段一律丢弃，非法字段回退默认值。
  * @param {unknown} raw
- * @returns {{ version: number, proactive: { enabled: boolean }, eventEngine: { enabled: boolean, extractTickMs: number, extractBatch: number, maxRecordsPerTurn: number }, diary: { enabled: boolean, enabledPresets: string[], maxContentChars: number } }}
+ * @returns {{ version: number, proactive: { enabled: boolean }, eventEngine: { enabled: boolean, extractTickMs: number, extractBatch: number, maxRecordsPerTurn: number }, diary: { enabled: boolean, maxContentChars: number } }}
  */
 function sanitizeConfig(raw) {
   const source = isPlainObject(raw) ? raw : {}
@@ -117,6 +102,7 @@ function sanitizeConfig(raw) {
   return {
     version: VERSIONS.config,
     abs: sanitizeAbsConfig(source.abs),
+    skills: { enabled: typeof source.skills?.enabled === 'boolean' ? source.skills.enabled : defaults.skills.enabled },
     proactive: {
       enabled: typeof proactive.enabled === 'boolean' ? proactive.enabled : defaults.proactive.enabled,
     },
@@ -136,7 +122,6 @@ function sanitizeConfig(raw) {
     },
     diary: {
       enabled: typeof diary.enabled === 'boolean' ? diary.enabled : defaults.diary.enabled,
-      enabledPresets: sanitizePresetList(diary.enabledPresets, defaults.diary.enabledPresets),
       maxContentChars: clampInt(diary.maxContentChars, {
         min: 1000,
         max: 200000,
@@ -155,6 +140,7 @@ function mergeConfig(current, patch) {
   return sanitizeConfig({
     version: VERSIONS.config,
     abs: mergeAbsConfig(current.abs, source.abs),
+    skills: { ...current.skills, ...(isPlainObject(source.skills) ? source.skills : {}) },
     proactive: { ...current.proactive, ...proactive },
     eventEngine: { ...current.eventEngine, ...eventEngine },
     diary: { ...current.diary, ...diary },
@@ -204,6 +190,7 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     proactive: join(home, FILES.proactive),
     events: join(home, FILES.events),
     abs: join(home, FILES.abs),
+    skills: join(home, FILES.skills),
     diary: join(home, DIARY_DIR),
     workspace: join(home, WORKSPACE_DIR),
     social: join(home, SOCIAL.directory),
@@ -305,7 +292,7 @@ export function createResources({ env = process.env, homeRoot } = {}) {
   }
 
   /**
-   * 注入页面的资源信息。**故意不包含 token**：token 由 index.js 拼到注入脚本里。
+   * 注入页面的资源信息；插件不再使用私有访问 token。
    */
   function clientState() {
     return {

@@ -5,7 +5,7 @@ import vm from 'node:vm'
 import { installAbs } from '../index.js'
 
 const source = await readFile(new URL('../lab.js', import.meta.url), 'utf8')
-async function request(response, bootstrap = { routes: {}, token: 'test' }, body) {
+async function request(response, bootstrap = { routes: {} }, body) {
   let called
   const context = vm.createContext({
     window: { __CHONKYFISH_STATE__: bootstrap },
@@ -18,35 +18,47 @@ async function request(response, bootstrap = { routes: {}, token: 'test' }, body
 }
 await assert.rejects(request(new Response('', { status: 404 })), /后端接口未注册（HTTP 404）/)
 await assert.rejects(request(new Response('', { status: 200 })), /空响应（HTTP 200）/)
-await assert.rejects(request(new Response('', { status: 401 })), /刷新页面/)
+for (const status of [401, 403]) {
+  await assert.rejects(request(new Response('', { status })), new RegExp(`空响应（HTTP ${status}）`))
+  await assert.rejects(request(new Response('{"ok":false}', { status })), new RegExp(`HTTP ${status}`))
+}
 await assert.rejects(request(new Response('<html>error</html>', { status: 502 })), /非 JSON.*HTTP 502/)
 await assert.rejects(request(new Response('null', { status: 200 })), /响应格式无效/)
 await assert.rejects(request(new Response(JSON.stringify({ ok: false, error: 'ABS_STARTUP_FAILED', reason: 'store unavailable' }), { status: 503 })), /store unavailable/)
 const successful = await request(new Response(JSON.stringify({ ok: true, state: {} })), { routes: { social: '/chonkyfish/social' }, token: 'test' })
 assert.equal(successful.called.url, '/chonkyfish/abs', 'old bootstrap routes must fall back per field')
-assert.equal(successful.called.options.headers['x-chonkyfish-token'], 'test')
+assert.equal(successful.called.options.headers?.['x-chonkyfish-token'], undefined)
+const tokenless = await request(new Response('{"ok":true}'))
+assert.equal(tokenless.value.ok, true)
+assert.equal(tokenless.called.options.headers?.['x-chonkyfish-token'], undefined)
 const configured = await request(new Response('{"ok":true}'), { routes: { abs: '/custom/abs' }, token: 'new' }, { action: 'wake' })
 assert.equal(configured.called.url, '/custom/abs')
 assert.equal(configured.called.options.method, 'POST')
+assert.equal(configured.called.options.headers?.['x-chonkyfish-token'], undefined)
+assert.equal(configured.called.options.headers['content-type'], 'application/json')
 
 let route, removed = false, release
 const ready = new Promise((resolve) => { release = resolve })
 const module = installAbs({ webServer: { register(value) { route = value; return () => { removed = true } } } }, {
-  resources: { routes: { abs: '/chonkyfish/abs' } }, token: 'token', ready: ready.then(() => null), warn() {},
+  resources: { routes: { abs: '/chonkyfish/abs' } }, ready: ready.then(() => null), warn() {},
 })
 function diagnostic(token, method = 'GET') {
   let status, value
-  route.handler({ method, headers: { 'x-chonkyfish-token': token } }, { writeHead(code) { status = code }, end(raw) { value = raw === undefined ? undefined : JSON.parse(raw) } })
+  route.handler({ method, headers: token === undefined ? {} : { 'x-chonkyfish-token': token } }, { writeHead(code) { status = code }, end(raw) { value = raw === undefined ? undefined : JSON.parse(raw) } })
   return { status, value }
 }
-assert.equal(diagnostic('bad').status, 401)
-assert.equal(diagnostic('token').value.error, 'ABS_INITIALIZING')
+for (const token of [undefined, 'bad']) {
+  assert.equal(diagnostic(token).status, 503)
+  assert.equal(diagnostic(token).value.error, 'ABS_INITIALIZING')
+}
 release()
 await module.initialized
-assert.equal(diagnostic('token').status, 503)
-assert.equal(diagnostic('token').value.error, 'ABS_STARTUP_FAILED')
-assert.equal(diagnostic('token').value.reason, 'ABS_LAYOUT_UNAVAILABLE')
-assert.equal(diagnostic('token', 'HEAD').value, undefined)
+for (const token of [undefined, 'bad']) {
+  assert.equal(diagnostic(token).status, 503)
+  assert.equal(diagnostic(token).value.error, 'ABS_STARTUP_FAILED')
+  assert.equal(diagnostic(token).value.reason, 'ABS_LAYOUT_UNAVAILABLE')
+  assert.equal(diagnostic(token, 'HEAD').value, undefined)
+}
 await module.close()
 assert.equal(removed, true)
 
@@ -145,4 +157,15 @@ assert.match(ledgerTree, /-8\.00 个百分点/)
 assert.match(ledgerTree, /不重复加分/)
 assert.match(ledgerTree, /2026-11-07 11:10:00 UTC\+8/)
 assert.match(JSON.stringify(display.AbsChangeLedger({ state: {} })), /暂无变化记录/)
-console.log('ABS client/startup: PASS (responses, startup, review UI, needs, observations, audit timeline, real-time-only display, change ledger)')
+const restingState = { ...reviewState, mode: 'active', clockView: { rest: { enabled: true, start: '23:00', end: '08:00', resting: true, resumeAt: '2026-11-08T00:00:00Z' } } }
+const restTree = JSON.stringify(display.AbsRestPanel({ state: restingState }))
+assert.match(restTree, /23:00–08:00/)
+assert.match(restTree, /正在休息/)
+assert.match(restTree, /2026-11-08 08:00:00 UTC\+8/)
+assert.match(restTree, /不控制其他定时任务/)
+const restingReview = display.AbsReviewPanel({ state: restingState })
+function buttons(node) { return node && typeof node === 'object' ? [...(node.type === 'button' ? [node] : []), ...(node.children || []).flatMap(buttons)] : [] }
+assert.equal(buttons(restingReview).find((button) => button.children.includes('手动投递审查')).props.disabled, true)
+assert.equal(buttons(restingReview).find((button) => button.children.includes('刷新预览')).props.disabled, undefined)
+assert.match(display.absAuditWord('REST_HOURS'), /不唤醒/)
+console.log('ABS client/startup: PASS (responses, startup, review UI, needs, observations, audit timeline, real-time-only display, change ledger, rest hours)')

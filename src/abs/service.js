@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { createState, updateState, nextReviewAt, applyFeedback, CORE_LIMITS } from './core.js'
 import { sanitizeAbsConfig } from './config.js'
 import { createAbsClock } from './clock.js'
+import { restWindow, nextAwakeTime } from './rest.js'
 import { renderSelfReview, driveDemand } from './review.js'
 
 const clone = (value) => structuredClone(value)
@@ -95,8 +96,9 @@ export async function createAbsService({ store, host, getConfig, now = Date.now,
   function clockView() {
     const virtualNow = clock.now(), realNow = clock.realNow()
     const wait = state.mode === 'off' || !state.nextWakeAt ? null : clock.delayUntil(Date.parse(state.nextWakeAt))
-    const realWaitMs = wait === null || !Number.isFinite(wait) || realNow + wait > 8640000000000000 ? null : Math.ceil(wait)
-    return { timeScale: clock.timeScale, realNow: iso(realNow), virtualNow: iso(virtualNow), paused: clock.timeScale === 0, realWaitMs, nextWakeRealAt: realWaitMs === null ? null : iso(realNow + realWaitMs) }
+    const target = wait === null || !Number.isFinite(wait) || realNow + wait > 8640000000000000 ? null : nextAwakeTime(realNow + Math.ceil(wait), config().restHours)
+    const realWaitMs = target === null ? null : target - realNow
+    return { timeScale: clock.timeScale, realNow: iso(realNow), virtualNow: iso(virtualNow), paused: clock.timeScale === 0, rest: restWindow(realNow, config().restHours), realWaitMs, nextWakeRealAt: target === null ? null : iso(target) }
   }
   function paused() { return clock.timeScale === 0 || config().timeScale === 0 }
   async function syncMode(at, cfg) {
@@ -128,6 +130,7 @@ export async function createAbsService({ store, host, getConfig, now = Date.now,
     return iso(next)
   }
   function reviewGate(at, cfg, manual) {
+    if (restWindow(clock.realNow(), cfg.restHours).resting) return { due: false, reason: 'REST_HOURS' }
     if (cfg.mode !== 'active') return { due: false, reason: cfg.mode === 'shadow' ? 'SHADOW_PREVIEW_ONLY' : 'ABS_OFF' }
     if (state.activationAllowedAt && Date.parse(state.activationAllowedAt) > Date.parse(at)) return { due: false, reason: 'ACTIVATION_COOLDOWN' }
     if (!manual && state.nextWakeAt && Date.parse(state.nextWakeAt) > Date.parse(at)) return { due: false, reason: 'NOT_DUE' }
@@ -137,13 +140,14 @@ export async function createAbsService({ store, host, getConfig, now = Date.now,
     timers.clearTimeout(timer)
     if (!started || closed || poisoned) return
     const cfg = config()
-    const untilDue = clock.timeScale === 0 || cfg.mode === 'off' ? null : state.nextWakeAt ? clock.delayUntil(Date.parse(state.nextWakeAt)) : 0
+    const rest = restWindow(clock.realNow(), cfg.restHours)
+    const untilDue = clock.timeScale === 0 || cfg.mode === 'off' ? null : rest.resting ? Date.parse(rest.resumeAt) - clock.realNow() : state.nextWakeAt ? clock.delayUntil(Date.parse(state.nextWakeAt)) : 0
     // Convert the ABS deadline back to a real delay; never queue a burst of missed reviews.
     const delay = cfg.timeScale !== clock.timeScale || cfg.mode !== state.mode ? 250 : Math.max(250, Math.min(30000, untilDue ?? 30000))
     timer = timers.setTimeout(() => {
       if (closed) return
       const latest = config(), due = !state.nextWakeAt || Date.parse(state.nextWakeAt) <= clock.now()
-      if (state.mode !== latest.mode || (latest.mode !== 'off' && latest.timeScale > 0 && due)) {
+      if (state.mode !== latest.mode || (latest.mode !== 'off' && latest.timeScale > 0 && due && !restWindow(clock.realNow(), latest.restHours).resting)) {
         void service.wake('timer').catch((error) => logger.warn?.('[abs] wake failed', error)).finally(arm)
       } else if (latest.timeScale !== clock.timeScale) {
         void service.syncClock().catch((error) => logger.warn?.('[abs] clock update failed', error)).finally(arm)
@@ -241,7 +245,10 @@ export async function createAbsService({ store, host, getConfig, now = Date.now,
             records.push({ type: 'ReviewSkipped', at: iso(clock.now()), wakeId, reason: paused() ? 'TIME_PAUSED' : 'MODE_NOT_ACTIVE' })
             result = { wakeId, reviewId, delivered: false, reason: paused() ? 'TIME_PAUSED' : 'MODE_NOT_ACTIVE' }
           } else {
-            const acceptance = await host.surfaceReview({ text: reviewText, reviewId })
+            // Host checks again after async session resolution, immediately before followup.
+            const canDeliver = () => paused() ? 'TIME_PAUSED' : config().mode !== 'active' ? 'MODE_NOT_ACTIVE' : restWindow(clock.realNow(), config().restHours).resting ? 'REST_HOURS' : null
+            const blocked = canDeliver()
+            const acceptance = blocked ? { accepted: false, reason: blocked } : await host.surfaceReview({ text: reviewText, reviewId, canDeliver })
             await synchronizeClock()
             at = iso(clock.now()); realAt = iso(clock.realNow())
             const delivered = acceptance.accepted === true
@@ -261,7 +268,7 @@ export async function createAbsService({ store, host, getConfig, now = Date.now,
             result = { wakeId, reviewId, delivered, reason: delivered ? 'DELIVERED' : acceptance.reason ?? 'REVIEW_NOT_ACCEPTED' }
           }
         }
-        state.nextWakeAt = computeNextWake(at, config())
+        state.nextWakeAt = gate.reason === 'REST_HOURS' ? state.nextWakeAt ?? at : computeNextWake(at, config())
         records[0].nextWakeAt = state.nextWakeAt
         records[0].nextWakeRealAt = clockView().nextWakeRealAt
         await save(records)

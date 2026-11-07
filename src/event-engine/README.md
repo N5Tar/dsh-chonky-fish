@@ -11,6 +11,10 @@
 
 > 相关但暂未接线：主动消息的「事件回访」计划器（读取本模块 `goal.intention_expressed` / `goal.plan_expressed` 事件）保存在 [../proactive/README.md](../proactive/README.md)，等触发点确定后再接回运行时。
 
+## 查询访问边界
+
+`GET /chonkyfish/events` 无插件私有鉴权，无需 `x-chonkyfish-token`；可达路由即可读取事件与引用，请使用 DSH 宿主认证和网络访问边界保护数据。查询上限、参数处理及下述采集身份规则仍保留；采集范围不是调用方权限门槛。
+
 ## 会话识别规则（重要）
 
 **联合判断**：鱼鱼会话的身份是一个配对，两半必须同时成立。
@@ -65,7 +69,7 @@ src/event-engine/
   extraction/payload.js            按 (sessionId, fromSeq..toSeq) 从 DSH 读回 turn 原文
   extraction/extractor.js          ctx.llm.stream 调用 + 一次格式修复重试 + 解析
   extraction/runner.js             任务执行器：领取 → 提取 → 落库 → 结算 → 审计
-  delivery/query.js                查询契约（参数/鉴权/传输投影），HTTP 外壳在 index.js
+  delivery/query.js                查询契约（参数/传输投影），HTTP 外壳在 index.js
   delivery/consumer.js             游标消费者 + 演示消费者（可订阅 / 可重放）
   adapters/dsh-source.js           `session/event` → turn 收集器（含排除规则）
   engine.js                        引擎：会话识别 + turn→job + 游标 + 租约回收

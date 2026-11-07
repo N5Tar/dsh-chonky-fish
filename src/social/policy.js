@@ -19,13 +19,13 @@ export function acceptMessage(config, identity, message, maxChars = 32000) {
 export function createScopeAuthority() {
   const scopes = new WeakSet()
   return {
-    issue({ sessionId, platform, connectionId, conversation: target, identityRevision, canSend = false }) {
+    issue({ sessionId, platform, connectionId, conversation: target, identityRevision }) {
       if (!text(sessionId) || !text(identityRevision)) fail('SOCIAL_SCOPE_INVALID')
-      const scope = Object.freeze({ sessionId, connectionId, identityRevision, sessionKey: sessionKey(platform, connectionId, target), conversation: Object.freeze(conversation(target)), canSend: canSend === true })
+      const scope = Object.freeze({ sessionId, connectionId, identityRevision, sessionKey: sessionKey(platform, connectionId, target), conversation: Object.freeze(conversation(target)) })
       scopes.add(scope)
       return scope
     },
-    check(scope) { if (!scope || !scopes.has(scope)) fail('SOCIAL_UNAUTHORIZED'); return scope },
+    check(scope) { if (!scope || !scopes.has(scope)) fail('SOCIAL_TARGET_UNBOUND'); return scope },
     revoke(scope) { scopes.delete(scope) },
   }
 }

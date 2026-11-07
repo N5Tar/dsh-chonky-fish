@@ -47,15 +47,13 @@ src/diary/
 {
   "diary": {
     "enabled": true,
-    "enabledPresets": ["chonkyfish"],
     "maxContentChars": 50000
   }
 }
 ```
 
-- `enabledPresets` 默认只有 `chonkyfish`。工具是全局注册的，其它 preset 的 Agent 创建时
-  会 `restrict({ deny: ['diary'] })` 隐藏，guard 再兜一层；
-- `diary.enabled` / `enabledPresets` 在插件启动时读取，改完要重启 DSH Host；
+- 工具全局注册，不再按调用方 preset 隐藏或拒绝；旧 `enabledPresets` 字段已移除，读取/更新时忽略。
+- `diary.enabled` 在插件启动时读取，改完要重启 DSH Host；
   `maxContentChars` 每次写入时重读。
 
 ## 排期：交给 DSH 定时任务
@@ -79,7 +77,7 @@ GET /chonkyfish/diary?limit=60          → { ok:true, action:'list', dates:[...
 GET /chonkyfish/diary?date=2026-10-28   → { ok:true, action:'read', date, content }
 ```
 
-请求需要注入页面的 `x-chonkyfish-token`；只读，写入仍然只能由鱼鱼调用 `diary` 工具。
+此路由无插件私有鉴权，无需 `x-chonkyfish-token`；可达路由即可读取日记，请用宿主认证与网络边界保护数据。HTTP 仍只读，写入通过 `diary` 工具完成；日期、正文上限和覆盖校验不变。
 
 ## 工具契约
 

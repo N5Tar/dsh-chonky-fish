@@ -1,7 +1,9 @@
 // ABS self-review defaults. Numerical policy changes must receive a new policy version.
 import { MAX_TIME_SCALE } from './clock.js'
+import { REST_DEFAULTS, sanitizeRestHours } from './rest.js'
 export const ABS_DEFAULTS = Object.freeze({
   mode: 'shadow', timeScale: 1,
+  restHours: REST_DEFAULTS,
   reviewIntervalMinutes: 120,
   reviewMinRealGapMinutes: 10,
   activationCooldownMinutes: 60,
@@ -21,6 +23,7 @@ export function sanitizeAbsConfig(raw) {
     ...defaults,
     mode: ['off', 'shadow', 'active'].includes(source.mode) ? source.mode : defaults.mode,
     policyVersion: defaults.policyVersion,
+    restHours: sanitizeRestHours(source.restHours),
   }
   for (const [key, min, max] of [
     ['timeScale', 0, MAX_TIME_SCALE],
@@ -56,5 +59,6 @@ export function mergeAbsConfig(current, patch) {
       curiosity: { ...before.drives.curiosity, ...object(drives.curiosity) },
     },
     feedback: { ...before.feedback, ...feedback },
+    restHours: { ...before.restHours, ...object(source.restHours) },
   })
 }

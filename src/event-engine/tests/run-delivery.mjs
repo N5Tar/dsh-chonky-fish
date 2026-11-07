@@ -64,13 +64,14 @@ function test(name, fn) {
 
 /* ------------------------------------------------------------------ */
 
-test('鉴权：没有 token / token 不对 → 401', () => {
+test('HTTP：没有 token / token 不对仍可查询', () => {
   const { engine, cleanup } = makeEngine()
   try {
-    assert.equal(handleEventsRequest({ engine, headers: {}, url: '/chonkyfish/events', token: TOKEN }).status, 401)
+    assert.equal(handleEventsRequest({ engine, url: '/chonkyfish/events' }).status, 200)
+    assert.equal(handleEventsRequest({ engine, headers: {}, url: '/chonkyfish/events', token: TOKEN }).status, 200)
     assert.equal(
       handleEventsRequest({ engine, headers: { 'x-chonkyfish-token': 'wrong' }, url: '/chonkyfish/events', token: TOKEN }).status,
-      401,
+      200,
     )
     const ok = handleEventsRequest({
       engine,

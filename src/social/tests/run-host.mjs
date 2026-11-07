@@ -43,11 +43,11 @@ try {
   assert.equal(grants.length, 0, 'social preset never inherits automatic full access')
   for (const listener of listeners.get('agent/created') ?? []) listener({ agent: owner })
   assert.equal(grants.length, 1, 'owner behavior remains compatible')
-  assert.ok(guards.some(guard => typeof guard({ agent: social, name: 'bash' }) === 'string'))
-  assert.ok(guards.some(guard => typeof guard({ agent: social, name: 'diary' }) === 'string'))
-  assert.ok(guards.some(guard => typeof guard({ agent: social, name: 'social_send_message' }) === 'string'))
-  assert.ok(guards.some(guard => typeof guard({ agent: owner, name: 'social_send_message' }) === 'string'))
-  console.log('social-host: PASS (default-off startup, missing-host bridge isolation, global guards, owner compatibility)')
+  assert.equal(guards.length, 0, 'social installs no global guards for social or ordinary tools')
+  for (const agent of [social, owner]) {
+    assert.equal((await tools.get('social_send_message').execute({ operationId: 'unbound', text: 'hi' }, { agent })).error, 'SOCIAL_TARGET_UNBOUND')
+  }
+  console.log('social-host: PASS (default-off startup, missing-host bridge isolation, no global guards, owner compatibility)')
 } finally {
   clearTimeout(timeout)
   for (const dispose of effects.reverse()) await dispose()

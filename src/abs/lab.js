@@ -5,13 +5,12 @@ async function requestAbsLab(body) {
   if (!endpoint) throw new Error('ABS 接口地址缺失，请更新插件并刷新页面。')
   var response = await fetch(endpoint, {
     method: body ? 'POST' : 'GET',
-    headers: { 'x-chonkyfish-token': bootstrap.token || '', 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   })
   var raw = await response.text()
   var status = 'HTTP ' + response.status
   if (response.status === 404) throw new Error('ABS 后端接口未注册（' + status + '）。请更新或重载 Host 插件／重启 DSH，然后刷新页面；仅更新前端不会加载后端。')
-  if (response.status === 401 || response.status === 403) throw new Error('ABS 请求未授权（' + status + '），请刷新页面以更新访问凭证。')
   if (!raw.trim()) throw new Error('ABS 接口返回空响应（' + status + '），请检查 Host 插件状态。')
   var payload
   try { payload = JSON.parse(raw) }
@@ -46,7 +45,7 @@ var ABS_AUDIT_WORDS = {
   timer: '定时审查', manual: '手动审查', transition: '模式切换',
   DUE: '到期', SHADOW_PREVIEW_ONLY: '观察模式只预览，不投递', ABS_OFF: 'ABS 已关闭',
   ACTIVATION_COOLDOWN: '仍在启用冷却期', NOT_DUE: '尚未到达审查时间', TIME_PAUSED: '状态自然变化已暂停',
-  DELIVERED: '已提交给大肥鱼',
+  DELIVERED: '已提交给大肥鱼', REST_HOURS: '处于每日休息时段，不唤醒',
   'no-panel-session': '面板尚未绑定会话', 'session-not-live': '目标会话当前未运行',
   'agent-busy': '大肥鱼正在处理其他输入', 'host-closed': 'ABS 已停止',
   'empty-review': '状态审查文本为空', 'followup-failed': '无法提交到会话',
@@ -235,6 +234,28 @@ function AbsClockPanel(props) {
     h('p', null, '这不是独立沙箱：仍使用真实全权限会话，工具和网络效果不会隔离。切回 1× 不会重置已累计的状态变化。'),
     h('p', null, '0× 暂停状态自然变化并阻止新的审查投递，不会取消已在途的外部工具或暂停正在运行的模型；真实观察仍可记入反馈。'))
 }
+function AbsRestPanel(props) {
+  var state = props.state || {}, rest = state.clockView && state.clockView.rest
+  var draftState = React.useState(null), draft = draftState[0], setDraft = draftState[1]
+  var value = draft || rest || { enabled: true, start: '23:00', end: '08:00' }
+  var valid = /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value.start) && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value.end) && value.start !== value.end
+  function change(key, next) { var copy = { enabled: value.enabled, start: value.start, end: value.end }; copy[key] = next; setDraft(copy) }
+  async function apply() {
+    if (!rest || !valid || props.busy) return
+    if (await props.onAction({ action: 'rest-hours', enabled: value.enabled, start: value.start, end: value.end })) setDraft(null)
+  }
+  return h('section', { 'aria-label': '每日休息时段', style: { margin: '24px 0', lineHeight: 1.8 } },
+    h('h2', null, '每日休息时段'),
+    h('p', { role: 'status' }, !rest ? '等待休息配置。' : !rest.enabled ? '每日休息已关闭。' : '每天 ' + rest.start + '–' + rest.end + '（UTC+8） · ' + (rest.resting ? '正在休息，恢复时间：' + formatAbsTime(rest.resumeAt) : '当前不在休息时段')),
+    h('label', null, h('input', { type: 'checkbox', checked: value.enabled, disabled: props.busy || !rest, onChange: function (event) { change('enabled', event.target.checked) } }), '启用每日休息'),
+    h('div', null,
+      h('label', null, '开始 ', h('input', { type: 'time', value: value.start, disabled: props.busy || !rest, onChange: function (event) { change('start', event.target.value) } })),
+      h('label', { style: { marginLeft: 16 } }, '结束 ', h('input', { type: 'time', value: value.end, disabled: props.busy || !rest, onChange: function (event) { change('end', event.target.value) } })),
+      h('button', { type: 'button', disabled: props.busy || !rest || !draft || !valid, onClick: apply, style: { marginLeft: 16, padding: '6px 12px' } }, '应用休息时段')),
+    !valid ? h('p', { role: 'alert' }, '请输入有效时间，开始和结束不能相同。') : draft ? h('p', null, '修改尚未应用。') : null,
+    h('p', null, '按现实时间执行，不受倍率影响。休息时不由 ABS 唤醒，手动投递也不绕过；结束后只恢复正常调度，不补发夜间积压。'),
+    h('p', { style: { fontSize: 12, opacity: .75 } }, '不会中断正在进行的任务，也不阻止主人聊天。满足度自然衰减与真实事件反馈保持原规则；此设置只约束 ABS，不控制其他定时任务。'))
+}
 function AbsReviewPanel(props) {
   var state = props.state || {}, last = state.lastReview
   var statusText = !last ? '尚未投递过审查。'
@@ -247,8 +268,8 @@ function AbsReviewPanel(props) {
     h('p', null, statusText),
     h('div', null,
       h('button', { type: 'button', disabled: props.busy, onClick: function () { props.onAction({ action: 'preview' }) }, style: { padding: '8px 12px', marginRight: 8 } }, '刷新预览'),
-      h('button', { type: 'button', disabled: props.busy || !state.mode || state.mode === 'off' || (state.clockView && state.clockView.paused), onClick: function () { props.onAction({ action: 'wake' }) }, style: { padding: '8px 12px' } }, state.mode === 'active' ? '手动投递审查' : '手动运行一次审查')),
-    h('p', { style: { fontSize: 12, opacity: .75 } }, '手动运行同样遵守模式与暂停；观察模式下只记录，不投递。'))
+      h('button', { type: 'button', disabled: props.busy || !state.mode || state.mode === 'off' || (state.clockView && (state.clockView.paused || (state.clockView.rest && state.clockView.rest.resting))), onClick: function () { props.onAction({ action: 'wake' }) }, style: { padding: '8px 12px' } }, state.mode === 'active' ? '手动投递审查' : '手动运行一次审查')),
+    h('p', { style: { fontSize: 12, opacity: .75 } }, '手动运行同样遵守模式、暂停与休息时段；观察模式下只记录，不投递。'))
 }
 function AbsEnvironmentPanel(props) {
   var environment = props.environment || {}, owner = environment.ownerSession || {}, search = environment.search || {}
@@ -340,6 +361,7 @@ function AbsLabPage() {
       button('隔离回放 +72 小时', { action: 'replay', hours: 72 }), button('导出近期审计', { action: 'export' }),
       h('p', null, '隔离回放不调用模型或工具，只投影状态与审查文本。'),
       h(AbsClockPanel, { state: state, busy: busy, onAction: action }),
+      h(AbsRestPanel, { state: state, busy: busy, onAction: action }),
       h(AbsNeedsPanel, { state: state }),
       h(AbsReviewPanel, { state: state, busy: busy, onAction: action }),
       h(AbsEnvironmentPanel, { environment: data.environment }),

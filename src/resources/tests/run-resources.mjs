@@ -98,6 +98,7 @@ await test('paths: 所有文件都在 home 下，工作区在 home/小鱼塘', (
     proactive: join(home, FILES.proactive),
     events: join(home, FILES.events),
     abs: join(home, FILES.abs),
+    skills: join(home, FILES.skills),
     diary: join(home, '日记'),
     workspace: join(home, WORKSPACE_DIR),
     social: join(home, 'social'),
@@ -182,11 +183,11 @@ await test('config: 文件缺失/坏 JSON 时回退默认值', () => {
     assert.deepEqual(resources.getConfig(), JSON.parse(JSON.stringify({
       version: VERSIONS.config,
       abs: DEFAULT_CONFIG.abs,
+      skills: { enabled: true },
       proactive: { enabled: true },
       eventEngine: { enabled: true, extractTickMs: 5000, extractBatch: 2, maxRecordsPerTurn: 400 },
       diary: {
         enabled: true,
-        enabledPresets: [PRESET],
         maxContentChars: 50000,
       },
     })))
@@ -241,9 +242,32 @@ await test('config: diary 字段消毒 / clamp', () => {
     )
     const config = createResources({ homeRoot: workspace.dshHome }).getConfig()
     assert.equal(config.diary.enabled, true)
-    assert.deepEqual(config.diary.enabledPresets, ['chonkyfish', 'other'])
+    assert.equal('enabledPresets' in config.diary, false, 'legacy preset restrictions are ignored')
     assert.equal(config.diary.maxContentChars, 200000)
     assert.equal('schedule' in config.diary, false)
+  } finally {
+    workspace.cleanup()
+  }
+})
+
+await test('config: legacy diary enabledPresets is ignored on read and update', async () => {
+  const workspace = makeHome()
+  try {
+    const resources = createResources({ homeRoot: workspace.dshHome })
+    await resources.ensureLayout()
+    assert.equal('enabledPresets' in DEFAULT_CONFIG.diary, false)
+    const initial = JSON.parse(readFileSync(resources.paths.config, 'utf8'))
+    assert.equal('enabledPresets' in initial.diary, false)
+    initial.diary.enabledPresets = ['restricted-preset']
+    writeFileSync(resources.paths.config, JSON.stringify(initial), 'utf8')
+    assert.equal('enabledPresets' in resources.getConfig().diary, false)
+    for (const enabledPresets of [[], ['other'], 'chonkyfish', null]) {
+      const next = await resources.updateConfig({ diary: { enabledPresets, maxContentChars: 60000 } })
+      assert.deepEqual(next.diary, { enabled: true, maxContentChars: 60000 })
+      assert.deepEqual(next.skills, initial.skills)
+      assert.deepEqual(next.abs, initial.abs)
+      assert.equal('enabledPresets' in JSON.parse(readFileSync(resources.paths.config, 'utf8')).diary, false)
+    }
   } finally {
     workspace.cleanup()
   }

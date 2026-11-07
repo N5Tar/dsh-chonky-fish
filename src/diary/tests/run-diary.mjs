@@ -219,20 +219,19 @@ await test('tool: 单工具 diary，action 枚举，成功/失败都可渲染', 
 
 /* --------------------------------------------------------- 面板路由 */
 
-await test('http: 鉴权 / 列表 / 读取 / 404 / 参数校验', async () => {
+await test('http: 无需 token / 列表 / 读取 / 404 / 参数校验', async () => {
   const workspace = makeRoot()
   try {
     const { service } = makeService(workspace.root)
     await service.run({ action: 'write', date: '2026-10-28', content: '面板里能读到' })
     const token = 'secret-token'
 
-    const unauthorized = await handleDiaryRequest({
-      service,
-      headers: {},
-      url: '/chonkyfish/diary',
-      token,
-    })
-    assert.equal(unauthorized.status, 401)
+    for (const headers of [undefined, {}, { 'x-chonkyfish-token': 'wrong' }]) {
+      const accessible = await handleDiaryRequest({ service, headers, url: '/chonkyfish/diary', token })
+      assert.equal(accessible.status, 200)
+      assert.deepEqual(accessible.body.dates, ['2026-10-28'])
+    }
+    assert.equal((await handleDiaryRequest({ service, url: '/chonkyfish/diary' })).status, 200)
 
     const listed = await handleDiaryRequest({
       service,

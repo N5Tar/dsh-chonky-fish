@@ -2,14 +2,14 @@ import { updateState } from './core.js'
 import { sanitizeAbsConfig } from './config.js'
 import { validateTimeScale } from './clock.js'
 import { renderSelfReview } from './review.js'
+import { validRestTime } from './rest.js'
 
-export function createAbsHttpHandler({ service, resources, token, maxBodyBytes = 16384 }) {
+export function createAbsHttpHandler({ service, resources, maxBodyBytes = 16384 }) {
   return async (request, response) => {
     const reply = (status, body) => {
       response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
       response.end(request.method === 'HEAD' ? undefined : JSON.stringify(body))
     }
-    if (!token || request.headers['x-chonkyfish-token'] !== token) return reply(401, { ok: false, error: 'ABS_UNAUTHORIZED' })
     try {
       if (['GET', 'HEAD'].includes(request.method)) {
         return reply(200, { ok: true, state: service.inspect(), environment: await service.environment(), records: await service.records(100) })
@@ -39,6 +39,12 @@ export function createAbsHttpHandler({ service, resources, token, maxBodyBytes =
           if (Object.keys(input).some((key) => !['action', 'timeScale'].includes(key))) throw new Error('ABS_UNKNOWN_FIELD')
           validateTimeScale(input.timeScale)
           await resources.updateConfig({ abs: { timeScale: input.timeScale } })
+          result = await service.syncClock()
+          break
+        case 'rest-hours':
+          if (Object.keys(input).some((key) => !['action', 'enabled', 'start', 'end'].includes(key))) throw new Error('ABS_UNKNOWN_FIELD')
+          if (typeof input.enabled !== 'boolean' || !validRestTime(input.start) || !validRestTime(input.end) || input.start === input.end) throw new Error('ABS_INVALID_REST_HOURS')
+          await resources.updateConfig({ abs: { restHours: { enabled: input.enabled, start: input.start, end: input.end } } })
           result = await service.syncClock()
           break
         case 'mode':
