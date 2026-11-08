@@ -69,6 +69,19 @@ try {
     }
   })
 
+  await test('root containment and path equality share platform semantics', async () => {
+    const posix = createPosixPlatform(), win32 = createWin32Platform()
+    assert.equal(posix.isWithin('/', '/tmp/a'), true)
+    assert.equal(posix.isWithin('/', '/'), false)
+    assert.equal(posix.isSamePath('/srv/fish/', '/srv/fish'), true)
+    assert.equal(posix.isSamePath('/srv/Fish', '/srv/fish'), false)
+    assert.equal(win32.isSamePath('C:/Work/Fish', 'c:/work/fish/'), true)
+    const { isFishHeader } = await import('../../proactive/identity.js')
+    const base = join(root, 'Fish')
+    const cwd = platform.caseInsensitivePaths ? join(root, 'fish', 'sub') : join(base, 'sub')
+    assert.equal(isFishHeader({ cwd, agentPreset: 'chonkyfish' }, { workspaceRoot: base }), true)
+  })
+
   await test('path containment follows the platform rules', async () => {
     const posix = createPosixPlatform(), win32 = createWin32Platform()
     assert.equal(posix.isWithin('/srv/fish', '/srv/fish/note.md'), true)
@@ -114,11 +127,18 @@ try {
     assert.ok(files.length > 20)
     for (const file of files) {
       const text = await readFile(file, 'utf8')
+      assert.doesNotMatch(text, /platform\/(?:posix|win32)\.js/, `${file.pathname} must import only the platform entry`)
+      assert.doesNotMatch(text, /startsWith\([^)]*\+\s*sep\)/, `${file.pathname} must delegate path containment`)
       assert.doesNotMatch(text, /process\.platform/, `${file.pathname} must use src/platform instead of process.platform`)
       assert.doesNotMatch(text, /\b(dir|folder|directoryHandle)\.sync\(\)/, `${file.pathname} must use platform.syncDirectory`)
       assert.doesNotMatch(text, /relative\(resolve\(/, `${file.pathname} must use platform.isWithin instead of ad-hoc path checks`)
     }
-    for (const relative of ['abs/store.js', 'social/core.js', 'social/inbox-store.js', 'abs/host.js']) {
+    for (const implementation of ['posix.js', 'win32.js']) {
+      const source = await readFile(new URL(`../${implementation}`, import.meta.url), 'utf8')
+      const imports = [...source.matchAll(/(?:from\s*|import\s*\()(['"])([^'"]+)\1/g)]
+      for (const match of imports) assert.ok(match[2].startsWith('node:'), `${implementation} must depend only on Node builtins`)
+    }
+    for (const relative of ['proactive/identity.js', 'event-engine/engine.js', 'abs/store.js' , 'social/core.js', 'social/inbox-store.js', 'abs/host.js']) {
       const text = await readFile(new URL(`../../${relative}`, import.meta.url), 'utf8')
       assert.match(text, /from '\.\.\/platform\/index\.js'/, `${relative} must import the platform module`)
     }

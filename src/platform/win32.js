@@ -27,12 +27,18 @@ export function isWithin(root, target) {
   return full.length > base.length && full.startsWith(base + '\\')
 }
 
+export function isSamePath(left, right) {
+  const base = fold(left)
+  return Boolean(base) && base === fold(right)
+}
+
 export function createWin32Platform() {
   return {
     name,
     directorySync,
     caseInsensitivePaths,
     isWithin,
+    isSamePath,
     /** Windows cannot flush a directory handle; file data was already synced. */
     async syncDirectory() {
       /* intentionally empty: see the durability note above */

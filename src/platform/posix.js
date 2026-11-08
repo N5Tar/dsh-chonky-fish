@@ -15,14 +15,19 @@ export const name = 'posix'
 export const directorySync = true
 export const caseInsensitivePaths = false
 
-const stripTrailingSeparators = (value) => value.replace(/\/+$/, '')
+const stripTrailingSeparators = (value) => value.replace(/\/+$/, '') || (value.startsWith('/') ? '/' : '')
 
 /** 只在绝对、已 resolve 的路径上使用；调用方负责 resolve。 */
 export function isWithin(root, target) {
   const base = stripTrailingSeparators(root)
   const full = stripTrailingSeparators(target)
   if (!base || !full) return false
-  return full.length > base.length && full.startsWith(base + '/')
+  return full.length > base.length && full.startsWith(base === '/' ? '/' : base + '/')
+}
+
+export function isSamePath(left, right) {
+  const base = stripTrailingSeparators(left)
+  return Boolean(base) && base === stripTrailingSeparators(right)
 }
 
 export function createPosixPlatform({ openFile = open } = {}) {
@@ -31,6 +36,7 @@ export function createPosixPlatform({ openFile = open } = {}) {
     directorySync,
     caseInsensitivePaths,
     isWithin,
+    isSamePath,
     /** Flush the directory entry so a just-completed rename survives a crash. */
     async syncDirectory(directory) {
       let handle

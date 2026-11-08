@@ -19,7 +19,8 @@
  * 的 turn 直接跳过并记审计（`turn_not_buffered`）。
  */
 import { randomUUID } from 'node:crypto'
-import { resolve, sep } from 'node:path'
+import { resolve } from 'node:path'
+import { platform } from '../platform/index.js'
 
 import { PRESET } from '../resources/spec.js'
 import { isSocialHeader } from '../social/policy.js'
@@ -70,13 +71,13 @@ export function createEventEngine({
   logger = null,
   now = nowIso,
 }) {
-  const db = openEventDatabase(file)
-  const recoveredLeases = recoverExpiredLeases(db, now())
   // 工作区根是身份配对的一半，必须有；没有它就无法联合判断。
   if (typeof workspaceRoot !== 'string' || workspaceRoot.length === 0) {
     throw new Error('createEventEngine: workspaceRoot is required (fish identity = workspace + preset)')
   }
   const root = resolve(workspaceRoot)
+  const db = openEventDatabase(file)
+  const recoveredLeases = recoverExpiredLeases(db, now())
 
   /** @type {Map<string, number>} 进程内 seq 连续性观测（用于发现丢事件） */
   const lastSeq = new Map()
@@ -125,7 +126,7 @@ export function createEventEngine({
     if (header.agentPreset !== preset) return false
     const cwd = typeof header.cwd === 'string' ? resolve(header.cwd) : ''
     if (cwd === '') return false
-    return cwd === root || cwd.startsWith(root + sep)
+    return platform.isSamePath(root, cwd) || platform.isWithin(root, cwd)
   }
 
   /* ---------------- turn → job ---------------- */

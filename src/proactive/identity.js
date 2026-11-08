@@ -11,7 +11,8 @@
  *
  * 判定规则必须和 src/event-engine/engine.js 里的 isFishSession 保持一致。
  */
-import { resolve, sep } from 'node:path'
+import { resolve } from 'node:path'
+import { platform } from '../platform/index.js'
 
 import { PRESET } from '../resources/spec.js'
 
@@ -34,7 +35,7 @@ export function isFishHeader(header, { workspaceRoot, preset = FISH_PRESET } = {
   const cwd = typeof header.cwd === 'string' ? resolve(header.cwd) : ''
   if (cwd === '') return false
   const base = resolve(workspaceRoot)
-  return cwd === base || cwd.startsWith(base + sep)
+  return platform.isSamePath(base, cwd) || platform.isWithin(base, cwd)
 }
 
 /**

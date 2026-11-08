@@ -62,3 +62,11 @@ export const platform = platformNameFor() === 'win32' ? win32Platform : posixPla
 
 `src/platform/tests/run-platform.mjs` 会扫描 `src/**/*.js`（跳过 `tests/` 与 `platform/`）执行上述检查，
 并且在任何 host 上都能跑（win32 的 `isWithin` 是纯字符串实现，不需要真的在 Windows 上）。
+
+## 路径与依赖边界补充
+
+- `isSamePath(left, right)` 判断同一路径；`isWithin(root, target)` 仅判断严格子路径。两者接收调用方 resolve 后的绝对路径，均不解析符号链接。
+- 会话身份判断使用这两个接口，避免 Windows 路径大小写差异导致漏采集。POSIX 的 `/` 根目录同样支持子路径判断。
+- 业务模块只能导入 `platform/index.js`；两份平台实现仅依赖 Node 内建模块，不依赖业务层或彼此。
+- 静态测试检查常见的直接实现导入和路径前缀写法；它是回归护栏，不是完整 JavaScript 语法分析器。
+- macOS 与 Linux 当前共享 POSIX 实现；这里的大小写规则是词法比较策略，不是对实际卷大小写敏感性的探测。
