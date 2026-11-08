@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { validateConfig } from '../config.js'
+import { createConfigStore, validateConfig } from '../config.js'
 import { createIdentityStore } from '../identity-store.js'
 import { createScopeAuthority, acceptMessage } from '../policy.js'
 import { normalizeEvent, createOneBotDriver } from '../drivers/onebot.js'
@@ -104,3 +104,8 @@ assert.deepEqual(socket12.sent.at(-1).params, { detail_type: 'channel', message:
 assert.deepEqual(socket12.sent.at(-1).self, { platform: 'discord', user_id: 'mapped-self' })
 await driver12.stop()
 console.log('social-core: PASS (strict config, identities, scopes, filters, v11/v12 normalization, socket actions/unknown/no retry)')
+
+const brokenConfig = join(root, 'broken-config.json')
+await writeFile(brokenConfig, '{broken')
+await assert.rejects(createConfigStore(brokenConfig).write(config), { code: 'SOCIAL_CONFIG_RECOVERY_REQUIRED' })
+assert.equal(await readFile(brokenConfig, 'utf8'), '{broken')

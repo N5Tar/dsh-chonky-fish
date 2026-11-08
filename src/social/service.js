@@ -113,7 +113,7 @@ export async function createSocialService({ paths, limits, env = process.env, dr
   const service = {
     async inspect() {
       active()
-      return { configError, inferenceOnArrival: false, actionEngineConnected: false,
+      return { configError, configPath: paths.socialConfig, inferenceOnArrival: false, actionEngineConnected: false,
         providers: Object.values(PROVIDERS),
         connections: [...connections.values()].map(entry => ({ connectionId: entry.config.id, platform: entry.config.platform, provider: entry.config.provider, status: entry.status, reason: entry.reason, identity: entry.verified?.identity, identityRevision: entry.verified?.identityRevision })),
         notices: await listNotices() }

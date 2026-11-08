@@ -29,6 +29,6 @@ export function createConfigStore(file) {
   const run = serial()
   return {
     read: () => run(async () => validateConfig(await readJson(file, EMPTY_CONFIG))),
-    write: raw => run(async () => { const value = validateConfig(raw); await writeJson(file, value); return value }),
+    write: raw => run(async () => { const value = validateConfig(raw); try { validateConfig(await readJson(file, EMPTY_CONFIG)) } catch { fail('SOCIAL_CONFIG_RECOVERY_REQUIRED') } await writeJson(file, value); return value }),
   }
 }

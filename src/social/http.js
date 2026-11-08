@@ -9,10 +9,10 @@ export function createSocialHttpHandler({ service, bridge, maxBodyBytes = 16384 
     }
     try {
       if (request.method === 'GET' || request.method === 'HEAD') {
-        // 配置损坏时仍返回状态：面板要能打开、看到错误，并用一次合法保存覆盖修好。
-        let config = null
-        try { config = await service.readConfig() } catch {}
-        reply(200, { ok: true, ...await service.inspect(), config, identities: await service.listIdentityRecords(), bridge: bridge?.inspect?.() ?? { available: false, reason: 'SOCIAL_BRIDGE_UNAVAILABLE' } })
+        // 配置损坏时仍返回状态：面板要能打开、看到错误，并保留原文件供恢复。
+        let config = null, readError = null
+        try { config = await service.readConfig() } catch (error) { readError = publicError(error) }
+        reply(200, { ok: true, ...await service.inspect(), ...(readError ? { configError: readError } : {}), config, identities: await service.listIdentityRecords(), bridge: bridge?.inspect?.() ?? { available: false, reason: 'SOCIAL_BRIDGE_UNAVAILABLE' } })
         return
       }
       if (request.method !== 'POST') { reply(405, { ok: false, error: 'SOCIAL_METHOD_NOT_ALLOWED' }); return }

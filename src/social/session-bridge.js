@@ -23,11 +23,15 @@ export async function createSocialBridge({ ctx, service, resources }) {
   const queue = serial(32), live = new Map(), grants = new WeakMap()
   let closed = false, poisoned = false, closePromise = null
   function get(name) {
-    try { return ctx[name] ?? (typeof ctx.get === 'function' ? ctx.get(name) : undefined) } catch { return undefined }
+    try { const value = ctx[name]; if (value != null) return value } catch {}
+    try { return typeof ctx.get === 'function' ? ctx.get(name) : undefined } catch { return undefined }
   }
   function capabilities() {
     const agents = get('agents'), presets = get('agentPresets'), sessions = get('sessions'), persistence = get('sessionPersistence')
-    if (!agents?.create || !agents?.resume || !presets?.mount || !sessions?.flush || !persistence?.open || persistence.identity === undefined) return { available: false, reason: 'SOCIAL_HOST_CAPABILITY_UNAVAILABLE' }
+    const required = { 'agents.create': agents?.create, 'agents.resume': agents?.resume, 'agentPresets.mount': presets?.mount, 'sessions.flush': sessions?.flush, 'sessionPersistence.open': persistence?.open }
+    const missingCapabilities = Object.keys(required).filter(key => typeof required[key] !== 'function')
+    if (persistence?.identity === undefined) missingCapabilities.push('sessionPersistence.identity')
+    if (missingCapabilities.length) return { available: false, reason: 'SOCIAL_HOST_CAPABILITY_UNAVAILABLE', missingCapabilities }
     let model
     try { model = get('agentDefaultModel')?.currentSelection() } catch {}
     if (!text(model?.provider) || !text(model?.model)) return { available: false, reason: 'SOCIAL_MODEL_UNAVAILABLE' }
@@ -138,7 +142,7 @@ export async function createSocialBridge({ ctx, service, resources }) {
   const bridge = {
     inspect() {
       const cap = capabilities()
-      return { available: !closed && !poisoned && cap.available, reason: closed ? 'SOCIAL_BRIDGE_CLOSED' : poisoned ? 'SOCIAL_BRIDGE_STORAGE_UNCERTAIN' : cap.reason, mode: 'explicit-view-only', bindingCount: state.bindings.length }
+      return { available: !closed && !poisoned && cap.available, reason: closed ? 'SOCIAL_BRIDGE_CLOSED' : poisoned ? 'SOCIAL_BRIDGE_STORAGE_UNCERTAIN' : cap.reason, missingCapabilities: cap.missingCapabilities ?? [], mode: 'explicit-view-only', bindingCount: state.bindings.length }
     },
     scopeForAgent,
     view(input) {

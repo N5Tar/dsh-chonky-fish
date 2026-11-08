@@ -1,3 +1,4 @@
+import vm from 'node:vm'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -31,3 +32,13 @@ const lookedUp = new Set([...runtime.matchAll(/\$\('([a-z0-9-]+)'\)/g)].map(matc
 const missing = [...lookedUp].filter(id => !client.includes(`id=\\"${id}\\"`))
 assert.deepEqual(missing, [], `runtime.js 引用了 markup 中不存在的 id：${missing.join(', ')}`)
 console.log('social-client: PASS (panel entry, panels preserved, no implicit reply/send surface)')
+
+// Execute the actual bundled save handler: unreadable config must never POST.
+const saveHandler = client.slice(client.indexOf('  function socialSaveConfig()'), client.indexOf('  function socialDeleteConnection()'))
+for (const payload of [{ config: null, configError: 'SOCIAL_STORAGE_INVALID' }, { config: null }]) {
+  const messages = []
+  const context = { socialPayload: payload, toast: message => messages.push(message), socialReadForm: () => assert.fail('must not read a form over unreadable config'), socialSubmit: () => assert.fail('must not overwrite unreadable config') }
+  vm.runInNewContext(saveHandler + ';socialSaveConfig()', context)
+  assert.equal(messages.length, 1)
+  assert.match(messages[0], /阻止覆盖/)
+}

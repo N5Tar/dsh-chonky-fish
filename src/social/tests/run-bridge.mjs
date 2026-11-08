@@ -135,6 +135,7 @@ await test('missing host fails without disrupting inbox; permission service is u
   try {
     unavailable = await createSocialBridge({ ctx: {}, service: f.service, resources: f.resources })
     assert.equal(unavailable.inspect().available, false)
+    assert.ok(unavailable.inspect().missingCapabilities.includes('agents.create'))
     await f.emit('1')
     await assert.rejects(unavailable.view({ connectionId: 'qq', conversation: target }), { code: 'SOCIAL_HOST_CAPABILITY_UNAVAILABLE' })
     assert.equal(f.counters.followup, 0)
@@ -178,3 +179,14 @@ await test('crash after inbox ACK before bridge journal ACK repairs without repl
 })
 console.log(`social-bridge: ${count}/${count} passed (audited API mocks; no real host/model/platform turns)`)
 
+
+await test('throwing context property still permits service lookup', async () => {
+  const f = await fixture()
+  let bridge
+  try {
+    const ctx = { get(name) { return f.ctx[name] ?? f.ctx.get(name) } }
+    Object.defineProperty(ctx, 'agents', { get() { throw new Error('property unavailable') } })
+    bridge = await createSocialBridge({ ctx, service: f.service, resources: f.resources })
+    assert.equal(bridge.inspect().available, true)
+  } finally { await bridge?.close(); await f.close() }
+})

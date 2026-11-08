@@ -641,6 +641,8 @@ function mountChonkyFishPage(wrap, chat, options) {
     identity_changed: '待确认新账号'
   }
   var SOCIAL_ERROR_LABELS = {
+    SOCIAL_CONFIG_RECOVERY_REQUIRED: '原配置无法读取，已阻止覆盖；请先备份并修复配置文件',
+    SOCIAL_HOST_CAPABILITY_UNAVAILABLE: '宿主暂不支持将收件箱消息交给模型处理，连接与收信不受影响',
     SOCIAL_TARGET_UNBOUND: '当前会话未绑定社交目标，请先选择对应消息会话',
     SOCIAL_BRIDGE_UNAVAILABLE: '宿主桥接不可用（需要宿主支持受限会话）',
     SOCIAL_BRIDGE_CLOSED: '桥接已关闭，重启 DSH 后再试',
@@ -759,6 +761,7 @@ function mountChonkyFishPage(wrap, chat, options) {
 
   function socialSaveConfig() {
     if (!socialPayload) { toast('社交状态还没读出来，先点刷新'); return }
+    if (socialPayload.configError || !socialPayload.config) { toast('配置读取失败，已阻止覆盖；请先备份并修复配置文件'); return }
     var connection
     try {
       connection = socialReadForm()
@@ -766,7 +769,7 @@ function mountChonkyFishPage(wrap, chat, options) {
       toast(error && error.message ? error.message : '配置不完整')
       return
     }
-    // 配置损坏或首次使用时从空配置开始，保存即可覆盖修好。
+    // 只编辑成功读取的配置，读取失败不能按空配置覆盖。
     var config = JSON.parse(JSON.stringify(socialPayload.config || { version: 1, connections: [] }))
     config.version = 1
     var connections = Array.isArray(config.connections) ? config.connections.slice() : []
@@ -861,15 +864,14 @@ function mountChonkyFishPage(wrap, chat, options) {
     if (!socialStatusBox) return
     clearNode(socialStatusBox)
     if (!socialPayload) return
-    var bridge = socialPayload.bridge || {}
     socialStatusBox.appendChild(socialStatusRow('连接', (socialPayload.connections || []).length + ' 条'))
     socialStatusBox.appendChild(socialStatusRow('收信', '只进收件箱并计数，不会自动调用模型'))
     socialStatusBox.appendChild(socialStatusRow('行动决策', socialPayload.actionEngineConnected ? '已接入' : '未接入：需要你手动点「查看」'))
-    socialStatusBox.appendChild(socialStatusRow('受限会话桥接', bridge.available ? '可用' : '不可用：' + (SOCIAL_ERROR_LABELS[bridge.reason] || bridge.reason || '未知'), !bridge.available))
+    if (socialPayload.configPath) socialStatusBox.appendChild(socialStatusRow('配置文件', socialPayload.configPath))
     if (socialPayload.configError) {
       var error = document.createElement('div')
       error.className = 'cf-social-error'
-      error.textContent = '配置错误：' + (SOCIAL_ERROR_LABELS[socialPayload.configError] || socialPayload.configError) + '（重新填写并保存会覆盖这份配置）'
+      error.textContent = '配置错误：' + (SOCIAL_ERROR_LABELS[socialPayload.configError] || socialPayload.configError) + '（原文件已保留，保存已阻止；请先备份并修复此文件）'
       socialStatusBox.appendChild(error)
     }
   }
@@ -938,7 +940,7 @@ function mountChonkyFishPage(wrap, chat, options) {
     if (connections.length === 0) {
       var empty = document.createElement('div')
       empty.className = 'cf-social-empty'
-      empty.textContent = '还没有配置连接；填写下面的表单再保存。'
+      empty.textContent = socialPayload && socialPayload.configError ? '连接配置读取失败，请查看上方错误及配置文件路径。' : '还没有配置连接；填写下面的表单再保存。'
       socialList.appendChild(empty)
       return
     }
@@ -992,7 +994,7 @@ function mountChonkyFishPage(wrap, chat, options) {
       var connections = socialPayload && Array.isArray(socialPayload.connections) ? socialPayload.connections : []
       var connected = 0
       for (var i = 0; i < connections.length; i += 1) if (connections[i].status === 'connected') connected += 1
-      socialSummary.textContent = (connections.length === 0 ? '还没有配置连接' : '社交运行中') +
+      socialSummary.textContent = (socialPayload.configError ? '连接配置读取失败' : connections.length === 0 ? '还没有配置连接' : '社交运行中') +
         ' · ' + connected + '/' + connections.length + ' 条在线'
     }
     renderSocialStatus()
