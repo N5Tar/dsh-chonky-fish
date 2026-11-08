@@ -1,5 +1,6 @@
 import { mkdir, readFile, open, rename } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
+import { platform } from '../platform/index.js';
 import { validateClockSnapshot } from './clock.js';
 
 const MAX_RECORDS = 2000;
@@ -54,8 +55,9 @@ export async function createAbsStore({ directory }) {
     const file = await open(temporary, 'w', 0o600);
     try { await file.writeFile(text); await file.sync(); } finally { await file.close(); }
     await rename(temporary, path);
-    const dir = await open(root, 'r');
-    try { await dir.sync(); } finally { await dir.close(); }
+    // Directory flush is a platform capability (src/platform/): POSIX fsyncs the directory,
+    // Windows cannot and keeps the synced file + atomic rename instead.
+    await platform.syncDirectory(root);
   }
   async function release() { writers.delete(root); }
   try {

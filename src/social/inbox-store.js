@@ -2,6 +2,7 @@ import { mkdir, open, readFile, rename, stat } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 
+import { platform } from '../platform/index.js';
 import { DEFAULT_INBOX_LIMITS } from './limits.js';
 export { DEFAULT_INBOX_LIMITS } from './limits.js';
 
@@ -171,8 +172,7 @@ export async function createInboxStore({ directory, limits = {}, now = Date.now 
       await handle.sync();
       await handle.close(); handle = null;
       await rename(temp, path);
-      const folder = await open(dir, 'r');
-      try { await folder.sync(); } finally { await folder.close(); }
+      await platform.syncDirectory(dir);
     } catch (error) {
       if (handle) await handle.close().catch(() => {});
       poisoned = fail('INBOX_WRITE_FAILED', 'Inbox commit failed; close and recover before further use');

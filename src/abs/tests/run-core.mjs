@@ -89,7 +89,7 @@ await test('durable snapshot, bounded audit, cloned reads, restart and corruptio
   } finally {
     await store?.close()
     const target = resolve(directory)
-    assert.ok(target.startsWith(resolve(tmpdir()) + '/chonkyfish-abs-core-'))
+    assert.ok(target.startsWith(join(resolve(tmpdir()), 'chonkyfish-abs-core-')))
     await rm(target, { recursive: true, force: true })
   }
 })

@@ -1,7 +1,8 @@
 import { randomUUID, createHash } from 'node:crypto'
-import { resolve, relative, dirname } from 'node:path'
+import { resolve, dirname } from 'node:path'
 import { readFileSync } from 'node:fs'
 
+import { platform } from '../platform/index.js'
 import { isFishHeader } from '../proactive/identity.js'
 
 const text = (value) => typeof value === 'string' && value.trim().length > 0
@@ -140,9 +141,9 @@ export function createAbsHost({ ctx, resources }) {
     turn.calls.delete(message.source.callId)
     if (call.name !== 'web_search') {
       const meta = data.meta ?? {}, path = typeof meta.path === 'string' ? resolve(meta.path) : null
-      const within = (root) => path && relative(resolve(root), path) !== '..' && !relative(resolve(root), path).startsWith('../') && !relative(resolve(root), path).startsWith('/')
-      // Never reward reading/writing ABS's own state. Shell success alone proves no outcome.
-      if (within(resolve(dirname(resources.paths.proactive), 'abs'))) return
+      // Never reward reading/writing ABS's own state. Path containment is a platform
+      // concern (separators, drive letters, case folding): see src/platform/.
+      if (path && platform.isWithin(resolve(dirname(resources.paths.proactive), 'abs'), path)) return
       let evidence = null, activity = call.name
       if (message.isError === false && path) {
         if (call.name === 'read' && Array.isArray(meta.lines) && meta.lines.every((line) => line && typeof line.text === 'string') && meta.lines.some((line) => text(line.text))) {
@@ -150,7 +151,7 @@ export function createAbsHost({ ctx, resources }) {
         } else if (call.name === 'read_image') {
           const image = message.content?.find((part) => part.type === 'image' && text(part.attachment?.attachmentId) && part.attachment.bytes > 0)
           evidence = image?.attachment.attachmentId ?? null
-        } else if (['write', 'edit'].includes(call.name) && within(resources.paths.workspace)) {
+        } else if (['write', 'edit'].includes(call.name) && platform.isWithin(resolve(resources.paths.workspace), path)) {
           const changed = Array.isArray(meta.diffs) ? meta.diffs.filter((diff) => diff && typeof diff.oldText === 'string' && typeof diff.newText === 'string' && diff.oldText !== diff.newText) : []
           if (changed?.length) evidence = changed.map((diff) => diff.newText).join('\n')
           else if (call.name === 'write' && meta.operation === 'create' && text(call.args.content)) evidence = call.args.content

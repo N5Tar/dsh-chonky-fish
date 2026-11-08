@@ -121,7 +121,7 @@ await test('repeated fractional segments retain exact JSON snapshot consistency'
 await test('store accepts legacy/valid clock and rejects present corrupt clock', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'abs-clock-'));
   const root = resolve(directory);
-  assert.equal(root.startsWith(resolve(tmpdir()) + '/abs-clock-'), true);
+  assert.equal(root.startsWith(join(resolve(tmpdir()), 'abs-clock-')), true);
   let store;
   try {
     const state = createState(Date.parse('2026-11-07T00:00:00Z'));

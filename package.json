@@ -17,6 +17,7 @@
     "locale/*.json",
     "icon.svg",
     "src/persona/**",
+    "src/platform/**",
     "src/resources/**",
     "src/event-engine/**",
     "src/proactive/**",
@@ -36,7 +37,8 @@
     "test:diary": "node src/diary/tests/run-diary.mjs",
     "test:skills": "node src/skills/tests/run-core.mjs && node src/skills/tests/run-host.mjs && node src/skills/tests/run-http.mjs",
     "test:abs": "node src/abs/tests/run-rest.mjs && node src/abs/tests/run-clock.mjs && node src/abs/tests/run-core.mjs && node src/abs/tests/run-review.mjs && node src/abs/tests/run-host.mjs && node src/abs/tests/run-service.mjs && node src/abs/tests/run-client.mjs",
-    "test": "npm run test:event-engine:all && npm run test:resources && npm run test:persona && npm run test:proactive && npm run test:diary && npm run test:social && npm run test:abs && npm run test:skills",
+    "test:platform": "node src/platform/tests/run-platform.mjs",
+    "test": "npm run test:event-engine:all && npm run test:resources && npm run test:platform && npm run test:persona && npm run test:proactive && npm run test:diary && npm run test:social && npm run test:abs && npm run test:skills",
     "test:social": "node src/social/tests/run-core.mjs && node src/social/tests/run-inbox.mjs && node src/social/tests/run-service.mjs && node src/social/tests/run-bridge.mjs && node src/social/tests/run-http-tools.mjs && node src/social/tests/run-host.mjs && node src/social/tests/run-client.mjs",
     "test:resources": "node src/resources/tests/run-resources.mjs",
     "test:persona": "node src/persona/tests/run-supplement.mjs"

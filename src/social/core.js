@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, rename, unlink } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
+import { platform } from '../platform/index.js'
 
 export class SocialError extends Error {
   constructor(code) { super(code); this.name = 'SocialError'; this.code = code }
@@ -64,8 +65,7 @@ export async function writeJson(file, value) {
     await handle.sync()
     await handle.close(); handle = null
     await rename(temporary, target)
-    const parent = await open(directory, 'r')
-    try { await parent.sync() } finally { await parent.close() }
+    await platform.syncDirectory(directory)
   } finally {
     await handle?.close()
     // Verify the exact absolute temporary path before cleanup; never touch the target.
