@@ -3,11 +3,13 @@ import { mkdtemp, realpath, readFile, writeFile, mkdir, symlink, link, rm, readd
 import os from 'node:os';
 import path from 'node:path';
 import { createSkillService, SKILL_LIMITS as limits } from '../core.js';
-import { BUILTIN_SKILLS } from '../bundled.js';
 
 const tempParent = await realpath(os.tmpdir());
 const root = await mkdtemp(path.join(tempParent, 'chonkyfish-skills-test-'));
-const id = 'homepage-operations';
+const id = 'demo-skill';
+const guide = '# 测试技能\n\n这是测试用的初始指南，只用于验证本地技能库。\n';
+const createArgs = (skillId = id) => ({ action: 'create', skillId, title: '测试技能', description: '测试用技能', guide });
+const create = (run, skillId = id) => run(createArgs(skillId));
 let passed = 0;
 async function test(name, fn) {
   await fn();
@@ -20,34 +22,32 @@ const readGuide = { action: 'read', skillId: id, section: 'guide' };
 const revise = (expectedRevision, content = 'Updated local guide') => ({ action: 'revise', skillId: id, section: 'guide', content, reason: 'Test local revision', expectedRevision });
 const record = (claim = 'Observed test result') => ({ action: 'record', skillId: id, claim, evidenceRefs: ['local:test-log'] });
 try {
-  await test('catalog exposes a Chinese homepage guide and no live integration', async () => {
-    assert.equal(BUILTIN_SKILLS.length, 1);
-    assert.equal(BUILTIN_SKILLS[0].id, id);
-    assert.match(BUILTIN_SKILLS[0].guide, /待配置/);
-    assert.match(BUILTIN_SKILLS[0].guide, /observed/);
-    assert.match(BUILTIN_SKILLS[0].guide, /不执行发布/);
-    assert.doesNotMatch(BUILTIN_SKILLS[0].guide, /贴吧|授权|审批/);
-    assert.match(BUILTIN_SKILLS[0].guide, /https:\/\/mingyue\.novak\.wang/);
-    assert.match(BUILTIN_SKILLS[0].guide, /\/Users\/jinyan\/workspace\/chonky-fish-site/);
-    assert.match(BUILTIN_SKILLS[0].guide, /\.\/deploy\.sh --site mingyue --dry-run/);
-    assert.match(BUILTIN_SKILLS[0].guide, /\.\/scripts\/verify-site\.sh mingyue/);
-    assert.match(BUILTIN_SKILLS[0].guide, /不是纯离线预览/);
-    assert.match(BUILTIN_SKILLS[0].guide, /不是原子发布/);
-    assert.match(BUILTIN_SKILLS[0].guide, /不包含独立 CSS\/JS/);
-    assert.match(BUILTIN_SKILLS[0].guide, /非 DeepSeek 官方网站/);
-    assert.match(BUILTIN_SKILLS[0].guide, /大肥鱼自主运营自己官网主页/);
-    assert.match(BUILTIN_SKILLS[0].guide, /不得编造亲身经历/);
-    assert.match(BUILTIN_SKILLS[0].guide, /发布回执/);
+  await test('library starts empty and create writes the first version', async () => {
     const run = runAt('catalog');
+    const empty = await run({ action: 'list' });
+    assert.equal(empty.total, 0);
+    assert.deepEqual(empty.items, []);
+    assert.deepEqual(await readdir(path.join(root, 'catalog')), []);
+    const created = await create(run);
+    assert.deepEqual(created, { skillId: id, revision: 1, action: 'create', title: '测试技能', description: '测试用技能' });
     const result = await run({ action: 'list' });
+    assert.equal(result.total, 1);
     assert.equal(result.items[0].skillId, id);
+    assert.equal(result.items[0].title, '测试技能');
+    assert.equal(result.items[0].description, '测试用技能');
     assert.equal(result.items[0].revision, 1);
+    assert.equal(result.items[0].experienceCount, 0);
     assert.deepEqual(result.items[0].sections, ['guide', 'experiences']);
     assert.equal(result.nextOffset, null);
-    assert.deepEqual(await readdir(path.join(root, 'catalog')), []);
+    assert.deepEqual(await readdir(path.join(root, 'catalog')), [`${id}.json`]);
+    await assert.rejects(create(run), code('CONFLICT'));
+    assert.equal((await run(readGuide)).content, guide);
+    const reopened = runAt('catalog');
+    assert.equal((await reopened({ action: 'history', skillId: id })).items[0].action, 'create');
   });
   await test('read section and record evidence references have bounded defaults', async () => {
     const run = runAt('defaults');
+    await create(run);
     const implicit = await run({ action: 'read', skillId: id });
     assert.deepEqual(implicit, await run(readGuide));
     assert.equal(implicit.section, 'guide');
@@ -64,6 +64,7 @@ try {
   });
   await test('bounded read pages can reconstruct the guide without silent truncation', async () => {
     const run = runAt('pages');
+    await create(run);
     let offset = 0;
     let content = '';
     do {
@@ -73,7 +74,7 @@ try {
       content += page.content;
       offset = page.nextOffset;
     } while (offset !== null);
-    assert.equal(content, BUILTIN_SKILLS[0].guide);
+    assert.equal(content, guide);
     const empty = await run({ ...readGuide, offset: 100000 });
     assert.equal(empty.content, '');
     assert.equal(empty.nextOffset, null);
@@ -84,6 +85,7 @@ try {
   });
   await test('observations persist without verification and do not rewrite guide', async () => {
     const run = runAt('record');
+    await create(run);
     const initial = await run(readGuide);
     const result = await run(record());
     assert.equal(result.revision, 2);
@@ -103,12 +105,13 @@ try {
   });
   await test('revisions and rollback append immutable full snapshots', async () => {
     const run = runAt('versions');
+    await create(run);
     await run(record());
     await run(revise(2, 'New guide'));
     assert.equal((await run(readGuide)).content, 'New guide');
     const restored = await run({ action: 'rollback', skillId: id, revision: 1, expectedRevision: 3, reason: 'Restore initial snapshot' });
     assert.deepEqual(restored, { skillId: id, revision: 4, action: 'rollback', sourceRevision: 1 });
-    assert.equal((await run({ ...readGuide, limit: limits.maxReadGuideChars })).content, BUILTIN_SKILLS[0].guide);
+    assert.equal((await run({ ...readGuide, limit: limits.maxReadGuideChars })).content, guide);
     assert.equal((await run({ ...readGuide, section: 'experiences' })).total, 0);
     assert.equal((await run({ ...readGuide, revision: 3 })).content, 'New guide');
     assert.equal((await run({ ...readGuide, revision: 2, section: 'experiences' })).total, 1);
@@ -121,6 +124,7 @@ try {
   await test('single-process serialization spans service instances and catches stale revisions', async () => {
     const a = runAt('concurrency');
     const b = runAt('concurrency');
+    await create(a);
     const attempts = await Promise.allSettled([a(revise(1, 'A')), b(revise(1, 'B'))]);
     assert.equal(attempts.filter((result) => result.status === 'fulfilled').length, 1);
     assert.equal(attempts.find((result) => result.status === 'rejected').reason.code, 'CONFLICT');
@@ -140,6 +144,9 @@ try {
       { ...readGuide, offset: -1 }, { ...readGuide, limit: 0 }, { ...readGuide, limit: limits.maxReadGuideChars + 1 },
       { ...readGuide, offset: 0.5 }, { ...readGuide, revision: '1' }, { ...readGuide, section: 'secret' },
       { action: 'list', limit: limits.maxPageSize + 1 }, { action: 'list', extra: true },
+      { ...createArgs(), title: '' }, { ...createArgs(), title: 'x'.repeat(limits.maxTitleChars + 1) },
+      { ...createArgs(), description: ' ' }, { ...createArgs(), guide: 'x'.repeat(limits.maxGuideChars + 1) },
+      { ...createArgs('Bad Id') }, { ...createArgs(), reason: 'x'.repeat(limits.maxReasonChars + 1) },
       { ...revise(1), expectedRevision: undefined }, { ...revise(1), content: '' },
       { ...revise(1), reason: ' ' }, { ...revise(1), section: 'experiences' },
       { ...revise(1), content: 'x'.repeat(limits.maxGuideChars + 1) },
@@ -150,23 +157,27 @@ try {
       { ...record(), evidenceRefs: Array(limits.maxEvidenceRefs + 1).fill('ref') },
       { ...record(), status: 'verified' },
     ];
+    await assert.rejects(run(readGuide), code('NOT_FOUND'));
+    await assert.rejects(run(record()), code('NOT_FOUND'));
+    await create(run);
     for (const input of invalid) await assert.rejects(run(input), code('INVALID_ARGUMENT'));
     await assert.rejects(run({ ...readGuide, skillId: 'not-installed' }), code('NOT_FOUND'));
     await assert.rejects(run({ ...readGuide, revision: 2 }), code('NOT_FOUND'));
     await assert.rejects(run({ action: 'rollback', skillId: id, revision: 99, expectedRevision: 1, reason: 'bad target' }), code('NOT_FOUND'));
     assert.equal((await run(readGuide)).revision, 1);
-    assert.deepEqual(await readdir(path.join(root, 'validation')), []);
+    assert.deepEqual(await readdir(path.join(root, 'validation')), [`${id}.json`]);
     assert.throws(() => createSkillService(), code('INVALID_ARGUMENT'));
     assert.throws(() => createSkillService({ directory: path.join(root, 'x') + '/../escape' }), code('UNSAFE_PATH'));
   });
   await test('malformed and invalid persisted states fail closed without overwrite', async () => {
     const directory = path.join(root, 'corrupt');
     const run = runAt('corrupt');
+    await create(run);
     await run(record());
     const filename = path.join(directory, `${id}.json`);
     const original = await readFile(filename, 'utf8');
     const invalidStates = ['{', '{}', 'null', original.replace('"status":"observed"', '"status":"verified"'),
-      original.replace('"revision":2', '"revision":9'), original.replace('"skillId":"homepage-operations"', '"skillId":"other"')];
+      original.replace('"revision":2', '"revision":9'), original.replace(`"skillId":"${id}"`, '"skillId":"other"')];
     for (const invalid of invalidStates) {
       await writeFile(filename, invalid);
       await assert.rejects(run(readGuide), code('CORRUPT_STATE'));
@@ -204,16 +215,18 @@ try {
   });
   await test('revision cap preserves all history and rejects overflow atomically', async () => {
     const run = runAt('revision-limit');
+    await create(run);
     for (let i = 1; i < limits.maxRevisions; i++) await run(revise(i, `Guide ${i}`));
     const filename = path.join(root, 'revision-limit', `${id}.json`);
     const before = await readFile(filename, 'utf8');
     await assert.rejects(run(revise(limits.maxRevisions)), code('LIMIT_EXCEEDED'));
     assert.equal(await readFile(filename, 'utf8'), before);
-    assert.equal((await run({ ...readGuide, revision: 1, limit: limits.maxReadGuideChars })).content, BUILTIN_SKILLS[0].guide);
+    assert.equal((await run({ ...readGuide, revision: 1, limit: limits.maxReadGuideChars })).content, guide);
     assert.deepEqual(await readdir(path.dirname(filename)), [`${id}.json`]);
   });
   await test('aggregate byte cap is bounded and leaves the previous revision intact', async () => {
     const run = runAt('byte-limit');
+    await create(run);
     let revision = 1;
     let rejected = false;
     while (revision < limits.maxRevisions) {
@@ -227,6 +240,18 @@ try {
     assert.ok(persisted.length <= limits.maxFileBytes);
     assert.equal(JSON.parse(persisted).snapshots.length, revision);
     assert.deepEqual(await readdir(path.dirname(filename)), [`${id}.json`]);
+  });
+  await test('skill library capacity is bounded', async () => {
+    const run = runAt('capacity');
+    for (let index = 0; index < limits.maxSkills + 1; index++) {
+      if (index === limits.maxSkills) {
+        await assert.rejects(create(run, `skill-${index}`), code('LIMIT_EXCEEDED'));
+        break;
+      }
+      await create(run, `skill-${index}`);
+    }
+    assert.equal((await run({ action: 'list', limit: limits.maxPageSize })).total, limits.maxSkills);
+    assert.deepEqual((await readdir(path.join(root, 'capacity'))).length, limits.maxSkills);
   });
   console.log(`\n${passed} skill core tests passed`);
 } finally {

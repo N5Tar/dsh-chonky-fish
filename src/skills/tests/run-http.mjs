@@ -13,6 +13,7 @@ let passed = 0
 async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name) }
 const run = (url, extra = {}) => handleSkillsRequest({ service, token, headers, url, ...extra })
 try {
+  await service.run({ action: 'create', skillId: 'demo-skill', title: '演示技能', description: '演示用测试技能', guide: '# 演示\n这是 HTTP 测试指南。\n' })
   await test('no credentials required and legacy headers are ignored', async () => {
     assert.equal((await handleSkillsRequest({ service, url: '/' })).status, 200)
     assert.equal((await run('/', { headers: {} })).status, 200)
@@ -27,9 +28,9 @@ try {
     assert.equal(list.status, 200)
     assert.deepEqual(list.body.data, await service.run({ action: 'list' }))
     assert.equal(list.body.enabled, true)
-    const response = await run('/?action=read&skillId=homepage-operations&limit=8000')
-    assert.deepEqual(response.body.data, await service.run({ action: 'read', skillId: 'homepage-operations', limit: 8000 }))
-    assert.match(response.body.data.content, /mingyue.novak.wang/)
+    const response = await run('/?action=read&skillId=demo-skill&limit=8000')
+    assert.deepEqual(response.body.data, await service.run({ action: 'read', skillId: 'demo-skill', limit: 8000 }))
+    assert.equal(response.body.data.content, '# 演示\n这是 HTTP 测试指南。\n')
     assert.equal((await run('/?action=read&skillId=missing')).status, 404)
   })
   await test('disabled tools do not hide read-only library', async () => {
@@ -37,12 +38,12 @@ try {
     assert.equal(response.status, 200); assert.equal(response.body.enabled, false)
   })
   await test('history and observations reflect tool-side updates', async () => {
-    await service.run({ action: 'record', skillId: 'homepage-operations', claim: '<script>not executable</script>' })
-    const experiences = await run('/?action=read&skillId=homepage-operations&section=experiences')
+    await service.run({ action: 'record', skillId: 'demo-skill', claim: '<script>not executable</script>' })
+    const experiences = await run('/?action=read&skillId=demo-skill&section=experiences')
     assert.equal(experiences.body.data.items[0].claim, '<script>not executable</script>')
-    const history = await run('/?action=history&skillId=homepage-operations')
+    const history = await run('/?action=history&skillId=demo-skill')
     assert.equal(history.body.data.total, 2)
-    assert.equal((await run('/?action=read&skillId=homepage-operations&section=experiences&revision=1')).body.data.total, 0)
+    assert.equal((await run('/?action=read&skillId=demo-skill&section=experiences&revision=1')).body.data.total, 0)
   })
   await test('unexpected errors do not reveal filesystem paths', async () => {
     const response = await run('/', { service: { run() { throw new Error('/private/secret') } } })

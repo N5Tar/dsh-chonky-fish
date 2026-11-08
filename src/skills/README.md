@@ -1,12 +1,12 @@
 # 大肥鱼 · 活动技能框架
 
-首个内置技能是 `homepage-operations`：大肥鱼自主运营自己的官网主页。本模块是知识和学习框架，不是网站部署器；没有授权状态、审批队列或定时器。
+技能库没有预置内容：只有本地用 `create` 创建过的技能才会出现在目录里。本模块是知识和学习框架，不是网站部署器；没有授权状态、审批队列或定时器。
 
 ## 已实现
 
 - `fish_skill`：list / read / history。
-- `fish_skill_learn`：record / revise / rollback。
-- 内置指南、观察经验、不可变历史快照、版本冲突检查、持久化和回退。
+- `fish_skill_learn`：create / record / revise / rollback。
+- 本地首版指南、观察经验、不可变历史快照、版本冲突检查、持久化和回退。
 - 全局工具注册，不限制 preset、工作区或调用会话；`skills.enabled` 仍是动态模块总开关（默认 true）。
 - 默认 read 章节为 guide；record 的 evidenceRefs 默认空数组。
 
@@ -14,7 +14,7 @@
 
 ## 存储
 
-运行数据存于 `$DSH_HOME/chonkyfish/skills/<skillId>.json`。首次读取使用内置版本；首次修改保存初始版与新版本，更新包不会覆盖已有自学内容。
+运行数据存于 `$DSH_HOME/chonkyfish/skills/<skillId>.json`。每个技能只有本地创建后才存在；`create` 写入首版，之后的 `record/revise/rollback` 追加新版本，更新插件不会覆盖已有内容。目录就是技能清单，不再有代码内置的初始技能。
 
 限制集中在 [资源规格](<../resources/spec.js>) 的 `SKILL_LIMITS`：64 个快照、128 条经验、512 KiB 文件；每次记录经验也产生新快照，总大小与版本数可能先达到上限。上限不自动删除历史；本版尚无归档操作。
 

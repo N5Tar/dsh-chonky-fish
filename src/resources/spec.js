@@ -69,6 +69,9 @@ export const LIMITS = Object.freeze({
 /** 活动技能库的有界存储与读取限制。 */
 export const SKILL_LIMITS = Object.freeze({
   maxFileBytes: 512 * 1024,
+  maxSkills: 128,
+  maxTitleChars: 200,
+  maxDescriptionChars: 1000,
   maxRevisions: 64,
   maxExperiences: 128,
   maxGuideChars: 16000,

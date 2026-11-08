@@ -1,14 +1,14 @@
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { BUILTIN_SKILLS } from './bundled.js';
 
 import { SKILL_LIMITS, VERSIONS } from '../resources/spec.js';
 export { SKILL_LIMITS };
 export const LIMITS = SKILL_LIMITS;
 const queues = new Map();
-const catalog = new Map(BUILTIN_SKILLS.map((skill) => [skill.id, skill]));
+const SKILL_ID = /^[a-z][a-z0-9-]{0,63}$/;
+const SKILL_FILE = /^([a-z][a-z0-9-]{0,63})\.json$/;
 const own = (object, key) => Object.hasOwn(object, key);
 function fail(code, message) {
   const error = new Error(message);
@@ -34,6 +34,10 @@ function keys(value, allowed) {
   if (!object(value) || Object.keys(value).some((key) => !allowed.includes(key))) {
     fail('INVALID_ARGUMENT', 'Unexpected argument or invalid object');
   }
+}
+function skillId(value) {
+  if (typeof value !== 'string' || !SKILL_ID.test(value)) fail('INVALID_ARGUMENT', 'Invalid skillId');
+  return value;
 }
 function paginate(items, offset, limit) {
   return { offset, limit, total: items.length,
@@ -72,19 +76,22 @@ async function checkFile(filename) {
     return true;
   } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
 }
-function seed(skill) {
-  return { format: VERSIONS.skills, skillId: skill.id, snapshots: [{ revision: 1, action: 'seed', reason: 'Bundled initial guide',
-    createdAt: '1970-01-01T00:00:00.000Z', guide: skill.guide, experiences: [] }] };
+/** First version of a skill. Nothing is preinstalled: a skill exists only once written locally. */
+function initialState({ id, title, description, guide, reason, now }) {
+  return { format: VERSIONS.skills, skillId: id, title, description,
+    snapshots: [{ revision: 1, action: 'create', reason, createdAt: now, guide, experiences: [] }] };
 }
 function validateState(state, id) {
   try {
-    keys(state, ['format', 'skillId', 'snapshots']);
+    keys(state, ['format', 'skillId', 'title', 'description', 'snapshots']);
     if (state.format !== VERSIONS.skills || state.skillId !== id || !Array.isArray(state.snapshots)) throw new Error();
+    text(state.title, LIMITS.maxTitleChars, 'title');
+    text(state.description, LIMITS.maxDescriptionChars, 'description');
     integer(state.snapshots.length, 1, LIMITS.maxRevisions, 'snapshots');
     state.snapshots.forEach((snapshot, index) => {
       keys(snapshot, ['revision', 'action', 'reason', 'createdAt', 'guide', 'experiences', 'sourceRevision']);
-      if (snapshot.revision !== index + 1 || !['seed', 'record', 'revise', 'rollback'].includes(snapshot.action)) throw new Error();
-      if ((index === 0) !== (snapshot.action === 'seed')) throw new Error();
+      if (snapshot.revision !== index + 1 || !['create', 'record', 'revise', 'rollback'].includes(snapshot.action)) throw new Error();
+      if ((index === 0) !== (snapshot.action === 'create')) throw new Error();
       text(snapshot.reason, LIMITS.maxReasonChars, 'reason');
       text(snapshot.guide, LIMITS.maxGuideChars, 'guide');
       if (typeof snapshot.createdAt !== 'string' || !Number.isFinite(Date.parse(snapshot.createdAt))) throw new Error();
@@ -109,8 +116,9 @@ function validateRefs(refs) {
   if (!Array.isArray(refs) || refs.length > LIMITS.maxEvidenceRefs) fail('INVALID_ARGUMENT', 'evidenceRefs must be a bounded string array');
   for (const ref of refs) text(ref, LIMITS.maxEvidenceRefChars, 'evidenceRefs item');
 }
-async function load(filename, skill) {
-  if (!await checkFile(filename)) return seed(skill);
+/** Returns null when the skill has never been written; no bundled fallback exists. */
+async function load(filename, id) {
+  if (!await checkFile(filename)) return null;
   let handle;
   try {
     handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -129,11 +137,25 @@ async function load(filename, skill) {
     let parsed;
     try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, length))); }
     catch { fail('CORRUPT_STATE', 'Skill state is not valid JSON'); }
-    return validateState(parsed, skill.id);
+    return validateState(parsed, id);
   } catch (error) {
     if (error.code === 'ELOOP') fail('UNSAFE_PATH', 'Symlink state file refused');
     throw error;
   } finally { await handle?.close(); }
+}
+/** Skill ids come from the storage directory only: the library is whatever has been written locally. */
+async function listIds(root) {
+  let names;
+  try { names = await readdir(root); }
+  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  const ids = [];
+  for (const name of names) {
+    const match = SKILL_FILE.exec(name);
+    if (match) ids.push(match[1]);
+  }
+  ids.sort();
+  if (ids.length > LIMITS.maxSkills) fail('LIMIT_EXCEEDED', 'Skill library capacity reached; archive unused skills before adding more');
+  return ids;
 }
 async function persist(directory, filename, state) {
   const data = JSON.stringify(state);
@@ -160,8 +182,9 @@ async function persist(directory, filename, state) {
     if (created) await unlink(temporary);
   }
 }
-function summary(skill, snapshot) {
-  return { skillId: skill.id, title: skill.title, description: skill.description, revision: snapshot.revision,
+function summary(state) {
+  const snapshot = state.snapshots.at(-1);
+  return { skillId: state.skillId, title: state.title, description: state.description, revision: snapshot.revision,
     sections: ['guide', 'experiences'], experienceCount: snapshot.experiences.length };
 }
 
@@ -175,7 +198,9 @@ export function createSkillService({ directory } = {}) {
       if (!object(args)) fail('INVALID_ARGUMENT', 'Expected an argument object');
       const allowed = {
         list: ['offset', 'limit'], read: ['skillId', 'section', 'revision', 'offset', 'limit'],
-        history: ['skillId', 'offset', 'limit'], record: ['skillId', 'claim', 'evidenceRefs', 'expectedRevision'],
+        history: ['skillId', 'offset', 'limit'],
+        create: ['skillId', 'title', 'description', 'guide', 'reason'],
+        record: ['skillId', 'claim', 'evidenceRefs', 'expectedRevision'],
         revise: ['skillId', 'section', 'content', 'reason', 'expectedRevision'],
         rollback: ['skillId', 'revision', 'reason', 'expectedRevision'],
       };
@@ -185,12 +210,7 @@ export function createSkillService({ directory } = {}) {
       const input = structuredClone(args);
       if (input.action === 'read') input.section ??= 'guide';
       if (input.action === 'record') input.evidenceRefs ??= [];
-      let skill;
-      if (input.action !== 'list') {
-        if (typeof input.skillId !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(input.skillId)) fail('INVALID_ARGUMENT', 'Invalid skillId');
-        skill = catalog.get(input.skillId);
-        if (!skill) fail('NOT_FOUND', 'Unknown skillId; use list to discover skills');
-      }
+      const id = input.action === 'list' ? null : skillId(input.skillId);
       return serialize(root, async () => {
         await ensureDirectory(root);
         const guideRead = input.action === 'read' && input.section === 'guide';
@@ -199,25 +219,39 @@ export function createSkillService({ directory } = {}) {
           guideRead ? LIMITS.maxReadGuideChars : LIMITS.maxPageSize, 'limit');
         if (input.action === 'list') {
           const entries = [];
-          for (const entry of catalog.values()) {
-            const state = await load(path.join(root, `${entry.id}.json`), entry);
-            entries.push(summary(entry, state.snapshots.at(-1)));
+          for (const entryId of await listIds(root)) {
+            const state = await load(path.join(root, `${entryId}.json`), entryId);
+            if (state) entries.push(summary(state));
           }
           return paginate(entries, offset, limit);
         }
-        const filename = path.join(root, `${skill.id}.json`);
-        const state = await load(filename, skill);
+        const filename = path.join(root, `${id}.json`);
+        if (input.action === 'create') {
+          const title = text(input.title, LIMITS.maxTitleChars, 'title');
+          const description = text(input.description, LIMITS.maxDescriptionChars, 'description');
+          const guide = text(input.guide, LIMITS.maxGuideChars, 'guide');
+          const reason = input.reason === undefined ? 'Initial guide written locally'
+            : text(input.reason, LIMITS.maxReasonChars, 'reason');
+          if (await checkFile(filename)) fail('CONFLICT', 'Skill already exists; use read then revise');
+          if ((await listIds(root)).length >= LIMITS.maxSkills) fail('LIMIT_EXCEEDED', 'Skill library capacity reached; archive unused skills first');
+          const state = initialState({ id, title, description, guide, reason, now: new Date().toISOString() });
+          await persist(root, filename, state);
+          return { skillId: id, revision: 1, action: 'create', title, description };
+        }
+        const state = await load(filename, id);
+        if (!state) fail('NOT_FOUND', 'Unknown skillId; use list to discover skills');
         const current = state.snapshots.at(-1);
         if (input.action === 'history') {
-          return { skillId: skill.id, revision: current.revision, ...paginate(state.snapshots.map(({ guide, experiences, ...metadata }) =>
-            ({ ...metadata, experienceCount: experiences.length })), offset, limit) };
+          return { skillId: id, title: state.title, revision: current.revision,
+            ...paginate(state.snapshots.map(({ guide, experiences, ...metadata }) =>
+              ({ ...metadata, experienceCount: experiences.length })), offset, limit) };
         }
         if (input.action === 'read') {
           if (!['guide', 'experiences'].includes(input.section)) fail('INVALID_ARGUMENT', 'section must be guide or experiences');
           const revision = input.revision === undefined ? current.revision : integer(input.revision, 1, Number.MAX_SAFE_INTEGER, 'revision');
           const snapshot = state.snapshots[revision - 1];
           if (!snapshot) fail('NOT_FOUND', 'Revision not found');
-          const base = { skillId: skill.id, revision, currentRevision: current.revision, section: input.section };
+          const base = { skillId: id, revision, currentRevision: current.revision, section: input.section };
           if (input.section === 'experiences') return { ...base, ...paginate(snapshot.experiences, offset, limit) };
           const { items, ...page } = paginate(snapshot.guide, offset, limit);
           return { ...base, ...page, content: items };
@@ -253,7 +287,7 @@ export function createSkillService({ directory } = {}) {
         }
         state.snapshots.push(snapshot);
         await persist(root, filename, state);
-        return { skillId: skill.id, revision: snapshot.revision, action: input.action,
+        return { skillId: id, revision: snapshot.revision, action: input.action,
           ...(experience ? { experience } : {}), ...(input.action === 'rollback' ? { sourceRevision: snapshot.sourceRevision } : {}) };
       });
     },

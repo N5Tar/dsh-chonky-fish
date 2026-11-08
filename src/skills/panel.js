@@ -8,7 +8,7 @@ var SKILLS_ZH = {
   skillsSource: '来源', skillsNoSource: '未记录来源', skillsInitial: '内置初始版本', skillsReadOnly: '只读技能库',
   skillsDisabled: '技能工具已关闭；仍可查看已有内容。', skillsError: '读取失败，请重试。',
   skillsMissing: '技能服务尚未加载，请更新 Host 插件并刷新页面。', skillsCorrupt: '技能数据损坏或路径异常，未重置内容，请检查存储。',
-  skillsPartial: '分页显示', skillsRetry: '重试', skillsSeed: '内置', skillsRecord: '记录经验', skillsRevise: '修订指南', skillsRollback: '恢复版本',
+  skillsPartial: '分页显示', skillsRetry: '重试', skillsCreate: '新建版本', skillsSeed: '内置', skillsRecord: '记录经验', skillsRevise: '修订指南', skillsRollback: '恢复版本',
 }
 var SKILLS_EN = {
   navSkills: 'Skills', skillsSubtitle: 'Methods and experience', skillsIntro: 'Explore what ChonkyFish can do and what she has learned. Viewing this page never publishes the website.',
@@ -19,7 +19,7 @@ var SKILLS_EN = {
   skillsSource: 'Sources', skillsNoSource: 'No sources recorded', skillsInitial: 'Bundled initial version', skillsReadOnly: 'Read-only library',
   skillsDisabled: 'Skill tools are disabled; saved content remains readable.', skillsError: 'Unable to load. Please retry.',
   skillsMissing: 'Skills service is unavailable. Update the Host plugin and refresh.', skillsCorrupt: 'Skill data or storage path is invalid. Nothing was reset.',
-  skillsPartial: 'Paged content', skillsRetry: 'Retry', skillsSeed: 'Bundled', skillsRecord: 'Observation', skillsRevise: 'Guide revision', skillsRollback: 'Restore version',
+  skillsPartial: 'Paged content', skillsRetry: 'Retry', skillsCreate: 'Created', skillsSeed: 'Bundled', skillsRecord: 'Observation', skillsRevise: 'Guide revision', skillsRollback: 'Restore version',
 }
 Object.assign(zh, SKILLS_ZH)
 Object.assign(en, SKILLS_EN)
@@ -78,7 +78,7 @@ function createSkillsPage(t) {
     function reset() { setView({ tab: view.tab, offset: 0 }); setRefresh(function (n) { return n + 1 }) }
     function errorBox(key) { return h('div', { role: 'alert', className: 'error' }, h('p', null, t(Object.hasOwn(SKILLS_ZH, key) ? key : 'skillsError')), h('button', { onClick: reset }, t('skillsRetry'))) }
     var skill = list && list.data.items.find(function (s) { return s.skillId === selected })
-    var words = { seed: 'skillsSeed', record: 'skillsRecord', revise: 'skillsRevise', rollback: 'skillsRollback' }
+    var words = { create: 'skillsCreate', seed: 'skillsSeed', record: 'skillsRecord', revise: 'skillsRevise', rollback: 'skillsRollback' }
     var content = null
     if (detail && view.tab === 'guide') content = h('pre', null, detail.content)
     if (detail && view.tab === 'experiences') content = detail.items.length ? detail.items.map(function (item) {
