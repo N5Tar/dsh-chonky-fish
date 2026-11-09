@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises';
+import { link, lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -17,6 +17,8 @@ const ACTION_FIELDS = Object.freeze({
   list: ['offset', 'limit'],
   read: ['skillId', 'section', 'revision', 'offset', 'limit'],
   history: ['skillId', 'offset', 'limit'],
+  export: ['skillId'],
+  import: ['archive'],
   create: ['skillId', 'title', 'description', 'guide', 'reason'],
   record: ['skillId', 'claim', 'evidenceRefs', 'expectedRevision'],
   revise: ['skillId', 'section', 'content', 'reason', 'expectedRevision'],
@@ -207,7 +209,7 @@ async function listIds(root) {
   if (ids.length > LIMITS.maxSkills) fail('LIMIT_EXCEEDED', 'Skill library capacity reached; archive unused skills before adding more');
   return ids;
 }
-async function persist(directory, filename, state) {
+async function persist(directory, filename, state, exclusive = false) {
   const data = JSON.stringify(state);
   if (Buffer.byteLength(data) > LIMITS.maxFileBytes) fail('LIMIT_EXCEEDED', 'State byte limit reached; no changes saved');
   await ensureDirectory(directory);
@@ -225,7 +227,12 @@ async function persist(directory, filename, state) {
     handle = undefined;
     await ensureDirectory(directory);
     await checkFile(filename);
-    await rename(temporary, filename);
+    if (exclusive) {
+      // Publish only if absent: unlike rename, link never replaces a racing writer.
+      try { await link(temporary, filename); }
+      catch (error) { if (error.code === 'EEXIST') fail('CONFLICT', 'Skill already exists; import never overwrites'); throw error; }
+      await unlink(temporary);
+    } else await rename(temporary, filename);
     created = false;
   } finally {
     await handle?.close();
@@ -250,15 +257,31 @@ export function createSkillService({ directory } = {}) {
       // Accept placeholder fields belonging to sibling actions; ignore them below.
       keys(args, KNOWN_FIELDS);
       // Copy before queuing so caller mutation cannot change validated arguments.
-      const input = structuredClone(args);
+      let input;
+      try { input = structuredClone(args); }
+      catch { fail('INVALID_ARGUMENT', 'Arguments must contain cloneable JSON values'); }
       if (input.action === 'read') input.section ??= 'guide';
       if (input.action === 'record') input.evidenceRefs ??= [];
-      const id = input.action === 'list' ? null : skillId(input.skillId);
+      let archive;
+      if (input.action === 'import') {
+        // The archive owns its id; sibling action placeholders are ignored.
+        if (!object(input.archive)) fail('INVALID_ARGUMENT', 'archive must be a single skill JSON object');
+        let encoded;
+        try { encoded = JSON.stringify(input.archive); }
+        catch { fail('INVALID_ARGUMENT', 'archive must be JSON'); }
+        if (Buffer.byteLength(encoded) > LIMITS.maxFileBytes) fail('LIMIT_EXCEEDED', 'Archive exceeds the byte limit');
+        archive = input.archive;
+        skillId(archive.skillId);
+        try { validateState(archive, archive.skillId); }
+        catch { fail('INVALID_ARGUMENT', 'Invalid skill archive; no changes saved'); }
+      }
+      const id = input.action === 'list' ? null : skillId(archive ? archive.skillId : input.skillId);
       return serialize(root, async () => {
         await ensureDirectory(root);
         const guideRead = input.action === 'read' && input.section === 'guide';
-        const offset = integer(input.offset ?? 0, 0, Number.MAX_SAFE_INTEGER, 'offset');
-        const limit = integer(input.limit ?? (guideRead ? LIMITS.defaultGuideChars : LIMITS.defaultPageSize), 1,
+        const transfer = input.action === 'import' || input.action === 'export';
+        const offset = transfer ? 0 : integer(input.offset ?? 0, 0, Number.MAX_SAFE_INTEGER, 'offset');
+        const limit = transfer ? LIMITS.defaultPageSize : integer(input.limit ?? (guideRead ? LIMITS.defaultGuideChars : LIMITS.defaultPageSize), 1,
           guideRead ? LIMITS.maxReadGuideChars : LIMITS.maxPageSize, 'limit');
         if (input.action === 'list') {
           const entries = [];
@@ -269,6 +292,12 @@ export function createSkillService({ directory } = {}) {
           return paginate(entries, offset, limit);
         }
         const filename = path.join(root, `${id}.json`);
+        if (input.action === 'import') {
+          if (await checkFile(filename)) fail('CONFLICT', 'Skill already exists; import never overwrites');
+          if ((await listIds(root)).length >= LIMITS.maxSkills) fail('LIMIT_EXCEEDED', 'Skill library capacity reached');
+          await persist(root, filename, archive, true);
+          return { ...summary(archive), action: 'import', revisionCount: archive.snapshots.length };
+        }
         if (input.action === 'create') {
           const title = text(input.title, LIMITS.maxTitleChars, 'title');
           const description = text(input.description, LIMITS.maxDescriptionChars, 'description');
@@ -283,6 +312,7 @@ export function createSkillService({ directory } = {}) {
         }
         const state = await load(filename, id);
         if (!state) fail('NOT_FOUND', 'Unknown skillId; use list to discover skills');
+        if (input.action === 'export') return state;
         const current = state.snapshots.at(-1);
         if (input.action === 'history') {
           return { skillId: id, title: state.title, revision: current.revision,

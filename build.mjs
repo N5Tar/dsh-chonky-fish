@@ -902,7 +902,7 @@ ${skillsPanel}
             name: 'main',
             key: panel.id,
             locale: NS,
-          }, panel.view === 'abs' ? AbsLabPage : panel.view === 'skills' ? createSkillsPage(t) : createPanelPage(panel.view))
+          }, panel.view === 'abs' ? AbsLabPage : panel.view === 'skills' ? createSafeSkillsPage(t) : createPanelPage(panel.view))
         })
       })
 

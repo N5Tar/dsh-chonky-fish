@@ -335,6 +335,73 @@ try {
       await assert.rejects(runAt('legacy-corrupt')({ action: 'list' }), code('CORRUPT_STATE'));
     }
   });
+  await test('single skill archive round-trips all revisions, guides and observations', async () => {
+    const source = runAt('export-source');
+    await create(source);
+    await source(record('经验 <script>纯文本</script>'));
+    await source(revise(2, '历史指南 😀'));
+    await source({ action: 'rollback', skillId: id, revision: 1, expectedRevision: 3, reason: '保留回退来源' });
+    const archive = await source({ action: 'export', skillId: id });
+    assert.equal(archive.snapshots.length, 4);
+    assert.equal(archive.snapshots[1].experiences[0].claim, '经验 <script>纯文本</script>');
+    const target = runAt('import-target');
+    const result = await target({ action: 'import', archive });
+    assert.equal(result.skillId, id);
+    assert.equal(result.revisionCount, 4);
+    assert.deepEqual(await target({ action: 'export', skillId: id }), archive);
+    assert.deepEqual(JSON.parse(await readFile(path.join(root, 'import-target', `${id}.json`))), archive);
+    await assert.rejects(target({ action: 'import', archive }), code('CONFLICT'));
+    assert.deepEqual(await target({ action: 'export', skillId: id }), archive);
+    archive.snapshots[0].guide = 'caller mutation';
+    assert.equal((await target({ ...readGuide, revision: 1 })).content, guide);
+    await assert.rejects(source({ action: 'export', skillId: 'absent' }), code('NOT_FOUND'));
+  });
+  await test('archive validation rejects malformed, oversized, unsafe and batch imports without files', async () => {
+    const source = runAt('archive-fixture');
+    await create(source);
+    await source(record());
+    const archive = await source({ action: 'export', skillId: id });
+    const run = runAt('invalid-imports');
+    const variants = [null, [], [archive], {}, { ...archive, format: 99 }, { ...archive, skillId: '../escape' },
+      { ...archive, extra: true }, { ...archive, snapshots: [] }, { ...archive, title: '' },
+      { ...archive, snapshots: [{ ...archive.snapshots[0], revision: 2 }] },
+      { ...archive, snapshots: [{ ...archive.snapshots[0], guide: 'x'.repeat(limits.maxGuideChars + 1) }] },
+      { ...archive, snapshots: [{ ...archive.snapshots[0], createdAt: 'invalid' }] },
+      { ...archive, snapshots: [archive.snapshots[0], { ...archive.snapshots[1], experiences: [{ ...archive.snapshots[1].experiences[0], status: 'verified' }] }] },
+      { ...archive, snapshots: [archive.snapshots[0], { ...archive.snapshots[1], action: 'rollback', sourceRevision: 2 }] },
+    ];
+    for (const value of variants) await assert.rejects(run({ action: 'import', archive: value }), code('INVALID_ARGUMENT'));
+    await assert.rejects(run({ action: 'import', archive, overwrite: true }), code('INVALID_ARGUMENT'));
+    await assert.rejects(run({ action: 'import', archive: { ...archive, title: '界'.repeat(limits.maxFileBytes) } }), code('LIMIT_EXCEEDED'));
+    assert.equal((await run({ action: 'list' })).total, 0);
+    assert.deepEqual(await readdir(path.join(root, 'invalid-imports')), []);
+    const filename = path.join(root, 'invalid-imports', `${id}.json`);
+    await writeFile(filename, '{broken');
+    await assert.rejects(run({ action: 'import', archive }), code('CONFLICT'));
+    assert.equal(await readFile(filename, 'utf8'), '{broken');
+  });
+  await test('transfer actions ignore sibling placeholders without changing archive identity', async () => {
+    const source = runAt('archive-fixture');
+    const archive = await source({ action: 'export', skillId: id });
+    assert.deepEqual(await source({ action: 'export', skillId: id, section: 'guide', revision: 1, offset: 0, limit: 10, archive: {}, title: '', description: '', guide: '', claim: '', content: '', reason: '', evidenceRefs: [], expectedRevision: 1 }), archive);
+    const target = runAt('import-placeholders');
+    const imported = await target({ action: 'import', archive, skillId: 'ignored-placeholder', title: '', description: '', guide: '', claim: '', evidenceRefs: [], expectedRevision: 1, section: 'guide', content: '', reason: '', revision: 1 });
+    assert.equal(imported.skillId, id);
+    assert.deepEqual(await target({ action: 'export', skillId: id }), archive);
+    await assert.rejects(source({ action: 'export', skillId: id, batch: true }), code('INVALID_ARGUMENT'));
+    await assert.rejects(target({ action: 'import', archive, overwrite: false }), code('INVALID_ARGUMENT'));
+  });
+  await test('concurrent imports publish once and preserve capacity limits', async () => {
+    const source = runAt('archive-fixture');
+    const archive = await source({ action: 'export', skillId: id });
+    const attempts = await Promise.allSettled([runAt('import-race'), runAt('import-race')].map(run => run({ action: 'import', archive })));
+    assert.equal(attempts.filter(value => value.status === 'fulfilled').length, 1);
+    assert.equal(attempts.find(value => value.status === 'rejected').reason.code, 'CONFLICT');
+    assert.deepEqual(await readdir(path.join(root, 'import-race')), [`${id}.json`]);
+    await assert.rejects(runAt('capacity')({ action: 'import', archive }), code('LIMIT_EXCEEDED'));
+    await assert.rejects(runAt('unsafe-file')({ action: 'import', archive }), code('UNSAFE_PATH'));
+    assert.equal(await readFile(path.join(root, 'outside', 'target'), 'utf8'), 'untouched');
+  });
   console.log(`\n${passed} skill core tests passed`);
 } finally {
   // Verify absolute cleanup target is exactly our newly-created test directory.
