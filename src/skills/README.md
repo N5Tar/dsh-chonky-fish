@@ -16,6 +16,8 @@
 
 运行数据存于 `$DSH_HOME/chonkyfish/skills/<skillId>.json`。每个技能只有本地创建后才存在；`create` 写入首版，之后的 `record/revise/rollback` 追加新版本，更新插件不会覆盖已有内容。目录就是技能清单，不再有代码内置的初始技能。
 
+旧版（内置 seed 时代）的 `<skillId>.json` 只有 `{format, skillId, snapshots}`，首版 action 为 `seed`。当前版本在读取时会**原地迁移**：从首版指南推导标题/描述（无标题时回退到 skillId），把 `seed` 改为 `create`，所有快照、经验和修订内容原样保留；迁移失败也只按内存中的升级结果提供读取，不重置文件。若旧文件本身结构仍然非法（版本号错乱、缺修订、空指南等），仍然 fail-closed 报 `CORRUPT_STATE`。
+
 限制集中在 [资源规格](<../resources/spec.js>) 的 `SKILL_LIMITS`：64 个快照、128 条经验、512 KiB 文件；每次记录经验也产生新快照，总大小与版本数可能先达到上限。上限不自动删除历史；本版尚无归档操作。
 
 `revise/rollback` 需要当前 expectedRevision。回退是用历史的指南与经验创建一个新快照，不是删除版本，也不是回滚线上网站。经验 status 固定为 observed，不宣称已验证结论。

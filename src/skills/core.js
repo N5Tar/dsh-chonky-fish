@@ -8,6 +8,22 @@ export { SKILL_LIMITS };
 export const LIMITS = SKILL_LIMITS;
 const queues = new Map();
 const SKILL_ID = /^[a-z][a-z0-9-]{0,63}$/;
+/**
+ * Per-action fields. The tool schema advertises every field, so a caller may
+ * include another action's field as an empty placeholder; those are accepted
+ * and ignored, while fields outside this complete set still fail.
+ */
+const ACTION_FIELDS = Object.freeze({
+  list: ['offset', 'limit'],
+  read: ['skillId', 'section', 'revision', 'offset', 'limit'],
+  history: ['skillId', 'offset', 'limit'],
+  create: ['skillId', 'title', 'description', 'guide', 'reason'],
+  record: ['skillId', 'claim', 'evidenceRefs', 'expectedRevision'],
+  revise: ['skillId', 'section', 'content', 'reason', 'expectedRevision'],
+  rollback: ['skillId', 'revision', 'reason', 'expectedRevision'],
+});
+const KNOWN_FIELDS = Object.freeze(['action', ...new Set(Object.values(ACTION_FIELDS).flat())]);
+
 const SKILL_FILE = /^([a-z][a-z0-9-]{0,63})\.json$/;
 const own = (object, key) => Object.hasOwn(object, key);
 function fail(code, message) {
@@ -31,9 +47,9 @@ function integer(value, minimum, maximum, name) {
   return value;
 }
 function keys(value, allowed) {
-  if (!object(value) || Object.keys(value).some((key) => !allowed.includes(key))) {
-    fail('INVALID_ARGUMENT', 'Unexpected argument or invalid object');
-  }
+  if (!object(value)) fail('INVALID_ARGUMENT', 'Expected an argument object');
+  const unexpected = Object.keys(value).filter((key) => !allowed.includes(key));
+  if (unexpected.length) fail('INVALID_ARGUMENT', `Unexpected argument: ${unexpected.join(', ')}`);
 }
 function skillId(value) {
   if (typeof value !== 'string' || !SKILL_ID.test(value)) fail('INVALID_ARGUMENT', 'Invalid skillId');
@@ -77,6 +93,33 @@ async function checkFile(filename) {
   } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
 }
 /** First version of a skill. Nothing is preinstalled: a skill exists only once written locally. */
+/**
+ * Legacy state (before local `create`) had `{format, skillId, snapshots}` and a
+ * first snapshot with action `seed`. Upgrade it in memory so existing content is
+ * never dropped: derive title/description from the original guide and rename the
+ * seed action. Everything else is preserved verbatim.
+ */
+function migrateLegacyState(state, id) {
+  if (!object(state) || state.title !== undefined || state.description !== undefined) return { state, migrated: false };
+  if (!Array.isArray(state.snapshots) || state.snapshots.length === 0) return { state, migrated: false };
+  const first = state.snapshots[0];
+  if (!object(first) || first.action !== 'seed' || typeof first.guide !== 'string') return { state, migrated: false };
+  const lines = first.guide.split(/\r?\n/).map((line) => line.trim());
+  const heading = lines.find((line) => /^#{1,6}\s+\S/.test(line));
+  const paragraph = lines.find((line) => line !== '' && !/^#{1,6}\s/.test(line) && !/^[-*+]\s/.test(line));
+  const title = (heading ? heading.replace(/^#{1,6}\s+/, '') : '').slice(0, LIMITS.maxTitleChars) || id;
+  const description = (paragraph || '本地保存的活动技能').slice(0, LIMITS.maxDescriptionChars);
+  return {
+    migrated: true,
+    state: {
+      ...state,
+      format: VERSIONS.skills,
+      title,
+      description,
+      snapshots: state.snapshots.map((snapshot, index) => index === 0 ? { ...snapshot, action: 'create' } : snapshot),
+    },
+  };
+}
 function initialState({ id, title, description, guide, reason, now }) {
   return { format: VERSIONS.skills, skillId: id, title, description,
     snapshots: [{ revision: 1, action: 'create', reason, createdAt: now, guide, experiences: [] }] };
@@ -137,7 +180,14 @@ async function load(filename, id) {
     let parsed;
     try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, length))); }
     catch { fail('CORRUPT_STATE', 'Skill state is not valid JSON'); }
-    return validateState(parsed, id);
+    const legacy = migrateLegacyState(parsed, id);
+    const state = validateState(legacy.state, id);
+    if (legacy.migrated) {
+      // Heal the stored file once; if that fails, keep serving the upgraded
+      // in-memory state and retry on the next write. Never reset user content.
+      try { await persist(path.dirname(filename), filename, state); } catch {}
+    }
+    return state;
   } catch (error) {
     if (error.code === 'ELOOP') fail('UNSAFE_PATH', 'Symlink state file refused');
     throw error;
@@ -196,16 +246,9 @@ export function createSkillService({ directory } = {}) {
   return {
     async run(args) {
       if (!object(args)) fail('INVALID_ARGUMENT', 'Expected an argument object');
-      const allowed = {
-        list: ['offset', 'limit'], read: ['skillId', 'section', 'revision', 'offset', 'limit'],
-        history: ['skillId', 'offset', 'limit'],
-        create: ['skillId', 'title', 'description', 'guide', 'reason'],
-        record: ['skillId', 'claim', 'evidenceRefs', 'expectedRevision'],
-        revise: ['skillId', 'section', 'content', 'reason', 'expectedRevision'],
-        rollback: ['skillId', 'revision', 'reason', 'expectedRevision'],
-      };
-      if (!own(allowed, args.action)) fail('INVALID_ARGUMENT', 'Unknown skill action');
-      keys(args, ['action', ...allowed[args.action]]);
+      if (!own(ACTION_FIELDS, args.action)) fail('INVALID_ARGUMENT', 'Unknown skill action');
+      // Accept placeholder fields belonging to sibling actions; ignore them below.
+      keys(args, KNOWN_FIELDS);
       // Copy before queuing so caller mutation cannot change validated arguments.
       const input = structuredClone(args);
       if (input.action === 'read') input.section ??= 'guide';

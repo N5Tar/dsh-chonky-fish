@@ -37,8 +37,9 @@ export function createSkillTools(service, { isAvailable = () => true, ready = Pr
     } catch (error) {
       const known = ['INVALID_ARGUMENT', 'NOT_FOUND', 'CONFLICT', 'LIMIT_EXCEEDED', 'CORRUPT_STATE', 'UNSAFE_PATH']
       const code = known.includes(error?.code) ? error.code : 'SKILL_STORAGE_ERROR'
+      const detail = typeof error?.message === 'string' ? error.message.slice(0, 200) : ''
       const messages = {
-        INVALID_ARGUMENT: '参数不合法，请按工具参数说明修正。',
+        INVALID_ARGUMENT: detail ? '参数不合法：' + detail : '参数不合法，请按工具参数说明修正。',
         NOT_FOUND: '技能、章节或版本不存在，请先 list/read/history。',
         CONFLICT: '技能版本已变化或技能已存在，请重新 read/list 后决定 create 还是 revise。',
         LIMIT_EXCEEDED: '内容或技能库容量达到上限，请缩小输入或由维护者归档后重试。',

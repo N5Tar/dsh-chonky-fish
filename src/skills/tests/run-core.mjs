@@ -169,6 +169,24 @@ try {
     assert.throws(() => createSkillService(), code('INVALID_ARGUMENT'));
     assert.throws(() => createSkillService({ directory: path.join(root, 'x') + '/../escape' }), code('UNSAFE_PATH'));
   });
+  await test('create accepts placeholder fields from sibling actions but keeps rejecting unknown ones', async () => {
+    const run = runAt('create-placeholders');
+    const payload = {
+      section: 'guide', action: 'create', skillId: 'tieba-browsing',
+      title: '逛贴吧（资料学习版）', description: '依据官方帮助学习浏览、搜索、关注与收藏。',
+      guide: '# 逛贴吧\n\n资料学习，未实操验证。',
+      claim: '', evidenceRefs: [], expectedRevision: 1, content: '', reason: '保存已查阅资料', revision: 1,
+    };
+    const created = await run(payload);
+    assert.equal(created.skillId, 'tieba-browsing');
+    assert.equal(created.revision, 1);
+    const listed = await run({ action: 'list' });
+    assert.equal(listed.items[0].title, '逛贴吧（资料学习版）');
+    assert.equal((await run({ action: 'read', skillId: 'tieba-browsing' })).content, payload.guide);
+    // A field outside every action's set is still rejected.
+    await assert.rejects(run({ ...payload, unknownThing: true }), code('INVALID_ARGUMENT'));
+    assert.equal((await run({ action: 'list' })).total, 1);
+  });
   await test('malformed and invalid persisted states fail closed without overwrite', async () => {
     const directory = path.join(root, 'corrupt');
     const run = runAt('corrupt');
@@ -252,6 +270,70 @@ try {
     }
     assert.equal((await run({ action: 'list', limit: limits.maxPageSize })).total, limits.maxSkills);
     assert.deepEqual((await readdir(path.join(root, 'capacity'))).length, limits.maxSkills);
+  });
+  await test('legacy seed state is migrated in place without losing content', async () => {
+    const directory = path.join(root, 'legacy');
+    await mkdir(directory);
+    const legacyGuide = '# 旧版技能\n\n这是旧版指南正文。\n';
+    const legacy = {
+      format: 1,
+      skillId: id,
+      snapshots: [
+        { revision: 1, action: 'seed', reason: 'Bundled initial guide', createdAt: '2026-11-07T09:21:00.000Z', guide: legacyGuide, experiences: [] },
+        { revision: 2, action: 'record', reason: 'Recorded observation (not verified)', createdAt: '2026-11-07T09:22:00.000Z', guide: legacyGuide,
+          experiences: [{ id: 'experience-2', claim: '旧经验', evidenceRefs: ['local:old'], status: 'observed', createdAt: '2026-11-07T09:22:00.000Z' }] },
+      ],
+    };
+    const filename = path.join(directory, `${id}.json`);
+    await writeFile(filename, JSON.stringify(legacy));
+    const run = runAt('legacy');
+    const listed = await run({ action: 'list' });
+    assert.equal(listed.total, 1);
+    assert.equal(listed.items[0].title, '旧版技能');
+    assert.equal(listed.items[0].description, '这是旧版指南正文。');
+    assert.equal(listed.items[0].revision, 2);
+    assert.equal(listed.items[0].experienceCount, 1);
+    const history = await run({ action: 'history', skillId: id });
+    assert.deepEqual(history.items.map((item) => item.action), ['create', 'record']);
+    assert.equal((await run({ ...readGuide, revision: 1 })).content, legacyGuide);
+    assert.equal((await run({ ...readGuide, section: 'experiences' })).items[0].claim, '旧经验');
+    // Migration healed the file and kept every snapshot.
+    const healed = JSON.parse(await readFile(filename, 'utf8'));
+    assert.equal(healed.title, '旧版技能');
+    assert.equal(healed.description, '这是旧版指南正文。');
+    assert.equal(healed.snapshots.length, 2);
+    assert.equal(healed.snapshots[0].action, 'create');
+    assert.equal(healed.snapshots[1].experiences.length, 1);
+    // A subsequent write keeps the upgraded shape.
+    await run(record('迁移后经验'));
+    const after = JSON.parse(await readFile(filename, 'utf8'));
+    assert.equal(after.snapshots.length, 3);
+    assert.equal(after.snapshots[2].experiences.length, 2);
+  });
+  await test('legacy state without a heading falls back to the skill id', async () => {
+    const directory = path.join(root, 'legacy-no-heading');
+    await mkdir(directory);
+    await writeFile(path.join(directory, `${id}.json`), JSON.stringify({
+      format: 1, skillId: id,
+      snapshots: [{ revision: 1, action: 'seed', reason: '旧版', createdAt: '2026-11-07T09:21:00.000Z', guide: '没有标题的正文', experiences: [] }],
+    }));
+    const listed = await runAt('legacy-no-heading')({ action: 'list' });
+    assert.equal(listed.items[0].title, id);
+    assert.equal(listed.items[0].description, '没有标题的正文');
+  });
+  await test('legacy migration does not weaken corruption checks', async () => {
+    const directory = path.join(root, 'legacy-corrupt');
+    await mkdir(directory);
+    const base = { format: 1, skillId: id, snapshots: [{ revision: 1, action: 'seed', reason: '旧版', createdAt: '2026-11-07T09:21:00.000Z', guide: '# 标题', experiences: [] }] };
+    for (const broken of [
+      { ...base, snapshots: [{ ...base.snapshots[0], action: 'record' }] },
+      { ...base, snapshots: [{ ...base.snapshots[0], revision: 2 }] },
+      { ...base, skillId: 'other-skill' },
+      { ...base, snapshots: [{ ...base.snapshots[0], guide: '' }] },
+    ]) {
+      await writeFile(path.join(directory, `${id}.json`), JSON.stringify(broken));
+      await assert.rejects(runAt('legacy-corrupt')({ action: 'list' }), code('CORRUPT_STATE'));
+    }
   });
   console.log(`\n${passed} skill core tests passed`);
 } finally {
