@@ -1,0 +1,43 @@
+{
+  "source": "original.gif",
+  "sha256": "b15b7914f9da6e9c3d9bfec8a89507b97dd9fa38a4ebbf5647e2657033381934",
+  "width": 362,
+  "height": 362,
+  "idleFrame": 7,
+  "waitMinMs": 2000,
+  "waitMaxMs": 5000,
+  "frames": [
+    {
+      "file": "blink-00.webp",
+      "durationMs": 30
+    },
+    {
+      "file": "blink-01.webp",
+      "durationMs": 30
+    },
+    {
+      "file": "blink-02.webp",
+      "durationMs": 30
+    },
+    {
+      "file": "blink-03.webp",
+      "durationMs": 30
+    },
+    {
+      "file": "blink-04.webp",
+      "durationMs": 30
+    },
+    {
+      "file": "blink-05.webp",
+      "durationMs": 30
+    },
+    {
+      "file": "blink-06.webp",
+      "durationMs": 30
+    },
+    {
+      "file": "blink-07.webp",
+      "durationMs": 3000
+    }
+  ]
+}

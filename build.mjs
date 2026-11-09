@@ -141,6 +141,14 @@ css += `
 const runtime = readFileSync(join(here, 'src/runtime.js'), 'utf8')
 const absLab = readFileSync(join(here, 'src/abs/lab.js'), 'utf8')
 const skillsPanel = readFileSync(join(here, 'src/skills/panel.js'), 'utf8')
+const avatarPlayer = readFileSync(join(here, 'src/avatar/player.js'), 'utf8')
+const avatarWidget = readFileSync(join(here, 'src/avatar/widget.js'), 'utf8')
+const avatarAsset = JSON.parse(readFileSync(join(here, 'src/avatar/assets/manifest.json'), 'utf8'))
+if (avatarAsset.idleFrame !== avatarAsset.frames.length - 1 || avatarAsset.frames.length < 2) throw new Error('Invalid avatar frame manifest')
+avatarAsset.frames = avatarAsset.frames.map(frame => {
+  if (!/^blink-\d{2}\.webp$/.test(frame.file) || !(frame.durationMs > 0)) throw new Error('Invalid avatar frame')
+  return { durationMs: frame.durationMs, src: 'data:image/webp;base64,' + readFileSync(join(here, 'src/avatar/assets', frame.file)).toString('base64') }
+})
 
 /* -------------------------------------------------------------- client.js */
 
@@ -320,6 +328,9 @@ window.__ModuleLoader__.load({
 ${runtime}
 ${absLab}
 ${skillsPanel}
+    var AVATAR_ASSET = ${JSON.stringify(avatarAsset)}
+${avatarPlayer}
+${avatarWidget}
 
     /**
      * Bridge between the fish panel and a real DSH Session.
@@ -896,6 +907,11 @@ ${skillsPanel}
 
       // One flat sidebar entry per destination (the shipped sidebar has no
       // submenu API): each registration's id also addresses its main panel.
+      // Global additive overlay: survives panel switches and stays click-through.
+      var AvatarWidget = createAvatarComponent(t)
+      ctx.slots.inject('shell.overlay', function () {
+        return ctx.slots.register({ name: 'shell.overlay', id: 'chonkyfish-avatar', order: -100, locale: NS }, AvatarWidget)
+      })
       ctx.slots.inject('main', function () {
         return PANELS.map(function (panel) {
           return ctx.slots.register({
