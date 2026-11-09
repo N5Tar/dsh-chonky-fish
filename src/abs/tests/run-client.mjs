@@ -111,7 +111,7 @@ assert.equal(display.describeAbsNeeds({ drives: { social: { satisfaction: .8, se
 display.h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat() })
 const reviewState = {
   mode: 'shadow',
-  reviewPreview: { text: '【内部状态记录 · 非主人发言】\n\n### 自身精神状态审查\n\n社交方面：满足程度低于平常的满足水平。' },
+  reviewPreview: { text: '【大肥鱼的内心独白 · 非主人发言】\n\n唔……我有一点想和主人说说话。' },
   lastReview: { status: 'delivered', at: '2026-11-07T03:00:00Z', reason: null },
   clockView: { timeScale: 1, paused: false },
   drives: { social: { satisfaction: .55, setpoint: .75 }, curiosity: { satisfaction: .35, setpoint: .7 } },
@@ -120,6 +120,8 @@ const reviewState = {
 }
 const reviewTree = JSON.stringify(display.AbsReviewPanel({ state: reviewState, busy: false, onAction() {} }))
 assert.match(reviewTree, /自身精神状态审查/)
+assert.match(reviewTree, /大肥鱼的内心独白/)
+assert.match(reviewTree, /唔……我有一点想和主人说说话/)
 assert.match(reviewTree, /接纳不等于已经行动/)
 assert.match(reviewTree, /手动运行一次审查/)
 const observationsTree = JSON.stringify(display.AbsObservationsPanel({ state: reviewState }))

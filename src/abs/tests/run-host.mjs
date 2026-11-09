@@ -4,9 +4,11 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 import { createAbsHost } from '../host.js'
+import { renderSelfReview } from '../review.js'
+import { createState } from '../core.js'
 
 const now = 1804471200000
-const REVIEW = '【内部状态记录 · 非主人发言】\n\n### 自身精神状态审查\n\n社交方面：满足程度低于平常的满足水平。'
+const REVIEW = renderSelfReview({ state: createState(now) })
 
 function fixture({ flush = true, idle = true, activeSessionId = 'fish' } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'chonkyfish-abs-host-'))
