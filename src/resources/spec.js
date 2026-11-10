@@ -46,6 +46,7 @@ export const FILES = Object.freeze({
   skills: 'skills',
   perception: 'perception',
   perceptionDatabase: 'activity.db',
+  perceptionPreferences: 'collection-preference.json',
   events: 'events.db',
 })
 

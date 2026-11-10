@@ -186,7 +186,7 @@ test('发布预设在面板补充后拼接模块，保留 complete 模式', () =
   }
 })
 
-test('各模块说明包含对应工具名称和常用操作', () => {
+test('各项能力说明包含对应工具名称和常用操作', () => {
   const text = createModulePrompt({ readContext: () => ({ profileDirectory: '/tmp/profile' }) }).read()
   const expected = [
     ['我的个人资料', ['glob', 'read']],
@@ -200,6 +200,31 @@ test('各模块说明包含对应工具名称和常用操作', () => {
     for (const name of names) assert.ok(section.includes(name), `${title}: ${name}`)
   }
   assert.equal(text.includes('ABS'), false)
+})
+
+test('能力说明：钉钉按实时连接和主人绑定状态动态增删', () => {
+  const context = { profileDirectory: '/tmp/profile', dingtalk: { connected: false, ownerBound: false } }
+  const capability = createModulePrompt({ readContext: () => context })
+  const before = capability.read()
+  assert.ok(before.includes('## 能力说明'))
+  assert.equal(before.includes('## 我自己的本事'), false)
+  assert.equal(before.includes('### 钉钉'), false)
+  context.dingtalk.connected = true
+  let value = capability.read()
+  assert.ok(value.includes('### 钉钉'))
+  assert.ok(value.includes('还没有绑定主人'))
+  assert.equal(value.includes('social_send_owner_message'), false)
+  context.dingtalk.ownerBound = true
+  value = capability.read()
+  assert.ok(value.includes('social_send_owner_message'))
+  assert.ok(value.includes('不必等主人先发消息'))
+  assert.ok(value.includes('正常回复就能继续聊天'))
+  assert.ok(value.indexOf('### 日记') < value.indexOf('### 钉钉'))
+  assert.ok(value.indexOf('### 钉钉') < value.indexOf('### 技能'))
+  assert.equal(value.includes('Client Secret'), false)
+  console.log('DingTalk capability UTF-8 bytes added:', Buffer.byteLength(value) - Buffer.byteLength(before), '(exact model-token delta not measured)')
+  context.dingtalk.connected = false
+  assert.equal(capability.read(), before, 'disconnection removes even a previously paired capability')
 })
 
 await new Promise((resolve) => setTimeout(resolve, 10))

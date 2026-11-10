@@ -54,7 +54,7 @@ export async function handlePerceptionRequest({ service, url = '/', method = 'GE
       action === 'timeline' ? service.getTimeline(args) : service.getSummaries(args)
     return { status: 200, body: { ok: true, ...data } }
   } catch (error) {
-    const statuses = { INVALID_ARGUMENT: 400, UNSUPPORTED_MEDIA_TYPE: 415, FORBIDDEN: 403, UNAVAILABLE: 503, UNSUPPORTED: 503, STORAGE_ERROR: 503, CANCELLED: 409 }
+    const statuses = { INVALID_ARGUMENT: 400, UNSUPPORTED_MEDIA_TYPE: 415, FORBIDDEN: 403, UNAVAILABLE: 503, UNSUPPORTED: 503, STORAGE_ERROR: 503, PREFERENCE_INVALID: 503, PREFERENCE_READ_FAILED: 503, PREFERENCE_WRITE_FAILED: 503, CANCELLED: 409 }
     return fail(statuses[error?.code] || 500, error?.code || 'PERCEPTION_ERROR', error?.message || '感知请求失败')
   }
 }

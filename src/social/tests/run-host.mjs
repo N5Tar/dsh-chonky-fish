@@ -13,7 +13,7 @@ const routes = new Map(), listeners = new Map(), guards = [], effects = [], gran
 const expected = ['/chonkyfish/social', '/chonkyfish/diary', '/chonkyfish/events', '/chonkyfish/proactive']
 let readyResolve
 const ready = new Promise(resolve => { readyResolve = resolve })
-const tools = new Map()
+const tools = new Map(), variables = new Map()
 const ctx = {
   logger: { warn() {}, info() {} },
   get() { return undefined },
@@ -22,7 +22,7 @@ const ctx = {
   agents: { list() { return [] } },
   agentPresets: { composedPreset() { return 'chonkyfish' } },
   permissionPresets: { set(session, preset) { grants.push({ session, preset }) } },
-  systemPrompt: { variable() { return () => {} }, context(value) { contexts.push(value); return () => {} } },
+  systemPrompt: { variable(name, provider) { variables.set(name, provider); return () => variables.delete(name) }, context(value) { contexts.push(value); return () => {} } },
   tools: {
     guard(fn) { guards.push(fn); return () => { const i = guards.indexOf(fn); if (i >= 0) guards.splice(i, 1) } },
     register(tool, options = {}) { tools.set(tool.name, { ...tool, options }); return () => tools.delete(tool.name) },
@@ -45,6 +45,8 @@ try {
   assert.equal(ownerSend.options.when({ agent: { session: { id: 'other', header: { agentPreset: 'other', cwd: '/tmp' } } } }), false)
   assert.equal((await ownerSend.execute({ operationId: 'owner-test', text: '你好' })).error, 'SOCIAL_NO_OWNER_CHAT')
   assert.equal(contexts.some(value => value.name.includes('social')), false, 'no channel/source prompt is injected')
+  assert.match(variables.get('chonkyfish_modules')(), /## 能力说明/)
+  assert.doesNotMatch(variables.get('chonkyfish_modules')(), /### 钉钉/, 'no connected channel means no advertised DingTalk capability')
   const social = { session: { id: 'unbound', header: { agentPreset: 'chonkyfish-social', cwd: join(home, 'social') } }, ctx: { tools: { restrict() {} } } }
   const owner = { session: { id: 'owner', header: { agentPreset: 'chonkyfish' } }, ctx: { tools: { restrict() {} } } }
   for (const listener of listeners.get('agent/created') ?? []) listener({ agent: social })

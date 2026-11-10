@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { Readable } from 'node:stream'
 import { join, resolve } from 'node:path'
 import { installPerception } from '../index.js'
+import { createPerceptionService } from '../service.js'
 import { handlePerceptionRequest } from '../http.js'
 import { createResources } from '../../resources/index.js'
 import { perceptionTarget } from '../../platform/index.js'
@@ -122,6 +123,44 @@ test('registered route supports HEAD and bounds streamed request bodies', async 
     const wrong = await request('POST', '{}', { 'content-type': 'text/plain' }); assert.equal(wrong.status, 415)
     await module.close(); assert.equal((await request('GET')).status, 503)
   })
+})
+test('Host passes local preferences and restores opt-in across reload using only a mock collector', async () => {
+  await temporary(async root => {
+    const base = createResources({ homeRoot: root }); await base.ensureLayout()
+    // An executable fixture validates the Host capability path without spawning it.
+    const resources = { ...base, perceptionCollector: () => ({ supported: true, binaryPath: process.execPath }) }
+    let starts = 0, disposals = 0
+    const modules = []
+    const serviceFactory = options => createPerceptionService({ ...options, collectorFactory: callbacks => {
+      let status = { state: 'stopped', runId: null }
+      return {
+        getStatus: () => status,
+        async start() { starts++; status = { state: 'running', runId: 'mock-' + starts }; callbacks.onState(status); return { runId: status.runId } },
+        async stop() { status.state = 'stopped'; callbacks.onState(status) },
+        async dispose() { disposals++; status.state = 'disposed'; callbacks.onState(status) },
+      }
+    } })
+    try {
+      const first = installPerception(context().ctx, { resources, serviceFactory }); modules.push(first); await first.ready
+      assert.equal(starts, 0); await first.getService().start(); assert.equal(starts, 1); await first.close()
+      const preferenceFile = resources.paths.perceptionPreferences ?? join(resources.paths.perception, 'collection-preference.json')
+      assert.equal(JSON.parse(await readFile(preferenceFile, 'utf8')).collectionEnabled, true)
+      const second = installPerception(context().ctx, { resources, serviceFactory }); modules.push(second); await second.ready
+      const deadline = Date.now() + 2000
+      while (starts < 2) { assert.ok(Date.now() < deadline, 'mock restore should settle'); await new Promise(resolve => setImmediate(resolve)) }
+      assert.equal(second.getService().getStatus().collectionPreference.requested, true)
+      await second.getService().stop(); await second.close()
+      const third = installPerception(context().ctx, { resources, serviceFactory }); modules.push(third); await third.ready
+      assert.equal(starts, 2); assert.equal(JSON.parse(await readFile(preferenceFile, 'utf8')).collectionEnabled, false)
+      await third.close(); assert.equal(disposals, 3)
+    } finally { await Promise.all(modules.map(module => module.close())) }
+  })
+})
+test('failed preference persistence returns explicit HTTP failure rather than successful pause', async () => {
+  const result = await handlePerceptionRequest({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'pause' }), service: {
+    async pause() { throw Object.assign(new Error('未能保存采集偏好'), { code: 'PREFERENCE_WRITE_FAILED' }) }, getStatus() { assert.fail('must not report successful state') },
+  } })
+  assert.equal(result.status, 503); assert.equal(result.body.ok, false); assert.equal(result.body.error.code, 'PREFERENCE_WRITE_FAILED')
 })
 for (const [name, fn] of tests) { await fn(); console.log('PASS', name) }
 console.log(`perception host/http: ${tests.length} passed`)

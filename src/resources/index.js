@@ -203,6 +203,7 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     skills: join(home, FILES.skills),
     perception: join(home, FILES.perception),
     perceptionDatabase: join(home, FILES.perception, FILES.perceptionDatabase),
+    perceptionPreferences: join(home, FILES.perception, FILES.perceptionPreferences),
     diary: join(home, DIARY_DIR),
     personalProfile: join(home, PERSONAL_PROFILE_DIR),
     workspace: join(home, WORKSPACE_DIR),

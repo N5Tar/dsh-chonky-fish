@@ -1,4 +1,4 @@
-/** Module-owned prose, rendered inside the complete persona (not a separate system section). */
+/** 能力说明：插件提供的能力与工具用法，统一追加在人格设定之后。 */
 import { profilePrompt } from './profile-prompt.js'
 import { perceptionPrompt } from '../perception/persona.js'
 import { diaryPrompt } from '../diary/persona.js'
@@ -11,7 +11,7 @@ export const DEFAULT_PROMPT_MODULES = Object.freeze([
   profilePrompt, perceptionPrompt, diaryPrompt, socialPrompt, skillsPrompt,
 ])
 
-const INTRO = '## 我自己的本事\n\n我不只是等主人说话、再回答的鱼。我也有自己留意的事情、经历过的日子、想去逛的地方，还有一点点摸索出来的本事。下面这些都是我平时会用到的能力，不用等主人每次提醒，想起来、用得上，就可以自己去看看、做做。'
+const INTRO = '## 能力说明\n\n我不只是等主人说话、再回答的鱼。我也有自己留意的事情、经历过的日子、想去逛的地方，还有一点点摸索出来的本事。下面这些都是我平时会用到的能力，不用等主人每次提醒，想起来、用得上，就可以自己去看看、做做。'
 const OUTRO = '这些本事会随着我的经历慢慢增加。需要查资料、看文件、运行命令时，其他工具也能帮上忙。做什么、用什么，跟着眼前的事情和自己的兴趣来，不必为了显得忙碌而找事做。'
 
 export function createModulePrompt({ readContext, modules = DEFAULT_PROMPT_MODULES }) {

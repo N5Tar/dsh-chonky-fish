@@ -81,6 +81,7 @@ export function installSocial(ctx, { resources, ready, warn = () => {}, getActiv
   })()
   return {
     initialized,
+    capabilityState() { return !disposed && service ? service.capabilityState() : { dingtalk: { connected: false, ownerBound: false } } },
     async close() {
       disposed = true
       await initialized

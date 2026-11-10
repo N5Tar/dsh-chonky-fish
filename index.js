@@ -96,6 +96,7 @@ export function apply(ctx) {
   const { routes, limits, spec } = resources
   let writeChain = Promise.resolve()
   let activePanelSession // Updated synchronously by the existing panel-session route.
+  let socialCapabilities = () => ({ dingtalk: { connected: false, ownerBound: false } })
 
   function warn(message, error) {
     try {
@@ -115,7 +116,7 @@ export function apply(ctx) {
   // {{chonkyfish_supplement}} 引用它，所以人格不再混进用户消息。
   ctx.effect(() => {
     const supplement = createPanelSupplement({ statePath: resources.paths.state, defaultProfileDirectory: resources.paths.personalProfile, logger: ctx.logger })
-    const modules = createModulePrompt({ readContext: supplement.readState })
+    const modules = createModulePrompt({ readContext: () => ({ ...supplement.readState(), ...socialCapabilities() }) })
     const disposeSupplement = ctx.systemPrompt.variable(supplement.variableName, supplement.provider)
     let disposeModules
     try {
@@ -286,7 +287,12 @@ export function apply(ctx) {
   // Social arrivals go to the panel's current main session, with source-scoped safeguards.
   ctx.effect(() => {
     const social = installSocial(ctx, { resources, ready: layoutReady, warn, getActiveSessionId: () => activePanelSession })
-    return () => social.close().catch(() => warn('[chonkyfish/social] shutdown failed'))
+    const describe = () => social.capabilityState()
+    socialCapabilities = describe
+    return () => {
+      if (socialCapabilities === describe) socialCapabilities = () => ({ dingtalk: { connected: false, ownerBound: false } })
+      return social.close().catch(() => warn('[chonkyfish/social] shutdown failed'))
+    }
   }, 'chonkyfish: social')
 
   /* ------------------------------------------------------- permissions */

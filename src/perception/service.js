@@ -7,13 +7,48 @@ const publicError = (error, code = 'PERCEPTION_ERROR') => ({ code: error?.code |
 
 /** Host-independent module lifecycle. Construction never starts collection. */
 export function createPerceptionService({ store, binaryPath, capabilities = { supported: true }, config: overrides,
-  collectorFactory = createCollector, now = Date.now, isEnabled = () => true,
+  collectorFactory = createCollector, now = Date.now, isEnabled = () => true, preferences,
   setIntervalImpl = setInterval, clearIntervalImpl = clearInterval } = {}) {
   const config = resolveConfig(overrides)
   let state = capabilities.supported ? 'stopped' : 'unsupported'
   let latestSample = null, summary = null, savedSummary = null, error = null, cleanup = null
   let closed = false, closing = null, cleaning = null, initializing = null, stopping = null, haltReason = null, controlGeneration = 0
-  let analysisTimer, cleanupTimer
+  let analysisTimer, cleanupTimer, restoring
+  let preferenceTail = Promise.resolve(), preferenceRead = null, preferenceLoaded = false, preferenceRequested = false, preferenceError = null, manualControl = false, preferenceGeneration = 0
+  function preferenceOperation(fn) { const next = preferenceTail.then(fn); preferenceTail = next.catch(() => {}); return next }
+  function loadPreference() {
+    if (!preferenceRead) preferenceRead = preferenceOperation(async () => {
+      try {
+        const value = preferences ? await preferences.read() : false
+        if (typeof value !== 'boolean') throw fault('PREFERENCE_INVALID', '采集偏好无效，未自动开始采集')
+        preferenceRequested = value; preferenceLoaded = true; preferenceError = null
+      } catch (cause) {
+        preferenceLoaded = true; preferenceRequested = false; preferenceError = publicError(cause, 'PREFERENCE_READ_FAILED')
+        error = preferenceError
+        if (!closed) { haltReason = 'preference'; state = 'error' }
+      }
+    })
+    return preferenceRead
+  }
+  function savePreference(value, generation) {
+    return preferenceOperation(async () => {
+      // Public controls check admission before enqueueing. Once accepted, their
+      // intent must drain even if plugin shutdown begins before this write runs.
+      // Only a newer explicit user control may supersede intent persistence.
+      // Internal collector/storage halts must not cancel a queued user-off write.
+      if (generation !== preferenceGeneration) throw fault('CANCELLED', '采集控制请求已被新的操作取代')
+      try {
+        if (preferences) await preferences.write(value)
+        preferenceRequested = value; preferenceLoaded = true
+        if (preferenceError && error?.code === preferenceError.code) error = null
+        preferenceError = null
+      } catch (cause) {
+        preferenceError = publicError(cause, 'PREFERENCE_WRITE_FAILED')
+        await stopWithError(cause, 'PREFERENCE_WRITE_FAILED')
+        throw cause
+      }
+    })
+  }
   const collector = collectorFactory({ binaryPath, supported: capabilities.supported, now,
     firstSampleTimeoutMs: config.sampleStaleMs, staleTimeoutMs: config.sampleStaleMs,
     onState(next) {
@@ -46,7 +81,7 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
   }
   function analyze() {
     if (closed || haltReason || !latestSample) return
-    if (!isEnabled()) { void pause(); return }
+    if (!isEnabled()) { void halt('paused'); return } // Internal disable preserves the user's saved intent.
     if (state !== 'running' || now() - latestSample.receivedAtMs > config.sampleStaleMs) return
     if (summary?.sourceRunId === latestSample.runId && summary?.sourceSeq === latestSample.seq) return
     try {
@@ -86,13 +121,13 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
     })()
     return cleaning
   }
-  async function start() {
+  async function startCollector(generation) {
     assertOpen()
+    if (generation !== controlGeneration) throw fault('CANCELLED', '开始采集已取消')
     if (!isEnabled()) throw fault('UNAVAILABLE', '感知模块已禁用')
     if (!capabilities.supported) throw fault('UNSUPPORTED', capabilities.reason || '此平台不支持采集')
     if (stopping) throw fault('CANCELLED', '采集器正在停止，请稍后重试')
     if (state === 'running' || state === 'starting' || state === 'stale') return collector.start()
-    const generation = ++controlGeneration
     await clean()
     assertOpen()
     if (!isEnabled()) throw fault('UNAVAILABLE', '感知模块已禁用')
@@ -101,6 +136,16 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
     haltReason = null; error = null; latestSample = null; summary = null; savedSummary = null
     try { return await collector.start() }
     catch (cause) { if (!closed && !haltReason) { state = 'error'; error = publicError(cause, 'COLLECTOR_ERROR') }; throw cause }
+  }
+  async function start() {
+    assertOpen()
+    if (!isEnabled()) throw fault('UNAVAILABLE', '感知模块已禁用')
+    if (!capabilities.supported) throw fault('UNSUPPORTED', capabilities.reason || '此平台不支持采集')
+    if (stopping) throw fault('CANCELLED', '采集器正在停止，请稍后重试')
+    manualControl = true
+    const generation = ++controlGeneration, intent = ++preferenceGeneration
+    await savePreference(true, intent)
+    return startCollector(generation)
   }
   async function halt(next) {
     assertOpen(); const generation = ++controlGeneration
@@ -112,8 +157,18 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
     if (!closed && generation === controlGeneration) state = next
     return { state }
   }
-  const pause = () => halt('paused')
-  const stop = () => halt(capabilities.supported ? 'stopped' : 'unsupported')
+  async function userHalt(next) {
+    assertOpen(); manualControl = true
+    // Stop admission immediately, even if a previous start/preference read is pending.
+    const intent = ++preferenceGeneration, halted = halt(next)
+    const saved = savePreference(false, intent)
+    const results = await Promise.allSettled([halted, saved])
+    for (const result of results) if (result.status === 'rejected' && result.reason?.code !== 'CANCELLED') throw result.reason
+    if (!closed && intent === preferenceGeneration && !preferenceError) { haltReason = next; state = next }
+    return { state }
+  }
+  const pause = () => userHalt('paused')
+  const stop = () => userHalt(capabilities.supported ? 'stopped' : 'unsupported')
   function getCurrent() {
     const time = now()
     expireMemory(time)
@@ -129,6 +184,7 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
     return { state: closed ? 'disposed' : visibleState, enabled: isEnabled(), latestSample,
       analysisVersion: RULE_VERSION, observationScope: 'focused-application',
       lastAnalysisAt: summary?.analyzedAt ?? null, error, capabilities,
+      collectionPreference: { requested: preferenceRequested, loaded: preferenceLoaded, error: preferenceError },
       retention: { rawTtlMs: config.rawTtlMs, summaryTtlMs: config.summaryTtlMs },
       storage: store.getCounts({ nowMs: time }), cleanup }
   }
@@ -151,9 +207,20 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
     initializing = (async () => {
       await clean()
       if (closed) return
+      await loadPreference()
+      if (closed) return
       analysisTimer = setIntervalImpl(analyze, config.analysisIntervalMs)
       cleanupTimer = setIntervalImpl(() => { void clean() }, config.cleanupIntervalMs)
       analysisTimer?.unref?.(); cleanupTimer?.unref?.()
+      if (!manualControl && !preferenceError && !cleanup?.error && preferenceRequested && capabilities.supported && isEnabled()) {
+        const generation = controlGeneration
+        // Do not block the HTTP controls waiting for the collector's first sample.
+        restoring = startCollector(generation).catch(cause => {
+          if (!closed && generation === controlGeneration && cause?.code !== 'CANCELLED') {
+            error = publicError(cause, 'COLLECTOR_ERROR'); state = 'error'
+          }
+        })
+      }
     })()
     return initializing
   }
@@ -163,7 +230,9 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
     clearIntervalImpl(analysisTimer); clearIntervalImpl(cleanupTimer)
     closing = (async () => {
       await collector.dispose()
+      if (restoring) await restoring
       if (cleaning) await cleaning
+      await preferenceTail
       store.close()
     })()
     return closing

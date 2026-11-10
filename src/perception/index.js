@@ -1,5 +1,7 @@
 import { access, mkdir } from 'node:fs/promises'
 import { constants } from 'node:fs'
+import { join } from 'node:path'
+import { createCollectionPreferences } from './preferences.js'
 import { createPerceptionStore } from './store.js'
 import { createPerceptionService } from './service.js'
 import { registerPerceptionRoute } from './http.js'
@@ -34,6 +36,7 @@ export function installPerception(ctx, { resources, ready: layoutReady = Promise
       if (closed) return
       store = storeFactory({ dbPath: resources.paths.perceptionDatabase, DatabaseSync: sqlite.DatabaseSync, config })
       service = serviceFactory({ store, binaryPath: target.binaryPath, capabilities, config,
+        preferences: createCollectionPreferences(resources.paths.perceptionPreferences ?? join(resources.paths.perception, 'collection-preference.json')),
         isEnabled: () => !closed && resources.getConfig().perception.enabled })
       await service.initialize()
       if (closed) await service.close()

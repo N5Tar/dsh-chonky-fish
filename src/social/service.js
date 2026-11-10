@@ -123,6 +123,11 @@ export async function createSocialService({ paths, limits, env = process.env, dr
     await Promise.all([...connections.values()].map(entry => entry.ready))
   }
   const service = {
+    // Synchronous, secret-free facts for capability descriptions at each assembly.
+    capabilityState() {
+      const linked = stopped ? [] : [...connections.values()].filter(entry => entry.config.platform === 'dingtalk' && entry.status === 'connected' && entry.verified)
+      return { dingtalk: { connected: linked.length > 0, ownerBound: linked.some(entry => !!peers?.owner(entry.config.id, entry.verified.identityRevision)) } }
+    },
     async inspect() {
       active()
       return { configError, configPath: paths.socialConfig, inferenceOnArrival: false, actionEngineConnected: false,

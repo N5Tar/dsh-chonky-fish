@@ -196,6 +196,7 @@ const ownerService = await createSocialService({ paths: ownerResources.paths, li
   ownerDriver.sendOwner = async args => { ownerCalls++; ownerArgs.push(structuredClone(args)); assert.equal(args.text, '该喝水了'); return { ...ownerResult } }
   return ownerDriver
 } })
+assert.deepEqual(ownerService.capabilityState(), { dingtalk: { connected: true, ownerBound: false } })
 await assert.rejects(ownerService.sendOwner({ operationId: 'unpaired', text: '该喝水了' }), { code: 'SOCIAL_NO_OWNER_CHAT' })
 const stranger = { ...message, messageId: 'stranger-1', conversation: { type: 'direct', id: 'stranger-chat' }, sender: { id: 'stranger', staffId: 'STRANGER_STAFF', corpId: 'corp' } }
 assert.equal((await ownerDriver.emit(stranger)).accepted, true)
@@ -216,6 +217,7 @@ assert.deepEqual(await ownerDriver.emit({ ...pairMessage, messageId: 'bad-code',
 pairingView = await ownerService.inspect()
 assert.deepEqual(pairingView.bindings, { ownerCount: 1, peerCount: 0, pendingCodeCount: 0 })
 assert.deepEqual(pairingView.connections[0].owner, { bound: true, available: true })
+assert.deepEqual(ownerService.capabilityState(), { dingtalk: { connected: true, ownerBound: true } }, 'capability facts contain only booleans, never owner IDs or credentials')
 assert.equal(pairingView.notices.length, 1); assert.equal(pairingView.notices[0].unreadCount, 1, 'all pairing control messages bypass the inbox')
 const controlScope = ownerService.issueScope({ sessionId: 'test', connectionId: 'ding', conversation: target })
 assert.equal(await ownerService.readBatch(controlScope), null, 'pairing code never enters an owner model batch')
@@ -240,6 +242,7 @@ assert.deepEqual(await ownerDriver.emit({ ...stranger, messageId: 'explicit-rebi
 await assert.rejects(ownerService.sendOwner({ operationId: 'owner-1', text: '该喝水了' }), { code: 'SOCIAL_OPERATION_CONFLICT' })
 assert.equal(ownerCalls, 3, 're-pairing cannot replay an old operation toward a new owner')
 await ownerService.close(); await ownerPeers.close()
+assert.deepEqual(ownerService.capabilityState(), { dingtalk: { connected: false, ownerBound: false } })
 // Without the injected pairing authority, even a ready driver cannot infer an owner.
 const missingPeers = await createSocialService({ paths: ownerResources.paths, limits, driverFactory: value => {
   const driver = createFakeDriver(value); driver.sendOwner = async () => assert.fail('must not dispatch without pairing authority'); return driver

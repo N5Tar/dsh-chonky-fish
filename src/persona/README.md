@@ -1,38 +1,55 @@
-# 大肥鱼 · 面板补充人格 → system prompt
+# 大肥鱼 · 人格设定与能力说明
 
-面板里「补充人格设定」以前是拼在**新会话首条用户消息**里发出去的：
+## 统一术语
+
+Prompt 分为两个概念：
+
+- **人格设定**：大肥鱼是谁、性格与表达方式，以及面板里填写的补充人格。
+- **能力说明**：人格设定之后，各插件提供的能力、工具用法和使用边界。统一标题为 `## 能力说明`，不再称作“我自己的本事”“插件工具描述”或“模块说明”（指这段prompt时）。
+
+能力说明目前按顺序包含：我的个人资料、感知、日记、钉钉（按连接状态出现）、技能。ABS不贡献能力说明正文。
+
+## 装配方式
 
 ```text
-【角色补充设定】……  【用户消息】……
+预设人格
+  + {{chonkyfish_supplement}}：面板补充人格
+  + {{chonkyfish_modules}}：能力说明
+  → 每次模型请求组装时动态读取
 ```
 
-这样 system 性质的内容和用户消息混在同一个 user message 里，模型看到的是「主人说了这一大段设定」。现在改成：
+保留 `chonkyfish_modules`、`createModulePrompt` 等现有代码标识，避免破坏已安装预设与第三方调用；文档和模型可见名称统一为“能力说明”。这两个变量仍渲染在完整persona内，不另造第二份冲突人格，不拼接到用户消息里。
 
-```text
-panel state.json (state.prompt + state.profileDirectory)
-  → Host 注册 system prompt 变量 {{chonkyfish_supplement}}
-  → 预设 persona 模板引用该变量（模板行内 `...如实说明。{{chonkyfish_supplement}}`）
-  → 每次 assembly 动态渲染进 system prompt
-  → 用户消息只包含用户真正输入的文字
+- [supplement.js](<supplement.js>) 读取面板状态，按文件元数据缓存补充人格及个人资料目录。
+- [modules.js](<modules.js>) 汇总能力说明，按 `order` 和 `id` 稳定排序；空字符串不产生标题。
+- [index.js](<../../index.js>) 注册systemPrompt变量，并为能力说明提供实时、脱敏的钉钉状态。
+- [主预设](<../../cordis.patch.yml>) 与[独立预设](<../../preset/cordis.patch.yml>) 使用同名模板变量；Host和预设需要配套加载。
+
+保存补充人格或改变渠道状态后，下一次prompt组装读取新内容，不重写已经提交的历史模型请求。
+
+## 钉钉能力说明
+
+只读取Host的两个布尔值 `dingtalk.connected` / `dingtalk.ownerBound`：
+
+| 运行状态 | 能力说明 |
+|---|---|
+| 未配置、未连接、身份未验证、已卸载 | 不加入钉钉段落 |
+| 已连接但未绑定主人 | 说明尚不能联系主人，需通过绑定码配对 |
+| 已连接且已绑定主人 | 说明可用 `social_send_owner_message` 主动找到主人、分享近况和聊天；主人正常私聊进入主会话，正常回复由后台回投 |
+
+断线或关闭后动态移除该段，不把历史连接状态当作当前可用。能力说明不暴露Client Secret、token、webhook、用户ID或当前消息来源，也不会授予工具权限；社交请求轮次的工具保护仍由Host执行。发送失败/结果不确定时不得声称已联系到主人或盲目重复发送。
+
+## 个人资料与兼容
+
+个人资料目录现在是一项独立能力说明，而不是补充人格尾部的硬编码文案。默认在插件home下的“个人资料”目录；可以设置绝对路径或 `~/`，拒绝相对路径、多行和控制字符。只给出检索入口，不自动读取文件内容进prompt。
+
+旧会话中首条用户消息已有的人格前缀不会被改写；新用户消息只包含用户输入。能力说明动态变化不意味着修改旧记录。
+
+## 测试
+
+```bash
+node src/persona/tests/run-supplement.mjs
+node src/social/tests/run-service.mjs
 ```
 
-## 工作方式
-
-- **预设**（`cordis.patch.yml` / `preset/cordis.patch.yml`）的 persona `prefix` 末尾有一行
-  `{{chonkyfish_supplement}}`，persona 仍然 `complete: true`，system prompt 依旧只有这一份人格；
-- **Host**（[supplement.js](supplement.js)，在 [index.js](../../index.js) 注册）提供同名 system prompt 变量：
-  - 读取 `state.prompt` 和 `state.profileDirectory`，按 mtime/ctime/大小/inode 缓存；
-  - 自定义人格非空且不等于默认文案时追加人格正文，随后总是在最后追加 `你的个人资料在XXX`；
-  - 默认目录为 `$DSH_HOME/chonkyfish/个人资料`，启动时创建并在界面展示真实绝对路径；空设置、旧状态或坏 JSON 也会保留默认目录提示；
-  - 自定义目录支持绝对路径和 `~/`，保存时展开为绝对路径并创建目录；拒绝多行/控制字符和相对路径。不移动旧目录内容，也不自动读取目录里的文件进 prompt；
-  - 保存操作失败时不报告成功；成功后下一次人格组装使用新目录，恢复默认同时恢复目录设置。
-- **面板**（`src/runtime.js`）发送消息时不再拼接任何人格文案，用户消息只有用户输入。
-
-## 注意
-
-- persona 模板里的 `{{chonkyfish_supplement}}` 是**严格变量**：本 Host 插件必须加载，否则
-  chonkyfish 会话的 system prompt 组装会报 `unknown prompt variable`。预设和面板由同一个 bundle
-  安装/卸载，正常使用不会分离。
-- 面板修改补充人格设定后，**下一轮**请求就会带上新内容（不需要重开会话）。
-- 历史会话里已经写在首条用户消息中的旧前缀不会被改写；面板仍会把这类旧消息的
-  `【角色补充设定】…【用户消息】` 前缀隐藏掉，只显示用户正文。
+覆盖能力说明标题、顺序、动态状态、未绑定边界、断线移除、脱敏及工具名称可发现性。测试记录新增文本的UTF-8字节数，未将字节数冒充精确模型token数。
