@@ -141,6 +141,7 @@ css += `
 const runtime = readFileSync(join(here, 'src/runtime.js'), 'utf8')
 const absLab = readFileSync(join(here, 'src/abs/lab.js'), 'utf8')
 const skillsPanel = readFileSync(join(here, 'src/skills/panel.js'), 'utf8')
+const perceptionPanel = readFileSync(join(here, 'src/perception/client.js'), 'utf8')
 const avatarPlayer = readFileSync(join(here, 'src/avatar/player.js'), 'utf8')
 const avatarWidget = readFileSync(join(here, 'src/avatar/widget.js'), 'utf8')
 const avatarAsset = JSON.parse(readFileSync(join(here, 'src/avatar/assets/manifest.json'), 'utf8'))
@@ -328,6 +329,7 @@ window.__ModuleLoader__.load({
 ${runtime}
 ${absLab}
 ${skillsPanel}
+${perceptionPanel}
     var AVATAR_ASSET = ${JSON.stringify(avatarAsset)}
 ${avatarPlayer}
 ${avatarWidget}
@@ -918,7 +920,7 @@ ${avatarWidget}
             name: 'main',
             key: panel.id,
             locale: NS,
-          }, panel.view === 'abs' ? AbsLabPage : panel.view === 'skills' ? createSafeSkillsPage(t) : createPanelPage(panel.view))
+          }, panel.view === 'abs' ? AbsLabPage : panel.view === 'skills' ? createSafeSkillsPage(t) : panel.view === 'sense' ? createPerceptionPage() : createPanelPage(panel.view))
         })
       })
 

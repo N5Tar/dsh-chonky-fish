@@ -25,6 +25,7 @@ import { createResources } from './src/resources/index.js'
 import { installSocial } from './src/social/index.js'
 import { installAbs } from './src/abs/index.js'
 import { installSkills } from './src/skills/index.js'
+import { installPerception } from './src/perception/index.js'
 import { isSocialHeader } from './src/social/policy.js'
 
 const FULL_ACCESS = 'danger-full-access'
@@ -298,6 +299,12 @@ export function apply(ctx) {
     const skills = installSkills(ctx, { resources, ready: layoutReady })
     return () => skills.close()
   }, 'chonkyfish: skills')
+
+  // Perception shares the host runtime; collection starts only on explicit UI action.
+  ctx.effect(() => {
+    const perception = installPerception(ctx, { resources, ready: layoutReady })
+    return () => perception.close()
+  }, 'chonkyfish: perception')
 
   /* ------------------------------------------------------------- diary */
 

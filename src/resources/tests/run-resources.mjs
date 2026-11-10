@@ -99,6 +99,8 @@ await test('paths: 所有文件都在 home 下，工作区在 home/小鱼塘', (
     events: join(home, FILES.events),
     abs: join(home, FILES.abs),
     skills: join(home, FILES.skills),
+    perception: join(home, FILES.perception),
+    perceptionDatabase: join(home, FILES.perception, FILES.perceptionDatabase),
     diary: join(home, '日记'),
     personalProfile: join(home, '个人资料'),
     workspace: join(home, WORKSPACE_DIR),
@@ -186,6 +188,7 @@ await test('config: 文件缺失/坏 JSON 时回退默认值', () => {
       version: VERSIONS.config,
       abs: DEFAULT_CONFIG.abs,
       skills: { enabled: true },
+      perception: { enabled: true, rawTtlMs: 3600000, summaryTtlMs: 604800000 },
       proactive: { enabled: true },
       eventEngine: { enabled: true, extractTickMs: 5000, extractBatch: 2, maxRecordsPerTurn: 400 },
       diary: {

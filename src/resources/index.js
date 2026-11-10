@@ -19,12 +19,15 @@ import { readFileSync } from 'node:fs'
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { perceptionTarget } from '../platform/index.js'
 
 import {
   ASSETS,
   DEFAULT_CONFIG,
   DIARY_DIR,
   PERSONAL_PROFILE_DIR,
+  PERCEPTION_ASSETS,
   FILES,
   HOME_DIR,
   LIMITS,
@@ -104,6 +107,11 @@ function sanitizeConfig(raw) {
     version: VERSIONS.config,
     abs: sanitizeAbsConfig(source.abs),
     skills: { enabled: typeof source.skills?.enabled === 'boolean' ? source.skills.enabled : defaults.skills.enabled },
+    perception: {
+      enabled: typeof source.perception?.enabled === 'boolean' ? source.perception.enabled : defaults.perception.enabled,
+      rawTtlMs: clampInt(source.perception?.rawTtlMs, { min: 930000, max: 3600000, fallback: defaults.perception.rawTtlMs }),
+      summaryTtlMs: clampInt(source.perception?.summaryTtlMs, { min: 60000, max: 604800000, fallback: defaults.perception.summaryTtlMs }),
+    },
     proactive: {
       enabled: typeof proactive.enabled === 'boolean' ? proactive.enabled : defaults.proactive.enabled,
     },
@@ -142,6 +150,7 @@ function mergeConfig(current, patch) {
     version: VERSIONS.config,
     abs: mergeAbsConfig(current.abs, source.abs),
     skills: { ...current.skills, ...(isPlainObject(source.skills) ? source.skills : {}) },
+    perception: { ...current.perception, ...(isPlainObject(source.perception) ? source.perception : {}) },
     proactive: { ...current.proactive, ...proactive },
     eventEngine: { ...current.eventEngine, ...eventEngine },
     diary: { ...current.diary, ...diary },
@@ -192,6 +201,8 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     events: join(home, FILES.events),
     abs: join(home, FILES.abs),
     skills: join(home, FILES.skills),
+    perception: join(home, FILES.perception),
+    perceptionDatabase: join(home, FILES.perception, FILES.perceptionDatabase),
     diary: join(home, DIARY_DIR),
     personalProfile: join(home, PERSONAL_PROFILE_DIR),
     workspace: join(home, WORKSPACE_DIR),
@@ -329,5 +340,10 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     getConfig,
     updateConfig,
     clientState,
+    perceptionCollector() {
+      const target = perceptionTarget()
+      const relative = PERCEPTION_ASSETS[target.os]?.[target.arch]
+      return { ...target, binaryPath: relative ? fileURLToPath(new URL('../../' + relative, import.meta.url)) : null }
+    },
   }
 }

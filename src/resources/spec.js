@@ -44,7 +44,17 @@ export const FILES = Object.freeze({
   proactive: 'proactive.json',
   abs: 'abs',
   skills: 'skills',
+  perception: 'perception',
+  perceptionDatabase: 'activity.db',
   events: 'events.db',
+})
+
+/** Bundled native collector locations, relative to plugin package root. */
+export const PERCEPTION_ASSETS = Object.freeze({
+  darwin: Object.freeze({
+    arm64: 'src/perception/native/macos/arm64/activity-collector',
+    x64: 'src/perception/native/macos/x64/activity-collector',
+  }),
 })
 
 /** Host 暴露给面板的本地 HTTP 路由（无插件私有 token 鉴权）。 */
@@ -56,6 +66,7 @@ export const ROUTES = Object.freeze({
   config: '/chonkyfish/config',
   diary: '/chonkyfish/diary',
   skills: '/chonkyfish/skills',
+  perception: '/chonkyfish/perception',
   social: '/chonkyfish/social',
   abs: '/chonkyfish/abs',
 })
@@ -128,6 +139,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   version: VERSIONS.config,
   abs: ABS_DEFAULTS,
   skills: Object.freeze({ enabled: true }),
+  perception: Object.freeze({ enabled: true, rawTtlMs: 3600000, summaryTtlMs: 604800000 }),
   proactive: Object.freeze({ enabled: true }),
   eventEngine: Object.freeze({
     enabled: true,

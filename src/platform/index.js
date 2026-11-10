@@ -29,5 +29,15 @@ export function describePlatform(value = platform) {
   return { name: value.name, directorySync: value.directorySync === true, caseInsensitivePaths: value.caseInsensitivePaths === true }
 }
 
+/** Native activity collection capability; file existence is checked by the host. */
+export function perceptionTarget(host = process.platform, arch = process.arch) {
+  return {
+    os: host,
+    arch,
+    supported: host === 'darwin' && ['arm64', 'x64'].includes(arch),
+    reason: host === 'darwin' && ['arm64', 'x64'].includes(arch) ? null : '当前版本仅支持 macOS arm64 / x64 活动采集',
+  }
+}
+
 export { createPosixPlatform, createWin32Platform }
 export default platform
