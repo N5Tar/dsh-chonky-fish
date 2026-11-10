@@ -619,6 +619,88 @@ function mountChonkyFishPage(wrap, chat, options) {
   var socialUnreadCount = $('social-unread-count')
   var socialList = $('social-list')
   var socialFormTitle = $('social-form-title')
+  var socialCatalog = $('social-catalog')
+  var socialDetail = $('social-detail')
+  var socialDetailTitle = $('social-detail-title')
+  var socialDetailDescription = $('social-detail-description')
+  var socialForm = $('social-form')
+  var socialFormError = $('social-form-error')
+  var socialBack = $('social-back')
+  var socialCancel = $('social-cancel')
+  var socialScreen = 'catalog'
+  var socialPlatform = 'qq'
+  var socialLoading = false
+  var SOCIAL_PLATFORMS = [
+    { id: 'qq', name: 'QQ', mark: 'QQ', description: '通过 QQ 私聊与群聊，和鱼鱼保持联系。', available: true },
+    { id: 'dingtalk', name: '钉钉', mark: '钉', description: '在钉钉中连接鱼鱼。', available: false },
+    { id: 'discord', name: 'Discord', mark: 'D', description: '管理已有的 Discord 连接。', available: true }
+  ]
+
+  function socialPlatformInfo() {
+    return SOCIAL_PLATFORMS.filter(function (item) { return item.id === socialPlatform })[0] || SOCIAL_PLATFORMS[0]
+  }
+
+  // Merge saved configuration with live status so disabled/offline connections remain visible.
+  function socialConnections(platform) {
+    var live = socialPayload && socialPayload.connections || []
+    var saved = socialPayload && socialPayload.config && socialPayload.config.connections || []
+    var rows = saved.map(function (item) {
+      var status = live.filter(function (row) { return row.connectionId === item.id })[0]
+      return Object.assign({}, item, { connectionId: item.id, status: item.enabled === false ? 'disabled' : 'disconnected' }, status || {})
+    })
+    live.forEach(function (item) {
+      if (!rows.some(function (row) { return row.connectionId === item.connectionId })) rows.push(item)
+    })
+    return rows.filter(function (item) { return item.platform === platform })
+  }
+
+  function socialNavigate(screen) {
+    socialScreen = screen
+    renderSocialView()
+    var target = screen === 'form' ? socialFields.id : screen === 'detail' ? socialDetailTitle : socialCatalog && socialCatalog.querySelector('button')
+    if (target) target.focus()
+  }
+
+  function renderSocialCatalog() {
+    if (!socialCatalog) return
+    clearNode(socialCatalog)
+    SOCIAL_PLATFORMS.forEach(function (platform) {
+      var rows = socialConnections(platform.id)
+      if (platform.id === 'discord' && !rows.length) return
+      var online = rows.filter(function (row) { return row.status === 'connected' }).length
+      var warning = rows.some(function (row) { return row.status === 'error' || row.status === 'identity_changed' })
+      var starting = rows.some(function (row) { return row.status === 'starting' })
+      var label = !platform.available ? '暂未接入' : socialLoading ? '读取中' : !socialPayload || socialPayload.configError ? '状态不可用' : !rows.length ? '未配置' : warning ? '需要处理' : starting ? '连接中' : online === rows.length ? '已连接' : online ? '部分连接' : '未连接'
+      var card = document.createElement('button')
+      card.type = 'button'
+      card.className = 'cf-social-card'
+      var top = document.createElement('span')
+      top.className = 'cf-social-card-top'
+      var mark = document.createElement('span')
+      mark.className = 'cf-social-mark'
+      mark.textContent = platform.mark
+      mark.setAttribute('aria-hidden', 'true')
+      var status = document.createElement('span')
+      status.className = 'cf-social-chip ' + (warning ? 'bad' : online && !socialLoading ? 'ok' : '')
+      status.textContent = label
+      top.appendChild(mark)
+      top.appendChild(status)
+      card.appendChild(top)
+      var title = document.createElement('strong')
+      title.textContent = platform.name
+      card.appendChild(title)
+      var description = document.createElement('span')
+      description.className = 'cf-social-card-description'
+      description.textContent = platform.description
+      card.appendChild(description)
+      var footer = document.createElement('span')
+      footer.className = 'cf-social-card-footer'
+      footer.textContent = (socialPayload && !socialLoading ? rows.length + ' 条配置 · ' + online + ' 条在线' : '等待连接状态') + '　查看详情 →'
+      card.appendChild(footer)
+      card.addEventListener('click', function () { socialPlatform = platform.id; socialNavigate('detail') })
+      socialCatalog.appendChild(card)
+    })
+  }
   // 表单只保留连一条通道真正需要的东西：标识、平台、接入方式、地址、凭证引用。
   // 启用状态和接收范围不给开关——保存即可用，私聊/群/频道默认都接收。
   var socialFields = {
@@ -706,10 +788,12 @@ function mountChonkyFishPage(wrap, chat, options) {
     socialEditing = -1
     if (socialFormTitle) socialFormTitle.textContent = '新增连接'
     if (socialFields.id) socialFields.id.value = ''
-    if (socialFields.platform) socialFields.platform.value = 'qq'
-    if (socialFields.provider) socialFields.provider.value = 'napcat'
+    if (socialFields.platform) socialFields.platform.value = socialPlatform
+    if (socialFields.provider) socialFields.provider.value = socialPlatform === 'discord' ? 'onebots-discord' : 'napcat'
     if (socialFields.endpoint) socialFields.endpoint.value = ''
     if (socialFields.tokenEnv) socialFields.tokenEnv.value = ''
+    if (socialFormError) socialFormError.hidden = true
+    socialNavigate('form')
   }
 
   function socialSelect(index) {
@@ -725,6 +809,8 @@ function mountChonkyFishPage(wrap, chat, options) {
     if (socialFields.provider) socialFields.provider.value = connection.provider
     if (socialFields.endpoint) socialFields.endpoint.value = connection.endpoint
     if (socialFields.tokenEnv) socialFields.tokenEnv.value = connection.tokenEnv || ''
+    if (socialFormError) socialFormError.hidden = true
+    socialNavigate('form')
   }
 
   function socialReadForm() {
@@ -748,14 +834,24 @@ function mountChonkyFishPage(wrap, chat, options) {
   function socialSubmit(body, okText) {
     if (socialBusy) return
     socialBusy = true
+    renderSocialView()
     socialApi('POST', body).then(function () {
       socialBusy = false
+      if (body.action === 'configure') {
+        socialPlatform = socialFields.platform.value
+        socialScreen = 'detail'
+        socialEditing = null
+      }
       toast(okText)
       loadSocial()
     }).catch(function (error) {
       socialBusy = false
+      if (socialFormError && socialScreen === 'form') {
+        socialFormError.textContent = '保存失败：' + socialErrorMessage(error)
+        socialFormError.hidden = false
+      }
       toast('操作失败：' + socialErrorMessage(error))
-      loadSocial()
+      renderSocialView()
     })
   }
 
@@ -766,7 +862,9 @@ function mountChonkyFishPage(wrap, chat, options) {
     try {
       connection = socialReadForm()
     } catch (error) {
-      toast(error && error.message ? error.message : '配置不完整')
+      var message = error && error.message ? error.message : '配置不完整'
+      if (socialFormError) { socialFormError.textContent = message; socialFormError.hidden = false }
+      toast(message)
       return
     }
     // 只编辑成功读取的配置，读取失败不能按空配置覆盖。
@@ -805,6 +903,7 @@ function mountChonkyFishPage(wrap, chat, options) {
         socialBusy = false
         toast('连接已删除')
         socialEditing = null
+        socialScreen = 'detail'
         loadSocial()
       }).catch(function (error) {
         socialBusy = false
@@ -864,7 +963,7 @@ function mountChonkyFishPage(wrap, chat, options) {
     if (!socialStatusBox) return
     clearNode(socialStatusBox)
     if (!socialPayload) return
-    socialStatusBox.appendChild(socialStatusRow('连接', (socialPayload.connections || []).length + ' 条'))
+    socialStatusBox.appendChild(socialStatusRow('已配置连接', socialConnections(socialPlatform).length + ' 条'))
     socialStatusBox.appendChild(socialStatusRow('收信', '只进收件箱并计数，不会自动调用模型'))
     socialStatusBox.appendChild(socialStatusRow('行动决策', socialPayload.actionEngineConnected ? '已接入' : '未接入：需要你手动点「查看」'))
     if (socialPayload.configPath) socialStatusBox.appendChild(socialStatusRow('配置文件', socialPayload.configPath))
@@ -879,7 +978,8 @@ function mountChonkyFishPage(wrap, chat, options) {
   function renderSocialNotices() {
     if (!socialNotices) return
     clearNode(socialNotices)
-    var notices = socialPayload && Array.isArray(socialPayload.notices) ? socialPayload.notices : []
+    var connectionIds = socialConnections(socialPlatform).map(function (row) { return row.connectionId })
+    var notices = (socialPayload && Array.isArray(socialPayload.notices) ? socialPayload.notices : []).filter(function (notice) { return connectionIds.indexOf(notice.connectionId) >= 0 })
     if (socialUnreadCount) {
       var total = 0
       for (var i = 0; i < notices.length; i += 1) total += Number(notices[i].unreadCount) || 0
@@ -931,7 +1031,7 @@ function mountChonkyFishPage(wrap, chat, options) {
   function renderSocialConnections() {
     if (!socialList) return
     clearNode(socialList)
-    var connections = socialPayload && Array.isArray(socialPayload.connections) ? socialPayload.connections : []
+    var connections = socialConnections(socialPlatform)
     var pendingIds = {}
     var records = socialPayload && Array.isArray(socialPayload.identities) ? socialPayload.identities : []
     for (var r = 0; r < records.length; r += 1) {
@@ -940,11 +1040,11 @@ function mountChonkyFishPage(wrap, chat, options) {
     if (connections.length === 0) {
       var empty = document.createElement('div')
       empty.className = 'cf-social-empty'
-      empty.textContent = socialPayload && socialPayload.configError ? '连接配置读取失败，请查看上方错误及配置文件路径。' : '还没有配置连接；填写下面的表单再保存。'
+      empty.textContent = !socialPlatformInfo().available ? '当前版本尚未接入钉钉驱动，暂不能配置连接。' : socialLoading ? '正在读取已配置连接…' : !socialPayload || socialPayload.configError ? '连接配置读取失败，请刷新重试或检查配置文件。' : '还没有配置 ' + socialPlatformInfo().name + ' 连接。点击「新增连接」开始配置。'
       socialList.appendChild(empty)
       return
     }
-    var configConnections = socialPayload.config && Array.isArray(socialPayload.config.connections)
+    var configConnections = socialPayload && socialPayload.config && Array.isArray(socialPayload.config.connections)
       ? socialPayload.config.connections
       : []
     connections.forEach(function (connection) {
@@ -964,6 +1064,8 @@ function mountChonkyFishPage(wrap, chat, options) {
         ? '身份：' + (identity.displayName || identity.protocolUserId) + (connection.reason ? ' · ' + connection.reason : '')
         : '还没有确认身份' + (connection.reason ? ' · ' + connection.reason : '')
       info.appendChild(detail)
+      if (connection.endpoint) info.appendChild(socialStatusRow('连接地址', connection.endpoint))
+      info.appendChild(socialStatusRow('凭证引用', connection.tokenEnv || '未设置'))
       row.appendChild(info)
       var actions = document.createElement('div')
       actions.className = 'cf-social-actions'
@@ -990,58 +1092,67 @@ function mountChonkyFishPage(wrap, chat, options) {
   }
 
   function renderSocialView() {
-    if (socialSummary) {
-      var connections = socialPayload && Array.isArray(socialPayload.connections) ? socialPayload.connections : []
-      var connected = 0
-      for (var i = 0; i < connections.length; i += 1) if (connections[i].status === 'connected') connected += 1
-      socialSummary.textContent = (socialPayload.configError ? '连接配置读取失败' : connections.length === 0 ? '还没有配置连接' : '社交运行中') +
-        ' · ' + connected + '/' + connections.length + ' 条在线'
+    var platform = socialPlatformInfo()
+    if (socialCatalog) socialCatalog.hidden = socialScreen !== 'catalog'
+    if (socialDetail) socialDetail.hidden = socialScreen !== 'detail'
+    if (socialForm) socialForm.hidden = socialScreen !== 'form'
+    if (socialDetailTitle) socialDetailTitle.textContent = platform.name + ' · 渠道详情'
+    if (socialDetailDescription) socialDetailDescription.textContent = platform.description
+    var unavailable = socialBusy || socialLoading || !socialPayload || !socialPayload.config || !!socialPayload.configError
+    if (socialNew) { socialNew.hidden = !platform.available; socialNew.disabled = unavailable }
+    if (socialSave) { socialSave.disabled = unavailable; socialSave.textContent = socialBusy ? '保存中…' : '保存' }
+    if (socialDelete) { socialDelete.hidden = !(typeof socialEditing === 'number' && socialEditing >= 0); socialDelete.disabled = unavailable }
+    if (socialBack) socialBack.disabled = socialBusy
+    if (socialCancel) socialCancel.disabled = socialBusy
+    if (socialRefresh) socialRefresh.disabled = socialBusy || socialLoading
+    if (socialFields.platform) socialFields.platform.disabled = true
+    if (socialFields.provider) {
+      Array.prototype.forEach.call(socialFields.provider.options, function (option) {
+        option.hidden = option.disabled = socialPlatform === 'discord' ? option.value !== 'onebots-discord' : option.value === 'onebots-discord'
+      })
     }
+    if (socialSummary) socialSummary.textContent = socialLoading ? '正在读取社交连接…' : !socialPayload ? '读取社交状态失败，请刷新重试。' : socialPayload.configError ? '配置读取失败，已阻止修改。进入详情查看原因。' : socialScreen === 'catalog' ? '选择一个渠道，查看连接与配置信息。' : socialScreen === 'form' ? '配置连接 · ' + platform.name : '已配置渠道 · ' + platform.name
+    renderSocialCatalog()
     renderSocialStatus()
     renderSocialNotices()
     renderSocialConnections()
-    var configConnections = socialPayload && socialPayload.config && Array.isArray(socialPayload.config.connections)
-      ? socialPayload.config.connections
-      : []
-    if (socialEditing === null) {
-      if (configConnections.length > 0) socialSelect(0)
-      else socialResetForm()
-    }
   }
 
   function loadSocial() {
     if (!socialPanel) return
     var request = ++socialRequest
+    socialLoading = true
+    renderSocialView()
     socialApi('GET').then(function (payload) {
       if (request !== socialRequest) return
       socialPayload = payload
+      socialLoading = false
       renderSocialView()
     }).catch(function () {
       if (request !== socialRequest) return
       socialPayload = null
-      if (socialSummary) socialSummary.textContent = '读取社交状态失败：社交模块可能没启动，重启 DSH 或刷新页面再试。'
-      if (socialStatusBox) clearNode(socialStatusBox)
-      if (socialNotices) clearNode(socialNotices)
-      if (socialList) clearNode(socialList)
+      socialLoading = false
+      renderSocialView()
     })
   }
 
   function renderSocial() {
     if (!socialPanel) return
     if (!stateBridge || typeof fetch !== 'function' || !socialRoute()) {
-      if (socialSummary) socialSummary.textContent = '社交服务还没连上：刷新页面或检查 Host 插件是否启动。'
-      if (socialStatusBox) clearNode(socialStatusBox)
-      if (socialNotices) clearNode(socialNotices)
-      if (socialList) clearNode(socialList)
+      socialPayload = null
+      renderSocialView()
       return
     }
     if (socialSummary) socialSummary.textContent = '正在读取社交连接…'
     loadSocial()
   }
 
-  if (socialButton) socialButton.addEventListener('click', function () { openModal('social') })
+  if (socialButton) socialButton.addEventListener('click', function () { socialScreen = 'catalog'; openModal('social') })
   if (socialRefresh) socialRefresh.addEventListener('click', function () { renderSocial() })
-  if (socialNew) socialNew.addEventListener('click', function () { socialResetForm() })
+  if (socialBack) socialBack.addEventListener('click', function () { socialNavigate('catalog') })
+  if (socialCancel) socialCancel.addEventListener('click', function () { socialNavigate('detail') })
+  if (socialForm) socialForm.addEventListener('submit', function (event) { event.preventDefault(); socialSaveConfig() })
+  if (socialNew) socialNew.addEventListener('click', function () { if (!socialNew.disabled && socialPlatformInfo().available) socialResetForm() })
   if (socialSave) socialSave.addEventListener('click', socialSaveConfig)
   if (socialDelete) socialDelete.addEventListener('click', socialDeleteConnection)
 

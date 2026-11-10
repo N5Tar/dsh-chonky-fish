@@ -284,6 +284,46 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
 .cf-social-checks{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:#56708f}
 .cf-social-checks label{display:flex;align-items:center;gap:6px;cursor:pointer}
 .cf-social-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:4px}
+/* Social navigation: cards → saved channel details → separate configuration form. */
+#social-panel [hidden]{display:none!important}
+#social-panel{color:#31577f}
+#social-panel .cf-social-head{color:#506b89;margin-bottom:24px;line-height:1.7}
+.cf-social-catalog{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.cf-social-card{display:flex;flex-direction:column;align-items:stretch;min-width:0;text-align:left;padding:24px;border:1px solid #dce8f5;border-radius:16px;background:#fbfdff;color:#243b5e;transition:border-color .18s,background .18s,transform .18s}
+.cf-social-card:hover{background:#f2f8ff;border-color:#7da9d7;transform:translateY(-2px)}
+.cf-social-card:active{transform:translateY(0)}
+.cf-social-card-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:22px}
+.cf-social-mark{display:grid;place-items:center;width:46px;height:46px;border-radius:12px;background:#e5f0fc;color:#2865a4;font-size:20px;font-weight:750}
+.cf-social-card strong{font-size:20px;font-weight:700;letter-spacing:-.4px}
+.cf-social-card-description{font-size:13px;line-height:1.8;color:#506b89;margin:8px 0 24px}
+.cf-social-card-footer{border-top:1px solid #e1ebf6;padding-top:16px;margin-top:auto;font-size:12px;line-height:1.8;color:#42698e}
+.cf-social-detail-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:24px 0}
+.cf-social-detail-head h2{font-size:22px;letter-spacing:-.4px;margin:0;color:#243b5e}
+.cf-social-detail-head p{font-size:13px;line-height:1.8;color:#506b89;margin:8px 0 0}
+#social-panel .cf-social-block{margin-top:26px}
+#social-panel .cf-social-title{font-size:14px;color:#31577f;margin-bottom:12px}
+#social-panel .cf-social-list{max-height:none;gap:12px}
+#social-panel .cf-social-row{padding:18px;align-items:flex-start;color:#426180;overflow-wrap:anywhere}
+#social-panel .cf-social-row>div:first-child{min-width:0}
+#social-panel .cf-social-row small{color:#506b89;font-size:12px;margin:8px 0;word-break:normal}
+#social-panel .cf-social-row b{font-weight:500}
+#social-panel .cf-social-chip{font-size:11px;color:#426180;white-space:nowrap;margin:0 0 0 8px}
+#social-panel .cf-social-chip.ok{color:#247052;background:#eaf6ef}
+#social-panel .cf-social-chip.bad{color:#a13c3c;background:#fceeee}
+#social-panel .cf-social-empty{padding:32px 18px;border:1px dashed #dce8f5;border-radius:12px;color:#506b89;line-height:1.9;background:#fbfdff}
+#social-panel .cf-social-status,#social-panel .cf-note{color:#506b89;overflow-wrap:anywhere}
+#social-panel .cf-social-form{margin:0;padding:0;border:0;gap:20px}
+#social-panel .cf-social-form>.cf-refresh{justify-self:start}
+#social-panel .cf-social-error{color:#993b3b}
+#social-panel input::placeholder{color:#607790}
+#social-panel .cf-field label{color:#426180}
+#social-panel button{white-space:nowrap}
+#social-panel .cf-refresh,#social-panel .cf-ghost,#social-panel .cf-social-row button{color:#30669c}
+#social-panel .primary,#social-panel .primary-mini{background:#316da9;color:#fff}
+#social-panel button:disabled{opacity:.55;cursor:not-allowed;transform:none}
+#social-panel select:focus-visible,#social-panel button:focus-visible{outline:3px solid #5295df;outline-offset:3px}
+@media(max-width:620px){.cf-social-catalog,.cf-social-grid{grid-template-columns:1fr}.cf-social-card{padding:20px}.cf-social-detail-head{align-items:flex-start;flex-direction:column}#social-panel .cf-social-row{flex-direction:column}.cf-social-row .cf-social-actions{align-self:flex-end}}
+@media(prefers-reduced-motion:reduce){.cf-social-card{transition:none}.cf-social-card:hover{transform:none}}
 </style>
 </head>
 <body>
@@ -389,16 +429,23 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
     </div>
     <div class="cf-section" id="social-panel" hidden>
       <div class="cf-social-head"><span id="social-summary">正在读取社交连接…</span><button class="cf-refresh" id="social-refresh" type="button">刷新</button></div>
+      <div id="social-catalog" class="cf-social-catalog" aria-label="社交渠道"></div>
+      <div id="social-detail" hidden>
+      <button class="cf-refresh" id="social-back" type="button">← 返回渠道列表</button>
+      <div class="cf-social-detail-head"><div><h2 id="social-detail-title" tabindex="-1">渠道详情</h2><p id="social-detail-description"></p></div><button class="cf-refresh" id="social-new" type="button">新增连接</button></div>
       <div class="cf-social-status" id="social-status"></div>
+      <div class="cf-social-block">
+        <div class="cf-social-title"><span>已配置连接</span></div>
+        <div class="cf-social-list" id="social-list"></div>
+      </div>
       <div class="cf-social-block">
         <div class="cf-social-title"><span>未读会话</span><b id="social-unread-count">0</b></div>
         <div class="cf-social-list" id="social-notices"></div>
       </div>
-      <div class="cf-social-block">
-        <div class="cf-social-title"><span>连接</span><button class="cf-refresh" id="social-new" type="button">新增连接</button></div>
-        <div class="cf-social-list" id="social-list"></div>
+      <div class="cf-note">消息到达只进收件箱，不会自动调用模型或回复。「查看」会让鱼鱼处理这一批消息，之后她可以不回复。</div>
       </div>
-      <form class="cf-social-form" id="social-form" autocomplete="off">
+      <form class="cf-social-form" id="social-form" autocomplete="off" hidden>
+        <button class="cf-refresh" id="social-cancel" type="button">← 返回渠道详情</button>
         <div class="cf-social-title"><span id="social-form-title">新增连接</span></div>
         <div class="cf-social-grid">
           <div class="cf-field"><label for="social-id">连接 ID</label><input id="social-id" maxlength="80" placeholder="qq-main"/></div>
@@ -410,8 +457,9 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
         </div>
         <div class="cf-field"><label for="social-endpoint">连接地址（ws:// 或本机 wss://）</label><input id="social-endpoint" maxlength="2048" placeholder="ws://127.0.0.1:3001/"/></div>
         <div class="cf-actions"><button class="cf-ghost" type="button" id="social-delete">删除这条</button><button class="primary" type="button" id="social-save">保存</button></div>
+        <div class="cf-note">保存即启用。凭证明文不写进配置，这里只填环境变量名。</div>
+        <div id="social-form-error" class="cf-social-error" role="alert" hidden></div>
       </form>
-      <div class="cf-note">🔒 保存即启用，私聊、群和频道消息默认都接收。凭证明文不写进配置，这里只填环境变量名。消息到达只进收件箱并更新未读数，不会自动调用模型或回复；「查看」是你主动让鱼鱼看这一批消息，之后她可以不回复。</div>
     </div>
   </section>
 </div>
