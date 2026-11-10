@@ -110,6 +110,12 @@ test('查询参数：limit 截断、sinceSeq、sessionId 过滤', () => {
     const latest = engine.listEvents({ latest: true, limit: 1 })
     assert.equal(latest.length, 1)
     assert.equal(latest[0].eventSeq, all.events[2].eventSeq, 'latest returns newest bounded window')
+    const latestHttp = handleEventsRequest({ engine, url: '/x?latest=true&limit=1' })
+    assert.equal(latestHttp.body.events[0].eventSeq, latest[0].eventSeq)
+    assert.equal(latestHttp.body.count, 1)
+    assert.equal(parseEventsQuery('/x?latest=false').latest, undefined)
+    const defaultHttp = handleEventsRequest({ engine, url: '/x?limit=1' })
+    assert.equal(defaultHttp.body.events[0].eventSeq, all.events[0].eventSeq)
     const latestB = engine.listEvents({ latest: true, limit: 1, sessionId: 'session-b' })
     assert.equal(latestB[0].eventSeq, onlyB.events[0].eventSeq)
   } finally {

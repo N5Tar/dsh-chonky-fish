@@ -75,9 +75,10 @@ assert.equal(presented.at, '2026-11-07 11:34:11 UTC+8')
 assert.equal(presented.nested.nextReviewAt, '2026-11-08 00:00:00 UTC+8')
 assert.equal(presented.description, audit.description, 'do not rewrite arbitrary content')
 assert.equal(JSON.stringify(audit), untouched)
-assert.match(display.ABS_LAB_SURFACE, /backdrop-filter:blur\(24px\)/)
-assert.match(display.ABS_LAB_SURFACE, /-webkit-backdrop-filter/)
-assert.match(display.ABS_LAB_SURFACE, /prefers-reduced-transparency/)
+assert.match(display.ABS_LAB_SURFACE, /grid-template-columns:\.85fr 1.4fr/)
+assert.match(display.ABS_LAB_SURFACE, /@media\(max-width:600px\)/)
+assert.doesNotMatch(display.ABS_LAB_SURFACE, /backdrop-filter/)
+assert.match(display.ABS_LAB_SURFACE, /var\(--dsw-alias-bg-base\)/)
 
 const wake = display.describeAbsAudit({ type: 'WakeRecord', at: '2026-11-07T03:34:11Z', cause: 'timer', mode: 'shadow', gate: 'SHADOW_PREVIEW_ONLY', nextWakeRealAt: '2026-11-07T05:34:11Z', realAt: '2026-11-07T03:34:11Z' })
 assert.equal(wake.title, '开始一次状态审查')
@@ -170,4 +171,25 @@ function buttons(node) { return node && typeof node === 'object' ? [...(node.typ
 assert.equal(buttons(restingReview).find((button) => button.children.includes('手动投递审查')).props.disabled, true)
 assert.equal(buttons(restingReview).find((button) => button.children.includes('刷新预览')).props.disabled, undefined)
 assert.match(display.absAuditWord('REST_HOURS'), /不唤醒/)
+// The integrated page mounts both states, folded time settings, and real event extraction.
+display.AbsOwnerStatePanel = function AbsOwnerStatePanel() {}
+display.AbsEventsPanel = function AbsEventsPanel() {}
+let pageHook = 0
+const effects = []
+display.React = {
+  Fragment: 'fragment',
+  useState(value) { return [pageHook++ === 0 ? { state: reviewState } : value, () => {}] },
+  useRef(value) { return { current: value } },
+  useEffect(fn) { effects.push(fn) },
+}
+const page = display.AbsLabPage()
+function allNodes(node) { return node && typeof node === 'object' ? [node, ...(node.children || []).flatMap(allNodes)] : [] }
+const panels = allNodes(page).filter(node => typeof node.type === 'function').map(node => node.type)
+assert.deepEqual(panels, [display.AbsOwnerStatePanel, display.AbsNeedsPanel, display.AbsClockPanel, display.AbsRestPanel, display.AbsEventsPanel])
+assert.doesNotMatch(JSON.stringify(page), /运行状态|开始投递审查|隔离回放|导出近期审计|近期活动与决策|上次操作结果/)
+assert.equal(buttons(page).length, 0, 'page must not expose mode, wake, replay or export actions')
+assert.match(needsTree, /大肥鱼状态/)
+assert.equal(findDetails(page).length, 1)
+assert.ok(!findDetails(page)[0].props.open, 'time settings collapsed by default')
+console.log('PASS ABS integrated states, folded time settings and event panel')
 console.log('ABS client/startup: PASS (responses, startup, review UI, needs, observations, audit timeline, real-time-only display, change ledger, rest hours)')

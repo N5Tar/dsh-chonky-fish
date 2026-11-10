@@ -140,6 +140,7 @@ css += `
 
 const runtime = readFileSync(join(here, 'src/runtime.js'), 'utf8')
 const absLab = readFileSync(join(here, 'src/abs/lab.js'), 'utf8')
+const absEventsPanel = readFileSync(join(here, 'src/abs/events-panel.js'), 'utf8')
 const skillsPanel = readFileSync(join(here, 'src/skills/panel.js'), 'utf8')
 const perceptionPanel = readFileSync(join(here, 'src/perception/client.js'), 'utf8')
 const avatarPlayer = readFileSync(join(here, 'src/avatar/player.js'), 'utf8')
@@ -327,6 +328,7 @@ window.__ModuleLoader__.load({
     }
 
 ${runtime}
+${absEventsPanel}
 ${absLab}
 ${skillsPanel}
 ${perceptionPanel}
@@ -875,7 +877,6 @@ ${avatarWidget}
       { id: 'chonkyfish', view: 'chat', label: 'nav', icon: ICON_CHAT, order: 20 },
       { id: 'chonkyfish-wallet', view: 'wallet', label: 'navWallet', icon: ICON_WALLET, order: 21 },
       { id: 'chonkyfish-persona', view: 'settings', label: 'navPersona', icon: ICON_PERSONA, order: 22 },
-      { id: 'chonkyfish-sense', view: 'sense', label: 'navSense', icon: ICON_SENSE, order: 23 },
       { id: 'chonkyfish-diary', view: 'diary', label: 'navDiary', icon: ICON_DIARY, order: 24 },
       { id: 'chonkyfish-social', view: 'social', label: 'navSocial', icon: ICON_SOCIAL, order: 25 },
       { id: 'chonkyfish-skills', view: 'skills', label: 'navSkills', icon: ICON_SKILLS, order: 25.5 },
@@ -920,7 +921,7 @@ ${avatarWidget}
             name: 'main',
             key: panel.id,
             locale: NS,
-          }, panel.view === 'abs' ? AbsLabPage : panel.view === 'skills' ? createSafeSkillsPage(t) : panel.view === 'sense' ? createPerceptionPage() : createPanelPage(panel.view))
+          }, panel.view === 'abs' ? AbsLabPage : panel.view === 'skills' ? createSafeSkillsPage(t) : createPanelPage(panel.view))
         })
       })
 

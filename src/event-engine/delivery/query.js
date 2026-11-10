@@ -16,7 +16,9 @@ export function parseEventsQuery(url) {
   const rawSince = Number(parsed.searchParams.get('sinceSeq'))
   const sinceSeq = Number.isFinite(rawSince) && rawSince > 0 ? Math.floor(rawSince) : 0
   const sessionId = parsed.searchParams.get('sessionId')
-  return { limit, sinceSeq, sessionId: sessionId && sessionId.length > 0 ? sessionId : null }
+  return { limit, sinceSeq, sessionId: sessionId && sessionId.length > 0 ? sessionId : null,
+    ...(parsed.searchParams.get('latest') === 'true' ? { latest: true } : {}),
+  }
 }
 
 function toWireEvent(event) {
@@ -47,6 +49,7 @@ export function readEvents(engine, query) {
     sessionId: query.sessionId,
     limit: query.limit,
     sinceSeq: query.sinceSeq,
+    latest: query.latest === true,
   })
   return {
     ok: true,

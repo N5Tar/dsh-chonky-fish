@@ -1,10 +1,10 @@
 // Browser source embedded by build.mjs; React/h/RESOURCES belong to the plugin module.
-async function requestAbsLab(body) {
+async function requestAbsLab(body, signal) {
   var bootstrap = window.__CHONKYFISH_STATE__ || {}
   var endpoint = (bootstrap.routes || {}).abs || RESOURCES.routes.abs
   if (!endpoint) throw new Error('ABS 接口地址缺失，请更新插件并刷新页面。')
   var response = await fetch(endpoint, {
-    method: body ? 'POST' : 'GET',
+    method: body ? 'POST' : 'GET', signal: signal, cache: 'no-store',
     headers: { 'content-type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   })
@@ -37,9 +37,11 @@ function stringifyAbsDisplay(value) {
     return typeof item === 'string' && /(?:At|Time)$|^(?:at|time)$/.test(key) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(item) ? formatAbsTime(item) : item
   }, 2)
 }
-var ABS_LAB_SURFACE = '.cf-abs-lab{background:var(--dsw-alias-bg-layer-2,#f5faff);border:1px solid var(--dsw-alias-border-l2,rgba(150,175,195,.22));box-shadow:inset 0 1px 0 rgba(255,255,255,.22);font-variant-numeric:tabular-nums;}' +
-  '@supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.cf-abs-lab{background:color-mix(in srgb,var(--dsw-alias-bg-layer-2,#f5faff) 76%,transparent);backdrop-filter:blur(24px) saturate(115%);-webkit-backdrop-filter:blur(24px) saturate(115%);}}' +
-  '@media (prefers-reduced-transparency:reduce){.cf-abs-lab{background:var(--dsw-alias-bg-layer-2,#f5faff);backdrop-filter:none;-webkit-backdrop-filter:none;}}'
+var ABS_LAB_SURFACE = `
+.cf-abs-lab{height:100%;overflow:auto;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:14px/1.65 var(--dsw-font-family,system-ui);font-variant-numeric:tabular-nums}
+.cf-abs-lab *{box-sizing:border-box}.cf-abs-lab .abs-shell{max-width:1260px;margin:auto;padding:36px 40px 48px}.cf-abs-lab h1{font-size:28px;margin:0}.cf-abs-lab h2{font-size:17px;margin:0}.cf-abs-lab h3{font-size:14px;font-weight:500;margin:0}.cf-abs-lab p{margin:8px 0}.cf-abs-lab .abs-muted{color:var(--dsw-alias-label-secondary);font-size:12px}.cf-abs-lab .abs-header{margin-bottom:28px}.cf-abs-lab .abs-states{display:grid;grid-template-columns:.85fr 1.4fr;gap:20px}.cf-abs-lab .abs-panel{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:24px 26px;min-width:0}.cf-abs-lab .abs-panel-heading,.cf-abs-lab .abs-panel-footer{display:flex;justify-content:space-between;align-items:center;gap:12px}.cf-abs-lab .abs-panel-footer{border-top:1px solid var(--dsw-alias-border-l1);padding-top:18px;color:var(--dsw-alias-label-secondary);font-size:12px;flex-wrap:wrap}.cf-abs-lab .abs-owner-body{min-height:178px;display:flex;justify-content:center;flex-direction:column}.cf-abs-lab .activity{font-size:40px;font-weight:600;line-height:1.3}.cf-abs-lab .abs-drives{display:grid;grid-template-columns:1fr 1fr;gap:28px;padding:28px 0}.cf-abs-lab .abs-drive+.abs-drive{border-left:1px solid var(--dsw-alias-border-l1);padding-left:28px}.cf-abs-lab .abs-value{font-size:36px;line-height:1.4;margin:8px 0}.cf-abs-lab meter{width:100%;height:10px;accent-color:var(--dsw-alias-brand-primary)}.cf-abs-lab meter::-webkit-meter-bar{background:var(--dsw-alias-bg-layer-2);border:0;border-radius:2px}.cf-abs-lab meter::-webkit-meter-optimum-value{background:var(--dsw-alias-brand-primary)}.cf-abs-lab meter::-moz-meter-bar{background:var(--dsw-alias-brand-primary)}.cf-abs-lab button,.cf-abs-lab input,.cf-abs-lab select{font:inherit;color:inherit;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:8px 12px;max-width:100%}.cf-abs-lab button{cursor:pointer;white-space:nowrap}.cf-abs-lab button:disabled{opacity:.5;cursor:default}.cf-abs-lab :focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:3px}.cf-abs-lab .abs-actions{display:flex;gap:8px}.cf-abs-lab .abs-actions button{font-size:12px;padding:5px 10px}.cf-abs-lab .abs-settings{margin-top:24px;padding:0}.cf-abs-lab .abs-settings>summary{cursor:pointer;padding:20px 26px;font-weight:600}.cf-abs-lab .abs-settings-summary{font-size:12px;font-weight:400;color:var(--dsw-alias-label-secondary);margin-left:20px}.cf-abs-lab .abs-time-grid{display:grid;grid-template-columns:1fr 1fr;gap:30px;padding:0 26px 20px;border-top:1px solid var(--dsw-alias-border-l1)}.cf-abs-lab .abs-error{padding:12px 16px;border-left:3px solid var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-1)}
+@media(max-width:960px){.cf-abs-lab .abs-shell{padding:28px 24px}.cf-abs-lab .abs-states{grid-template-columns:1fr}.cf-abs-lab .abs-time-grid{grid-template-columns:1fr;gap:0}}@media(max-width:600px){.cf-abs-lab .abs-shell{padding:20px 16px}.cf-abs-lab .abs-panel{padding:20px}.cf-abs-lab .abs-settings{padding:0}.cf-abs-lab .abs-settings-summary{display:block;margin:8px 0 0}.cf-abs-lab .abs-value{font-size:28px}.cf-abs-lab .abs-drives{gap:16px}.cf-abs-lab .abs-drive+.abs-drive{padding-left:16px}.cf-abs-lab .activity{font-size:32px}}
+`
 var ABS_AUDIT_WORDS = {
   off: '已关闭', shadow: '观察模式', active: '投递模式',
   timer: '定时审查', manual: '手动审查', transition: '模式切换',
@@ -160,34 +162,14 @@ function describeAbsNeeds(state) {
 }
 function AbsNeedsPanel(props) {
   var state = props.state || {}, rows = describeAbsNeeds(state)
-  var available = rows.filter(function (row) { return row.available })
-  var summary = '暂时没有可展示的有效状态数据。'
-  if (available.length) {
-    var highest = Math.max.apply(null, available.map(function (row) { return row.demand }))
-    var leading = available.filter(function (row) { return Math.abs(row.demand - highest) < .000001 }).map(function (row) { return row.title })
-    summary = highest === 0 ? '两项满足程度都处于平常水平。' : leading.join('与') + (leading.length > 1 ? '的缺口相同。' : '的缺口当前最大。')
-  }
-  var percent = function (value) { return value === null ? '—' : (value * 100).toFixed(1) + '%' }
-  return h('section', { 'aria-label': '当前内部状态', style: { margin: '24px 0' } },
-    h('h2', null, '当前内部状态'),
-    h('p', { style: { lineHeight: 1.7 } }, summary + ' 这些是供大肥鱼感知的内部数值，不代表真实情绪，也不构成行动命令。'),
-    h('p', { style: { fontSize: 12, opacity: .75, lineHeight: 1.7 } },
-      state.mode === 'shadow' ? '观察模式：只生成审查，不投递给大肥鱼。' : state.mode === 'off' ? 'ABS 已关闭，展示暂停前最后保存的状态。' : '投递模式：审查会交给大肥鱼，由它自己决定是否行动。'),
-    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,280px),1fr))', gap: 24 } }, rows.map(function (row) {
-      return h('article', { key: row.id, style: { padding: '18px 0', borderTop: '1px solid var(--dsw-alias-border-l2,#9aa8b555)' } },
-        h('h3', { style: { margin: '0 0 8px', fontSize: 17 } }, row.title),
-        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8 } },
-          h('strong', { style: { fontSize: 28, fontWeight: 600 } }, percent(row.demand)), h('span', null, row.level)),
-        h('p', { style: { fontSize: 12, opacity: .75, margin: '4px 0' } }, '缺口 · 越高表示距离平常的满足水平越远'),
-        row.available ? h('meter', { min: 0, max: 1, value: row.demand, 'aria-label': row.title + '缺口', style: { width: '100%', height: 14 } }, percent(row.demand)) : null,
-        h('p', null, '当前满足度 ' + percent(row.satisfaction)),
-        h('p', { style: { fontSize: 13 } }, row.decay === null ? '自然变化速度未记录' : '1× 时，满足度每小时下降 ' + (row.decay * 100).toFixed(2) + ' 个百分点；实际速度乘以当前倍率'),
-        h('p', { style: { fontSize: 12, opacity: .75 } }, '最近真实反馈：' + (row.lastFeedbackAt ? formatAbsTime(row.lastFeedbackAt) : '暂无')))
-    })),
-    h('details', { style: { marginTop: 12, fontSize: 12, lineHeight: 1.7 } }, h('summary', { style: { cursor: 'pointer' } }, '这些数值如何理解？'),
-      h('p', null, '缺口 =（平常满足水平 − 当前满足度）÷ 平常满足水平，限制在 0–100%。高于平常水平时缺口为 0。'),
-      h('p', null, '满足度只由真实观察更新：主人的真实发言提高社交满足度；有来源的搜索、非空阅读、图片内容和工作区实际创作结果提高探索满足度。本地活动每轮最多计一次，相同证据不重复计入；普通回复、任意命令成功、模型自述不会加分。'),
-      h('p', null, '缺口大小只用于描述当前状态，ABS 不据此替大肥鱼选择行为。')))
+  var percent = function(value) { return value === null ? '暂无数据' : (value*100).toFixed(1)+'%' }
+  return h('section',{className:'abs-panel','aria-label':'大肥鱼状态'},
+    h('div',{className:'abs-panel-heading'},h('h2',null,'大肥鱼状态'),h('span',{className:'abs-muted'},props.stale?'非实时状态':'内部满足度')),
+    h('div',{className:'abs-drives'},rows.map(function(row){return h('article',{key:row.id,className:'abs-drive'},
+      h('h3',null,row.id==='social'?'社交满足度':'探索满足度'),h('div',{className:'abs-value'},percent(row.satisfaction)),
+      row.available?h('meter',{min:0,max:1,value:row.satisfaction,'aria-label':row.title},percent(row.satisfaction)):null,
+      h('p',{className:'abs-muted'},'需求缺口 '+percent(row.demand)+' · '+row.level))})),
+    h('div',{className:'abs-panel-footer'},h('span',null,'内部数值不代表真实情绪，也不构成行动命令。'),h('span',null,state.mode?absAuditWord(state.mode):'模式未知')))
 }
 function parseAbsTimeScale(value) {
   if (typeof value !== 'string' || !value.trim()) return null
@@ -313,8 +295,6 @@ function AbsLabPage() {
   var dataState = React.useState(null), data = dataState[0], setData = dataState[1]
   var errorState = React.useState(''), error = errorState[0], setError = errorState[1]
   var busyState = React.useState(false), busy = busyState[0], setBusy = busyState[1]
-  var confirmState = React.useState(false), confirmed = confirmState[0], setConfirmed = confirmState[1]
-  var resultState = React.useState(null), result = resultState[0], setResult = resultState[1]
   var mounted = React.useRef(false)
   var request = requestAbsLab
   async function refresh() {
@@ -330,45 +310,21 @@ function AbsLabPage() {
   async function action(body) {
     setBusy(true); setError('')
     try {
-      var value = await request(body)
+      await request(body)
       if (!mounted.current) return
-      setResult(value.result)
-      if (body.action === 'export') {
-        var url = URL.createObjectURL(new Blob([value.result.content], { type: 'application/x-ndjson' }))
-        var link = document.createElement('a'); link.href = url; link.download = 'abs-audit.jsonl'; link.click()
-        setTimeout(function () { URL.revokeObjectURL(url) }, 1000)
-      }
       await refresh()
       return true
     } catch (e) { if (mounted.current) setError(e.message); return false }
     finally { if (mounted.current) setBusy(false) }
   }
   var state = data && data.state
-  var button = function (text, body, disabled) { return h('button', { type: 'button', disabled: busy || disabled, onClick: function () { action(body) }, style: { padding: '8px 12px', marginRight: 8, marginBottom: 8, cursor: 'pointer' } }, text) }
-  return h('main', { className: 'cf-abs-lab', style: { padding: 28, overflow: 'auto', height: '100%', boxSizing: 'border-box', color: 'var(--dsw-alias-label-primary)', fontSize: 14 } },
-    h('style', null, ABS_LAB_SURFACE),
-    h('h1', null, 'ABS 实验台'),
-    h('p', { style: { opacity: .72, fontSize: 12 } }, '显示时区：东八区（UTC+8） · 原始记录与导出保留 UTC'),
-    h('p', null, '内部状态 → 自然语言状态审查 → 大肥鱼自己决定行为 → 真实观察回到状态。'),
-    h('p', { style: { maxWidth: 850 } }, 'ABS 不再生成动机、挑选渠道或指派行动。审查只是内部状态记录；投递后是否说话、是否搜索、是否保持安静，由大肥鱼自己决定。接纳审查不等于已经行动，也不等于主人已读。'),
-    error ? h('p', { role: 'alert', style: { color: '#c0525c' } }, error) : null,
-    !state ? h('p', null, '正在读取；若模块尚未加载，请重启宿主并刷新页面。') : h(React.Fragment, null,
-      h('h2', null, '运行状态'),
-      h('p', null, '模式：' + absAuditWord(state.mode) + ' · 模型调用：不限额'),
-      button('关闭', { action: 'mode', mode: 'off' }), button('观察模式', { action: 'mode', mode: 'shadow' }),
-      button('开始投递审查', { action: 'mode', mode: 'active', confirmActive: true }, !confirmed),
-      h('label', { style: { display: 'block', marginBottom: 16 } }, h('input', { type: 'checkbox', checked: confirmed, onChange: function (event) { setConfirmed(event.target.checked) } }), '我确认投递会唤醒大肥鱼会话并消耗模型费用；ABS 只提供状态审查，不指派行为。'),
-      button('隔离回放 +72 小时', { action: 'replay', hours: 72 }), button('导出近期审计', { action: 'export' }),
-      h('p', null, '隔离回放不调用模型或工具，只投影状态与审查文本。'),
-      h(AbsClockPanel, { state: state, busy: busy, onAction: action }),
-      h(AbsRestPanel, { state: state, busy: busy, onAction: action }),
-      h(AbsNeedsPanel, { state: state }),
-      h(AbsReviewPanel, { state: state, busy: busy, onAction: action }),
-      h(AbsEnvironmentPanel, { environment: data.environment }),
-      h(AbsObservationsPanel, { state: state }),
-      h(AbsChangeLedger, { state: state }),
-      h('h2', null, '近期活动与决策'),
-      h('p', { style: { opacity: .7, fontSize: 12 } }, '最近 30 条记录，最新在前。记录时间均为现实时间；中文说明只解释已记录事实。'),
-      h(AbsAuditTimeline, { records: data.records }),
-      result ? h('details', { open: false }, h('summary', null, '上次操作结果'), h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 360, overflow: 'auto' } }, stringifyAbsDisplay(result))) : null))
+  var clock = state && state.clockView, rest = clock && clock.rest
+  var timeSummary = clock ? '变化速度 '+clock.timeScale+'× · '+(rest && rest.enabled?'每日休息 '+rest.start+'–'+rest.end:rest?'每日休息关闭':'休息设置待加载')+' · UTC+8' : '等待时钟数据'
+  return h('main', { className: 'cf-abs-lab' },h('style',null,ABS_LAB_SURFACE),h('div',{className:'abs-shell'},
+    h('header',{className:'abs-header'},h('h1',null,'ABS 实验台'),h('p',{className:'abs-muted'},'主人的当下，大肥鱼的内部状态。')),
+    error ? h('p',{role:'alert',className:'abs-error'},error) : null,
+    h('div',{className:'abs-states'},h(AbsOwnerStatePanel),h(AbsNeedsPanel,{state:state,stale:Boolean(error)})),
+    h('details',{className:'abs-panel abs-settings'},h('summary',null,'时间设置',h('span',{className:'abs-settings-summary'},timeSummary)),
+      state?h('div',{className:'abs-time-grid'},h(AbsClockPanel,{state:state,busy:busy,onAction:action}),h(AbsRestPanel,{state:state,busy:busy,onAction:action})):h('p',null,'正在读取时间设置…')),
+    h(AbsEventsPanel)))
 }
