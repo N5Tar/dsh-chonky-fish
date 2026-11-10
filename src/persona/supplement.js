@@ -1,4 +1,4 @@
-/** Panel persona and personal-profile location, appended by the preset variable. */
+/** Read panel persona and profile location once; render them through separate prompt variables. */
 import { readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { DEFAULT_PANEL_PROMPT, PANEL_SUPPLEMENT_VARIABLE, PERSONAL_PROFILE_DIR } from '../resources/spec.js'
@@ -9,33 +9,36 @@ const HEADING = '补充人格设定（来自大肥鱼面板，可随时修改）
 export function createPanelSupplement({ statePath, defaultProfileDirectory, logger } = {}) {
   if (typeof statePath !== 'string' || statePath === '') throw new Error('createPanelSupplement: statePath is required')
   const fallback = defaultProfileDirectory || join(dirname(statePath), PERSONAL_PROFILE_DIR)
-  const defaultText = '\n\n你的个人资料在' + fallback
+  const defaults = Object.freeze({ prompt: '', profileDirectory: fallback })
   let cachedKey = ''
-  let cachedText = defaultText
+  let cachedState = defaults
   function warn(message, error) {
     try { logger?.warn?.('[chonkyfish/persona] ' + message, error) } catch {}
   }
-  function read() {
+  function readState() {
     let stat
     try { stat = statSync(statePath) }
-    catch { cachedKey = ''; cachedText = defaultText; return cachedText }
+    catch { cachedKey = ''; cachedState = defaults; return cachedState }
     const key = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}:${stat.ino}`
-    if (key === cachedKey) return cachedText
+    if (key === cachedKey) return cachedState
     try {
       const raw = JSON.parse(readFileSync(statePath, 'utf8'))
       const state = raw?.state || {}
       const prompt = typeof state.prompt === 'string' ? state.prompt.trim() : ''
-      let directory = fallback
-      try { directory = normalizeProfileDirectory(state.profileDirectory, fallback) }
+      let profileDirectory = fallback
+      try { profileDirectory = normalizeProfileDirectory(state.profileDirectory, fallback) }
       catch (error) { warn('个人档案目录无效，使用默认目录', error) }
-      const supplement = prompt && prompt !== DEFAULT_PANEL_PROMPT ? '\n\n' + HEADING + '\n' + prompt : ''
-      cachedText = supplement + '\n\n你的个人资料在' + directory
+      cachedState = Object.freeze({ prompt: prompt !== DEFAULT_PANEL_PROMPT ? prompt : '', profileDirectory })
     } catch (error) {
       warn('读取面板人格设定失败，保留默认个人档案目录', error)
-      cachedText = defaultText
+      cachedState = defaults
     }
     cachedKey = key
-    return cachedText
+    return cachedState
   }
-  return { variableName: PANEL_SUPPLEMENT_VARIABLE, provider: read, read }
+  function read() {
+    const { prompt } = readState()
+    return prompt ? '\n\n' + HEADING + '\n' + prompt : ''
+  }
+  return { variableName: PANEL_SUPPLEMENT_VARIABLE, provider: read, read, readState }
 }

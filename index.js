@@ -20,6 +20,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import { createPanelSupplement } from './src/persona/supplement.js'
+import { createModulePrompt } from './src/persona/modules.js'
 import { normalizeProfileDirectory } from './src/persona/profile-directory.js'
 import { createResources } from './src/resources/index.js'
 import { installSocial } from './src/social/index.js'
@@ -113,7 +114,16 @@ export function apply(ctx) {
   // {{chonkyfish_supplement}} 引用它，所以人格不再混进用户消息。
   ctx.effect(() => {
     const supplement = createPanelSupplement({ statePath: resources.paths.state, defaultProfileDirectory: resources.paths.personalProfile, logger: ctx.logger })
-    return ctx.systemPrompt.variable(supplement.variableName, supplement.provider)
+    const modules = createModulePrompt({ readContext: supplement.readState })
+    const disposeSupplement = ctx.systemPrompt.variable(supplement.variableName, supplement.provider)
+    let disposeModules
+    try {
+      disposeModules = ctx.systemPrompt.variable(modules.variableName, modules.provider)
+    } catch (error) {
+      disposeSupplement()
+      throw error
+    }
+    return () => { disposeModules(); disposeSupplement() }
   }, 'chonkyfish: panel persona supplement')
 
   function writeState(body, profileDirectory) {
