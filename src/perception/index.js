@@ -3,6 +3,7 @@ import { constants } from 'node:fs'
 import { createPerceptionStore } from './store.js'
 import { createPerceptionService } from './service.js'
 import { registerPerceptionRoute } from './http.js'
+import { createPerceptionTool } from './tools.js'
 
 // In-process hot reload ownership only; no standalone lock manager or service.
 const owners = new Map()
@@ -10,7 +11,7 @@ const owners = new Map()
 /** The plugin owns this instance; native collection is always opt-in. */
 export function installPerception(ctx, { resources, ready: layoutReady = Promise.resolve(),
   loadSqlite = () => import('node:sqlite'), serviceFactory = createPerceptionService, storeFactory = createPerceptionStore } = {}) {
-  let closed = false, service = null, failure = null, disposeRoute = () => {}, closing = null
+  let closed = false, service = null, failure = null, disposeRoute = () => {}, disposeTool = () => {}, closing = null
   const warn = error => { try { ctx.logger?.warn?.('[chonkyfish] 感知模块不可用', error?.code || error?.message) } catch {} }
   const ownerKey = resources.paths.perceptionDatabase
   const previousClosed = owners.get(ownerKey)?.close()
@@ -46,12 +47,17 @@ export function installPerception(ctx, { resources, ready: layoutReady = Promise
     if (closing) return closing
     closed = true
     try { disposeRoute() } catch {}
+    try { disposeTool() } catch {}
     closing = (async () => { await ready; if (service) await service.close() })().catch(warn).finally(() => {
       if (owners.get(ownerKey)?.close === close) owners.delete(ownerKey)
     })
     return closing
   }
   try {
+    if (ctx.tools) {
+      const { tool, when } = createPerceptionTool({ resources, getService: () => service, getFailure: () => failure, isClosed: () => closed })
+      disposeTool = ctx.tools.register(tool, { when })
+    }
     if (ctx.webServer) disposeRoute = registerPerceptionRoute(ctx, { resources, ready, getService: () => service,
       isClosed: () => closed, getFailure: () => failure })
   } catch (cause) { void close(); throw cause }

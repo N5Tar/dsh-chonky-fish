@@ -34,7 +34,7 @@
     "test:perception:native": "node src/perception/tests/run-collector.mjs --native",
     "test:perception:soak": "node src/perception/tests/run-soak.mjs",
     "test:perception:live": "node src/perception/tests/run-live.mjs",
-    "test:perception": "node src/perception/tests/run-core.mjs && node src/perception/tests/run-store.mjs && node src/perception/tests/run-collector.mjs && node src/perception/tests/run-service.mjs && node src/perception/tests/run-host.mjs && node src/perception/tests/run-client.mjs",
+    "test:perception": "node src/perception/tests/run-core.mjs && node src/perception/tests/run-store.mjs && node src/perception/tests/run-collector.mjs && node src/perception/tests/run-service.mjs && node src/perception/tests/run-host.mjs && node src/perception/tests/run-client.mjs && node src/perception/tests/run-tools.mjs",
     "test:event-engine": "node src/event-engine/tests/run-fixtures.mjs",
     "test:event-engine:pipeline": "node src/event-engine/tests/run-pipeline.mjs",
     "test:event-engine:extraction": "node src/event-engine/tests/run-extraction.mjs",

@@ -10,9 +10,9 @@ import { perceptionTarget } from '../../platform/index.js'
 
 const tests = [], test = (name, fn) => tests.push([name, fn])
 function context() {
-  let route, removed = 0
-  return { ctx: { logger: { warn() {} }, webServer: { register(value) { route = value; return () => { ++removed } } } },
-    route: () => route, removed: () => removed }
+  let route, tool, condition, removed = 0, toolsRemoved = 0
+  return { ctx: { logger: { warn() {} }, tools: { register(value, options) { tool = value; condition = options.when; return () => { ++toolsRemoved } } }, webServer: { register(value) { route = value; return () => { ++removed } } } },
+    route: () => route, removed: () => removed, tool: () => tool, when: context => condition(context), toolsRemoved: () => toolsRemoved }
 }
 async function temporary(fn) {
   const directory = await mkdtemp(join(tmpdir(), 'fish-perception-test-'))
@@ -39,12 +39,17 @@ test('host initializes without collecting and disposes route/database', async ()
   await temporary(async root => {
     const resources = createResources({ homeRoot: root }); const ctx = context()
     const module = installPerception(ctx.ctx, { resources, ready: resources.ensureLayout() })
+    assert.equal(ctx.tool().name, 'perception_get_owner_state', 'registered during plugin initialization')
+    const agent = { session: { header: { cwd: resources.paths.workspace, agentPreset: 'chonkyfish' } } }
+    assert.equal(ctx.when({ agent }), true)
     await module.ready
+    assert.equal((await ctx.tool().execute({}, { agent })).prediction, null)
     assert.equal(module.getFailure(), null)
     assert.ok(['stopped', 'unsupported'].includes(module.getService().getStatus().state))
     assert.equal(module.getService().getCurrent().data, null)
     assert.equal(ctx.route().path, resources.routes.perception)
     await module.close(); await module.close(); assert.equal(ctx.removed(), 1)
+    assert.equal(ctx.toolsRemoved(), 1); assert.equal(ctx.when({ agent }), false)
   })
 })
 test('replacement install disposes previous same-directory instance first', async () => {
