@@ -104,6 +104,8 @@ await test('owner messages are observed, injections are not', async () => {
   assert.equal(f.observations[0].kind, 'owner_message')
   assert.equal(f.observations[0].sessionId, 'fish')
   assert.equal(f.observations[0].at, new Date(now).toISOString())
+  f.emit('user/message', { id: 'social-' + 'a'.repeat(64), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '喂' }] })
+  assert.equal(f.observations.length, 1, 'plain channel message is not local owner activity')
   for (const kind of ['chonkyfish-self-review', 'chonkyfish-nudge', 'schedule', 'agent-instructions']) {
     f.emit('user/message', { source: { kind }, message: {} })
   }

@@ -289,7 +289,7 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
 #social-panel{color:#31577f}
 #social-panel .cf-social-head{color:#506b89;margin-bottom:24px;line-height:1.7}
 .cf-social-catalog{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
-.cf-social-card{display:flex;flex-direction:column;align-items:stretch;min-width:0;text-align:left;padding:24px;border:1px solid #dce8f5;border-radius:16px;background:#fbfdff;color:#243b5e;transition:border-color .18s,background .18s,transform .18s}
+.cf-social-card{display:flex;flex-direction:column;align-items:stretch;min-width:0;white-space:normal;overflow-wrap:anywhere;text-align:left;padding:24px;border:1px solid #dce8f5;border-radius:16px;background:#fbfdff;color:#243b5e;transition:border-color .18s,background .18s,transform .18s}
 .cf-social-card:hover{background:#f2f8ff;border-color:#7da9d7;transform:translateY(-2px)}
 .cf-social-card:active{transform:translateY(0)}
 .cf-social-card-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:22px}
@@ -318,8 +318,11 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
 #social-panel input::placeholder{color:#607790}
 #social-panel .cf-field label{color:#426180}
 #social-panel button{white-space:nowrap}
+#social-panel .cf-social-card{white-space:normal;overflow-wrap:anywhere}
 #social-panel .cf-refresh,#social-panel .cf-ghost,#social-panel .cf-social-row button{color:#30669c}
-#social-panel .primary,#social-panel .primary-mini{background:#316da9;color:#fff}
+#social-panel .primary,#social-panel .cf-social-row button.primary-mini{background:#316da9;color:#fff}
+#social-panel .cf-social-row button.primary-mini{min-width:68px;min-height:40px;padding:9px 16px;font-size:14px;font-weight:700}
+#social-panel .cf-social-row button.primary-mini:hover{background:#285b90;color:#fff}
 #social-panel button:disabled{opacity:.55;cursor:not-allowed;transform:none}
 #social-panel select:focus-visible,#social-panel button:focus-visible{outline:3px solid #5295df;outline-offset:3px}
 @media(max-width:620px){.cf-social-catalog,.cf-social-grid{grid-template-columns:1fr}.cf-social-card{padding:20px}.cf-social-detail-head{align-items:flex-start;flex-direction:column}#social-panel .cf-social-row{flex-direction:column}.cf-social-row .cf-social-actions{align-self:flex-end}}
@@ -439,25 +442,31 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
         <div class="cf-social-list" id="social-list"></div>
       </div>
       <div class="cf-social-block">
-        <div class="cf-social-title"><span>未读会话</span><b id="social-unread-count">0</b></div>
+        <div class="cf-social-title"><span>待投递会话</span><b id="social-unread-count">0</b></div>
         <div class="cf-social-list" id="social-notices"></div>
       </div>
-      <div class="cf-note">消息到达只进收件箱，不会自动调用模型或回复。「查看」会让鱼鱼处理这一批消息，之后她可以不回复。</div>
+      <div class="cf-note">用绑定码认领主人后，主人私聊进入当前大肥鱼主会话；其他发送者与群聊使用独立会话。聊天正文不添加渠道、发送者或通知标签。鱼鱼的正常回复由后台自动发送至本轮来源，DSH输入不会自动外发。忙碌时消息排队；「重试投递」只重试尚未成功入会话的消息。</div>
       </div>
       <form class="cf-social-form" id="social-form" autocomplete="off" hidden>
         <button class="cf-refresh" id="social-cancel" type="button">← 返回渠道详情</button>
         <div class="cf-social-title"><span id="social-form-title">新增连接</span></div>
         <div class="cf-social-grid">
           <div class="cf-field"><label for="social-id">连接 ID</label><input id="social-id" maxlength="80" placeholder="qq-main"/></div>
-          <div class="cf-field"><label for="social-platform">平台</label><select id="social-platform"><option value="qq">QQ</option><option value="discord">Discord</option></select></div>
+          <div class="cf-field"><label for="social-platform">平台</label><select id="social-platform"><option value="qq">QQ</option><option value="dingtalk">钉钉</option><option value="discord">Discord</option></select></div>
         </div>
         <div class="cf-social-grid">
-          <div class="cf-field"><label for="social-provider">接入方式</label><select id="social-provider"><option value="napcat">NapCatQQ</option><option value="snowluma">SnowLuma</option><option value="onebots-discord">OneBots（Discord）</option></select></div>
-          <div class="cf-field"><label for="social-token-env">凭证环境变量名</label><input id="social-token-env" maxlength="128" placeholder="DSH_QQ_MAIN_ONEBOT_TOKEN"/></div>
+          <div class="cf-field"><label for="social-provider">接入方式</label><select id="social-provider"><option value="napcat">NapCatQQ</option><option value="snowluma">SnowLuma</option><option value="onebots-discord">OneBots（Discord）</option><option value="dingtalk-stream">钉钉 Stream</option></select></div>
+          <div class="cf-field" id="social-onebot-token-field"><label for="social-token-env">凭证环境变量名</label><input id="social-token-env" maxlength="128" placeholder="DSH_QQ_MAIN_ONEBOT_TOKEN"/></div>
         </div>
-        <div class="cf-field"><label for="social-endpoint">连接地址（ws:// 或本机 wss://）</label><input id="social-endpoint" maxlength="2048" placeholder="ws://127.0.0.1:3001/"/></div>
+        <div class="cf-field" id="social-onebot-endpoint-field"><label for="social-endpoint">连接地址（ws:// 或本机 wss://）</label><input id="social-endpoint" maxlength="2048" placeholder="ws://127.0.0.1:3001/"/></div>
+        <div id="social-dingtalk-fields" hidden>
+          <div class="cf-field"><label for="social-client-id">Client ID（AppKey）</label><input id="social-client-id" maxlength="256" placeholder="企业内部应用的 AppKey" disabled/></div>
+          <div class="cf-field"><label for="social-client-secret">Client Secret</label><input id="social-client-secret" type="password" maxlength="8192" autocomplete="new-password" placeholder="输入密钥；已保存时留空保留" disabled/></div>
+          <div class="cf-field"><label for="social-robot-code">Robot Code（必填）</label><input id="social-robot-code" maxlength="256" placeholder="填写机器人 Robot Code，不默认使用 Client ID" required disabled/></div>
+          <div class="cf-note">创建钉钉企业内部应用，启用机器人并选择 Stream 模式，然后发布应用。支持机器人单聊与群聊 @机器人。连接后在渠道详情生成绑定码，用你的钉钉私聊发送给机器人认领主人。主人私聊跟随主会话，访客与群聊独立；正文不添加来源标签，正常回复由后台自动发送。密钥保存在本机，不回显；编辑留空保留。新增、迁移旧配置或更改连接 ID / Client ID / Robot Code 时需重新输入密钥。</div>
+        </div>
         <div class="cf-actions"><button class="cf-ghost" type="button" id="social-delete">删除这条</button><button class="primary" type="button" id="social-save">保存</button></div>
-        <div class="cf-note">保存即启用。凭证明文不写进配置，这里只填环境变量名。</div>
+        <div class="cf-note">保存即启用。钉钉密钥保存在本机，不回显；QQ / Discord 凭证仍填写环境变量名。</div>
         <div id="social-form-error" class="cf-social-error" role="alert" hidden></div>
       </form>
     </div>

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 
 import { platform } from '../platform/index.js'
 import { isFishHeader } from '../proactive/identity.js'
+import { isChannelUserMessage } from '../social/policy.js'
 
 const text = (value) => typeof value === 'string' && value.trim().length > 0
 const httpUrl = (value) => { try { return ['http:', 'https:'].includes(new URL(value).protocol) } catch { return false } }
@@ -116,7 +117,7 @@ export function createAbsHost({ ctx, resources }) {
     }
     if (event.type === 'user/message') {
       // Non-owner injections (schedule, nudge, self-review) are not owner interaction.
-      if (data.source && data.source.kind !== 'user') return
+      if (isChannelUserMessage(data) || (data.source && data.source.kind !== 'user')) return
       emit({ kind: 'owner_message', sessionId, seq: event.seq, at: isoTime(event.time) })
       return
     }

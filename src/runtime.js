@@ -270,6 +270,7 @@ function mountChonkyFishPage(wrap, chat, options) {
 
   function openModal(kind) {
     if (!modal) return
+    if (kind !== 'social') { socialStopRefresh(); socialClearSecret() }
     modalKind = kind
     modalReturnFocus = focusedNode()
     if (modalTitle) {
@@ -299,6 +300,8 @@ function mountChonkyFishPage(wrap, chat, options) {
   function closeModal() {
     if (!modal || !modal.classList.contains('open')) return
     modal.classList.remove('open')
+    socialStopRefresh()
+    socialClearSecret()
     modalKind = null
     focusNode(modalReturnFocus)
     modalReturnFocus = null
@@ -604,10 +607,8 @@ function mountChonkyFishPage(wrap, chat, options) {
 
   /* ------------------------------------------------------- social (V1.2) */
 
-  // 社交面板只做「配置 + 显式查看」：
-  //   1. 消息到达只进 Host 收件箱并更新未读数，面板不会因此调用模型；
-  //   2. 「查看」是用户主动动作，会启动一轮真实模型对话，之后鱼鱼可以沉默；
-  //   3. 面板不提供直接发信或自动回复开关，回复只能由受限会话里的显式工具完成。
+  // Host 自动将外部社交消息投递到当前大肥鱼主会话；面板展示状态并提供失败重试。
+  // 不创建或绑定独立社交会话，面板不提供直接发信按钮。
   var socialButton = $('social-button')
   var socialRefresh = $('social-refresh')
   var socialNew = $('social-new')
@@ -632,7 +633,7 @@ function mountChonkyFishPage(wrap, chat, options) {
   var socialLoading = false
   var SOCIAL_PLATFORMS = [
     { id: 'qq', name: 'QQ', mark: 'QQ', description: '通过 QQ 私聊与群聊，和鱼鱼保持联系。', available: true },
-    { id: 'dingtalk', name: '钉钉', mark: '钉', description: '在钉钉中连接鱼鱼。', available: false },
+    { id: 'dingtalk', name: '钉钉', mark: '钉', description: '企业内部应用 · Stream 模式。用绑定码认领主人；主人私聊跟随当前主会话，其他发送者使用独立会话。回复自动回到本轮来源。', available: true },
     { id: 'discord', name: 'Discord', mark: 'D', description: '管理已有的 Discord 连接。', available: true }
   ]
 
@@ -654,7 +655,12 @@ function mountChonkyFishPage(wrap, chat, options) {
     return rows.filter(function (item) { return item.platform === platform })
   }
 
+  function socialClearSecret() {
+    if (socialFields && socialFields.clientSecret) socialFields.clientSecret.value = ''
+  }
+
   function socialNavigate(screen) {
+    if (screen !== 'form') socialClearSecret()
     socialScreen = screen
     renderSocialView()
     var target = screen === 'form' ? socialFields.id : screen === 'detail' ? socialDetailTitle : socialCatalog && socialCatalog.querySelector('button')
@@ -701,19 +707,50 @@ function mountChonkyFishPage(wrap, chat, options) {
       socialCatalog.appendChild(card)
     })
   }
-  // 表单只保留连一条通道真正需要的东西：标识、平台、接入方式、地址、凭证引用。
+  // 表单只保留连接必需字段：公共标识、平台、接入方式及各平台配置；钉钉密钥只输入不回显，OneBot 保留环境变量引用。
   // 启用状态和接收范围不给开关——保存即可用，私聊/群/频道默认都接收。
   var socialFields = {
     id: $('social-id'),
     platform: $('social-platform'),
     provider: $('social-provider'),
     endpoint: $('social-endpoint'),
-    tokenEnv: $('social-token-env')
+    tokenEnv: $('social-token-env'),
+    clientId: $('social-client-id'),
+    clientSecret: $('social-client-secret'),
+    robotCode: $('social-robot-code')
   }
   var socialPayload = null
   var socialEditing = null
   var socialRequest = 0
   var socialBusy = false
+  var socialPairCodes = {} // Local display only; never persisted or sent to the model.
+  var socialRefreshTimer = null
+
+  function socialStopRefresh() {
+    if (socialRefreshTimer !== null) clearInterval(socialRefreshTimer)
+    socialRefreshTimer = null
+  }
+
+  function socialPageVisible() {
+    if (!socialPanel || socialPanel.hidden || document.hidden) return false
+    if (typeof pageView !== 'undefined' && pageView === 'social') return true
+    return modalKind === 'social' && modal && modal.classList.contains('open')
+  }
+
+  function socialStartRefresh() {
+    socialStopRefresh()
+    if (!socialPageVisible()) return
+    socialRefreshTimer = setInterval(function () {
+      if (!socialPageVisible()) { socialStopRefresh(); return }
+      if (!socialBusy && !socialLoading) loadSocial()
+    }, 3000)
+  }
+
+  function onSocialVisibilityChange() {
+    if (document.hidden) socialStopRefresh()
+    else socialStartRefresh()
+  }
+  document.addEventListener('visibilitychange', onSocialVisibilityChange)
 
   var SOCIAL_STATUS_LABELS = {
     connected: '已连接',
@@ -725,13 +762,19 @@ function mountChonkyFishPage(wrap, chat, options) {
   var SOCIAL_ERROR_LABELS = {
     SOCIAL_CONFIG_RECOVERY_REQUIRED: '原配置无法读取，已阻止覆盖；请先备份并修复配置文件',
     SOCIAL_HOST_CAPABILITY_UNAVAILABLE: '宿主暂不支持将收件箱消息交给模型处理，连接与收信不受影响',
-    SOCIAL_TARGET_UNBOUND: '当前会话未绑定社交目标，请先选择对应消息会话',
-    SOCIAL_BRIDGE_UNAVAILABLE: '宿主桥接不可用（需要宿主支持受限会话）',
+    SOCIAL_TARGET_UNBOUND: '当前主会话没有可回复的社交消息来源',
+    SOCIAL_NO_MAIN_SESSION: '等待当前主会话：请先打开大肥鱼聊天页面',
+    SOCIAL_MAIN_SESSION_UNAVAILABLE: '等待当前主会话：请先打开大肥鱼聊天页面',
+    SOCIAL_MAIN_SESSION_CHANGED: '主会话已切换，稍后重新投递',
+    SOCIAL_DELIVERY_UNCERTAIN: '投递结果尚未确认，已停止重放；请核对主会话记录，避免重复投递',
+    SOCIAL_DELIVERY_CAPACITY: '投递日志容量已满，请先核对未确认的投递记录',
+    SOCIAL_MAIN_SESSION_INVALID: '当前主会话不可用，请重新打开大肥鱼聊天页面',
+    SOCIAL_AGENT_BUSY: '当前主会话正在忙，稍后会自动投递',
+    SOCIAL_BRIDGE_UNAVAILABLE: '主会话投递桥接不可用，请检查宿主支持或重新打开大肥鱼聊天页面',
     SOCIAL_BRIDGE_CLOSED: '桥接已关闭，重启 DSH 后再试',
     SOCIAL_MODEL_UNAVAILABLE: '还没有可用的默认模型',
     SOCIAL_READ_ONLY_UNAVAILABLE: '宿主没有 read-only 权限预设',
     SOCIAL_PERSISTENCE_UNVERIFIED: '无法确认会话已持久化，已拒绝继续',
-    SOCIAL_DELIVERY_UNCERTAIN: '上一批投递状态不确定，已停止以免重复',
     SOCIAL_SCOPE_STALE: '账号身份或消息绑定已变化，请重新查看对应会话',
     SOCIAL_NOT_CONNECTED: '连接还没建立（检查地址、凭证和 Provider）',
     SOCIAL_INVALID_CONFIG: '配置不合法（检查平台、接入方式、地址）',
@@ -739,6 +782,43 @@ function mountChonkyFishPage(wrap, chat, options) {
     SOCIAL_INVALID_ENDPOINT: '连接地址不合法，只能用 ws:// 或 wss://',
     SOCIAL_INSECURE_ENDPOINT: '远程连接必须使用 wss://',
     SOCIAL_TOKEN_REQUIRED: '远程连接必须填写凭证环境变量名',
+    SOCIAL_DINGTALK_INVALID_CLIENT_ID: '请填写有效的钉钉 Client ID（AppKey，最多 256 字符）',
+    SOCIAL_DINGTALK_INVALID_ROBOT_CODE: '请填写有效的钉钉 Robot Code（最多 256 字符，不默认使用 Client ID）',
+    SOCIAL_DINGTALK_SECRET_MISSING: '未找到钉钉 Client Secret，请编辑连接并输入密钥',
+    SOCIAL_DINGTALK_SECRET_INVALID: '钉钉 Client Secret 无效：不能全为空白，最多 8192 字符',
+    SOCIAL_CREDENTIAL_MISSING: '未找到接入凭证，请检查环境变量及运行 DSH 的进程环境',
+    SOCIAL_EVENT_IDENTITY_MISMATCH: '收到的消息与当前机器人身份不匹配',
+    SOCIAL_EVENT_REJECTED: '消息校验未通过，已拒绝接收',
+    SOCIAL_CONNECT_FAILED: '连接失败，请检查应用配置、凭证和网络',
+    SOCIAL_HEARTBEAT_TIMEOUT: '连接心跳超时，等待重连',
+    SOCIAL_PONG_TIMEOUT: '未收到Pong，连接已判定失效并自动重连',
+    SOCIAL_PING_FAILED: '发送Ping失败，等待自动重连',
+    SOCIAL_HEARTBEAT_UNSUPPORTED: '当前传输不支持Ping/Pong，请检查依赖安装',
+    SOCIAL_HANDSHAKE_TIMEOUT: '连接握手超时，请检查网络',
+    SOCIAL_SOCKET_ERROR: '连接异常，请检查网络',
+    SOCIAL_CONNECTION_LOST: '连接已断开，等待重连',
+    SOCIAL_INVALID_TEXT: '消息正文不合法',
+    SOCIAL_UNSUPPORTED_TARGET: '不支持向该会话发送消息',
+    SOCIAL_REPLY_UNSUPPORTED: '钉钉当前不支持指定引用消息，请使用普通文本回复',
+    SOCIAL_WEBHOOK_EXPIRED: '回复地址已过期，需要收到一条新消息后才能回复',
+    SOCIAL_DINGTALK_ROUTES_LOAD_FAILED: '本机回复地址读取失败，请检查存储状态',
+    SOCIAL_DINGTALK_ROUTES_WRITE_FAILED: '本机回复地址保存失败，请检查存储状态',
+    SOCIAL_NO_OWNER_CHAT: '尚未绑定主人，请生成绑定码并私聊机器人发送',
+    SOCIAL_OWNER_CHANGED: '主人绑定发生变化，已停止本次投递以避免串话',
+    SOCIAL_PEER_SESSION_INVALID: '访客会话隔离校验失败，已拒绝投递',
+    SOCIAL_PAIRING_UNAVAILABLE: '当前连接暂不支持主人配对',
+    SOCIAL_PEER_STORAGE_UNCERTAIN: '绑定存储未确认，已暂停身份授权',
+    SOCIAL_REPLY_MIXED_TURN: '本轮混入了其他输入，已停止自动发送以免发错',
+    SOCIAL_REPLY_TURN_INTERRUPTED: '本轮未正常完成，未自动发送',
+    SOCIAL_REPLY_FINAL_MISSING: '本轮没有可发送的最终正文',
+    SOCIAL_REPLY_EMPTY: '本轮没有文本回复',
+    SOCIAL_REPLY_TOO_LARGE: '回复超过单条发送长度限制，未自动发送',
+    SOCIAL_REPLY_EVIDENCE_MISSING: '等待会话记录确认',
+    SOCIAL_REPLY_EVIDENCE_MISMATCH: '会话记录校验不一致，已停止自动发送',
+    SOCIAL_REPLY_STORAGE_UNCERTAIN: '回复记录保存状态不确定，已停止发送',
+    SOCIAL_REPLY_CAPACITY: '回复记录容量已满，请先处理保存记录',
+    SOCIAL_SEND_FAILED: '发送失败，请检查连接状态',
+    SOCIAL_SEND_UNKNOWN: '无法确认是否已发送，请勿重复发送',
     SOCIAL_UNSUPPORTED_PROVIDER: '这个平台不支持该接入方式',
     SOCIAL_PLATFORM_MISMATCH: '接入方式和平台不匹配',
     SOCIAL_CONFIRMATION_STALE: '待确认身份已变化，请先刷新',
@@ -789,9 +869,12 @@ function mountChonkyFishPage(wrap, chat, options) {
     if (socialFormTitle) socialFormTitle.textContent = '新增连接'
     if (socialFields.id) socialFields.id.value = ''
     if (socialFields.platform) socialFields.platform.value = socialPlatform
-    if (socialFields.provider) socialFields.provider.value = socialPlatform === 'discord' ? 'onebots-discord' : 'napcat'
+    if (socialFields.provider) socialFields.provider.value = socialPlatform === 'dingtalk' ? 'dingtalk-stream' : socialPlatform === 'discord' ? 'onebots-discord' : 'napcat'
     if (socialFields.endpoint) socialFields.endpoint.value = ''
     if (socialFields.tokenEnv) socialFields.tokenEnv.value = ''
+    if (socialFields.clientId) socialFields.clientId.value = ''
+    if (socialFields.clientSecret) socialFields.clientSecret.value = ''
+    if (socialFields.robotCode) socialFields.robotCode.value = ''
     if (socialFormError) socialFormError.hidden = true
     socialNavigate('form')
   }
@@ -803,12 +886,16 @@ function mountChonkyFishPage(wrap, chat, options) {
     var connection = index >= 0 && index < connections.length ? connections[index] : null
     if (!connection) { socialResetForm(); return }
     socialEditing = index
+    socialPlatform = connection.platform
     if (socialFormTitle) socialFormTitle.textContent = '编辑连接 · ' + connection.id
     if (socialFields.id) socialFields.id.value = connection.id
     if (socialFields.platform) socialFields.platform.value = connection.platform
     if (socialFields.provider) socialFields.provider.value = connection.provider
-    if (socialFields.endpoint) socialFields.endpoint.value = connection.endpoint
+    if (socialFields.endpoint) socialFields.endpoint.value = connection.endpoint || ''
     if (socialFields.tokenEnv) socialFields.tokenEnv.value = connection.tokenEnv || ''
+    if (socialFields.clientId) socialFields.clientId.value = connection.clientId || ''
+    socialClearSecret()
+    if (socialFields.robotCode) socialFields.robotCode.value = connection.robotCode || ''
     if (socialFormError) socialFormError.hidden = true
     socialNavigate('form')
   }
@@ -816,10 +903,26 @@ function mountChonkyFishPage(wrap, chat, options) {
   function socialReadForm() {
     var id = socialFields.id ? String(socialFields.id.value || '').trim() : ''
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) throw new Error('连接 ID 只能用字母、数字、下划线和连字符')
+    var platform = socialFields.platform ? socialFields.platform.value : 'qq'
+    if (platform === 'dingtalk') {
+      var clientId = socialFields.clientId ? String(socialFields.clientId.value || '').trim() : ''
+      var clientSecret = socialFields.clientSecret ? String(socialFields.clientSecret.value || '') : ''
+      var robotCode = socialFields.robotCode ? String(socialFields.robotCode.value || '').trim() : ''
+      if (!clientId || clientId.length > 256) throw new Error('请填写有效的 Client ID（AppKey，最多 256 字符）')
+      if (!robotCode || robotCode.length > 256) throw new Error('请填写有效的 Robot Code（最多 256 字符，不默认使用 Client ID）')
+      var saved = socialPayload && socialPayload.config && socialPayload.config.connections || []
+      var previous = typeof socialEditing === 'number' && socialEditing >= 0 ? saved[socialEditing] : null
+      var canKeepSecret = previous && previous.platform === 'dingtalk' && previous.clientSecretSet === true && previous.id === id && previous.clientId === clientId && previous.robotCode === robotCode
+      if (!clientSecret && !canKeepSecret) throw new Error('请填写 Client Secret；新增、迁移旧配置或更改连接 ID / Client ID / Robot Code 时需重新输入密钥')
+      if (clientSecret.length > 8192 || (clientSecret && !clientSecret.trim())) throw new Error('Client Secret 不能全为空白，最多 8192 字符')
+      var dingtalk = { id: id, platform: 'dingtalk', provider: 'dingtalk-stream', clientId: clientId, robotCode: robotCode }
+      if (clientSecret) dingtalk.clientSecret = clientSecret
+      else dingtalk.clientSecretSet = true
+      return dingtalk
+    }
     var endpoint = socialFields.endpoint ? String(socialFields.endpoint.value || '').trim() : ''
     if (!endpoint) throw new Error('请填写连接地址')
     if (endpoint.length > 2048) throw new Error('连接地址太长')
-    var platform = socialFields.platform ? socialFields.platform.value : 'qq'
     var connection = {
       id: id,
       platform: platform,
@@ -838,6 +941,7 @@ function mountChonkyFishPage(wrap, chat, options) {
     socialApi('POST', body).then(function () {
       socialBusy = false
       if (body.action === 'configure') {
+        socialClearSecret()
         socialPlatform = socialFields.platform.value
         socialScreen = 'detail'
         socialEditing = null
@@ -902,6 +1006,7 @@ function mountChonkyFishPage(wrap, chat, options) {
       socialApi('POST', { action: 'configure', config: config }).then(function () {
         socialBusy = false
         toast('连接已删除')
+        socialClearSecret()
         socialEditing = null
         socialScreen = 'detail'
         loadSocial()
@@ -913,23 +1018,22 @@ function mountChonkyFishPage(wrap, chat, options) {
   }
 
   function socialView(connectionId, conversation) {
-    ask('现在让鱼鱼看这批新消息？这会启动一轮真实模型对话，可能消耗额度；她看过之后可以不回复。').then(function (ok) {
-      if (!ok) return
-      if (socialBusy) return
-      socialBusy = true
-      socialApi('POST', { action: 'view', connectionId: connectionId, conversation: conversation }).then(function (payload) {
-        socialBusy = false
-        var status = payload && payload.result && payload.result.status
-        if (status === 'viewed') toast('鱼鱼看过这批消息了；要不要回由她自己决定')
-        else if (status === 'empty') toast('这里暂时没有未读消息')
-        else if (status === 'busy') toast('鱼鱼正在忙，稍后再让她看')
-        else toast('已处理')
-        loadSocial()
-      }).catch(function (error) {
-        socialBusy = false
-        toast('查看失败：' + socialErrorMessage(error))
-        loadSocial()
-      })
+    if (socialBusy) return
+    socialBusy = true
+    renderSocialView()
+    socialApi('POST', { action: 'view', connectionId: connectionId, conversation: conversation }).then(function (payload) {
+      socialBusy = false
+      var status = payload && payload.result && payload.result.status
+      if (status === 'viewed') toast('已投递到对应会话')
+      else if (status === 'empty') toast('这里暂时没有待投递消息')
+      else if (status === 'busy') toast('当前主会话正在忙，稍后会自动投递')
+      else if (status === 'pending') toast('等待当前主会话：请先打开大肥鱼聊天页面，消息将自动投递')
+      else toast('投递状态已更新')
+      loadSocial()
+    }).catch(function (error) {
+      socialBusy = false
+      toast('投递失败：' + socialErrorMessage(error))
+      loadSocial()
     })
   }
 
@@ -964,8 +1068,46 @@ function mountChonkyFishPage(wrap, chat, options) {
     clearNode(socialStatusBox)
     if (!socialPayload) return
     socialStatusBox.appendChild(socialStatusRow('已配置连接', socialConnections(socialPlatform).length + ' 条'))
-    socialStatusBox.appendChild(socialStatusRow('收信', '只进收件箱并计数，不会自动调用模型'))
-    socialStatusBox.appendChild(socialStatusRow('行动决策', socialPayload.actionEngineConnected ? '已接入' : '未接入：需要你手动点「查看」'))
+    var bridge = socialPayload.bridge || {}
+    var inboundTotals = { callback: 0, accepted: 0, duplicate: 0, ignored: 0, rejected: 0, reasons: {} }
+    var connections = Array.isArray(socialPayload.connections) ? socialPayload.connections : []
+    for (var ci = 0; ci < connections.length; ci += 1) {
+      var stats = connections[ci] && connections[ci].inbound
+      if (!stats) continue
+      inboundTotals.callback += Number(stats.callback) || 0
+      inboundTotals.accepted += Number(stats.accepted) || 0
+      inboundTotals.duplicate += Number(stats.duplicate) || 0
+      inboundTotals.ignored += Number(stats.ignored) || 0
+      inboundTotals.rejected += Number(stats.rejected) || 0
+      var reasons = stats.reasons || {}
+      for (var key in reasons) {
+        if (Object.prototype.hasOwnProperty.call(reasons, key)) inboundTotals.reasons[key] = (inboundTotals.reasons[key] || 0) + (Number(reasons[key]) || 0)
+      }
+    }
+    if (inboundTotals.callback || inboundTotals.ignored || inboundTotals.rejected) {
+      var reasonLabels = { 'identity-mismatch': '身份不匹配', 'non-text': '非文本', 'unsupported-conversation': '会话类型不支持', 'group-not-at': '群聊未@机器人', 'self-message': '机器人自身' }
+      var skipped = Object.keys(inboundTotals.reasons).map(function (key) { return (reasonLabels[key] || key) + ' ' + inboundTotals.reasons[key] }).join('、')
+      socialStatusBox.appendChild(socialStatusRow('本次运行收信', '回调 ' + inboundTotals.callback + ' 条 · 入库 ' + inboundTotals.accepted + ' · 重复 ' + inboundTotals.duplicate + ' · 忽略 ' + inboundTotals.ignored + ' · 拒绝 ' + inboundTotals.rejected + (skipped ? '（' + skipped + '）' : ''), inboundTotals.rejected > 0))
+    } else {
+      socialStatusBox.appendChild(socialStatusRow('本次运行收信', '还没有收到平台推送的消息'))
+    }
+    var ownerAvailable = connections.some(function (row) { return row && row.owner && row.owner.available === true })
+    socialStatusBox.appendChild(socialStatusRow('主动发送', ownerAvailable ? '已绑定主人：仅向绑定的钉钉私聊发送' : '未绑定：生成绑定码，并在钉钉私聊发送给机器人', !ownerAvailable))
+    socialStatusBox.appendChild(socialStatusRow('消息投递', '主人私聊进入当前主会话；其他发送者与群聊使用独立会话'))
+    socialStatusBox.appendChild(socialStatusRow('聊天显示', '只显示消息正文，不添加渠道或发送者标签'))
+    socialStatusBox.appendChild(socialStatusRow('回复方式', '鱼鱼的正常回复由后台自动发送，无需额外发送操作'))
+    socialStatusBox.appendChild(socialStatusRow('当前主会话', bridge.targetSessionId || '尚未就绪：请先打开大肥鱼聊天页面', !bridge.targetSessionId))
+    var reason = typeof bridge.reason === 'string' ? bridge.reason : typeof bridge.lastError === 'string' ? bridge.lastError : typeof bridge.error === 'string' ? bridge.error : ''
+    var deliveryStatus = reason ? SOCIAL_ERROR_LABELS[reason] || reason : bridge.available ? (bridge.pending ? '有消息等待投递，稍后自动继续' : '自动投递已就绪') : '等待当前主会话：请先打开大肥鱼聊天页面'
+    socialStatusBox.appendChild(socialStatusRow('投递状态', deliveryStatus, !!reason || !bridge.available))
+    var replyLabels = { waiting: '等待回复完成', pending: '等待发送', sending: '发送中', sent: '已发送', failed: '发送失败', unknown: '发送结果不确定，请勿重复发送', canceled: '已取消发送' }
+    var replies = Array.isArray(bridge.replies) ? bridge.replies : []
+    replies.slice(-10).forEach(function (reply) {
+      if (!reply || !replyLabels[reply.status]) return
+      var label = replyLabels[reply.status]
+      if (reply.errorCode && SOCIAL_ERROR_LABELS[reply.errorCode]) label += ' · ' + SOCIAL_ERROR_LABELS[reply.errorCode]
+      socialStatusBox.appendChild(socialStatusRow('回复发送', label, reply.status === 'failed' || reply.status === 'unknown'))
+    })
     if (socialPayload.configPath) socialStatusBox.appendChild(socialStatusRow('配置文件', socialPayload.configPath))
     if (socialPayload.configError) {
       var error = document.createElement('div')
@@ -1012,7 +1154,7 @@ function mountChonkyFishPage(wrap, chat, options) {
         info.appendChild(gap)
       }
       var detail = document.createElement('small')
-      detail.textContent = notice.unreadCount + ' 条未读 · ' + (notice.connectionId || '')
+      detail.textContent = notice.unreadCount + ' 条待投递 · ' + (notice.connectionId || '')
       info.appendChild(detail)
       row.appendChild(info)
       var actions = document.createElement('div')
@@ -1020,7 +1162,8 @@ function mountChonkyFishPage(wrap, chat, options) {
       var view = document.createElement('button')
       view.type = 'button'
       view.className = 'primary-mini'
-      view.textContent = '查看'
+      view.textContent = '重试投递'
+      view.disabled = socialBusy || socialLoading
       view.addEventListener('click', function () { socialView(notice.connectionId, notice.conversation) })
       actions.appendChild(view)
       row.appendChild(actions)
@@ -1060,15 +1203,55 @@ function mountChonkyFishPage(wrap, chat, options) {
       info.appendChild(status)
       var detail = document.createElement('small')
       var identity = connection.identity
+      var reason = SOCIAL_ERROR_LABELS[connection.reason] || connection.reason
       detail.textContent = identity
-        ? '身份：' + (identity.displayName || identity.protocolUserId) + (connection.reason ? ' · ' + connection.reason : '')
-        : '还没有确认身份' + (connection.reason ? ' · ' + connection.reason : '')
+        ? '身份：' + (identity.displayName || identity.protocolUserId) + (reason ? ' · ' + reason : '')
+        : '还没有确认身份' + (reason ? ' · ' + reason : '')
       info.appendChild(detail)
       if (connection.endpoint) info.appendChild(socialStatusRow('连接地址', connection.endpoint))
-      info.appendChild(socialStatusRow('凭证引用', connection.tokenEnv || '未设置'))
+      if (connection.platform === 'dingtalk') {
+        info.appendChild(socialStatusRow('Client ID', connection.clientId || '未设置'))
+        info.appendChild(socialStatusRow('Client Secret', connection.clientSecretSet ? '已保存（不回显）' : '需输入密钥'))
+        info.appendChild(socialStatusRow('Robot Code', connection.robotCode || '未设置'))
+        info.appendChild(socialStatusRow('主人绑定', connection.owner && connection.owner.bound ? '已绑定 · 主人私聊跟随当前主会话' : '未绑定 · 其他人各自使用独立会话'))
+        var pairing = socialPairCodes[connection.connectionId]
+        if (pairing && pairing.expiresAt > Date.now()) {
+          var pairingCode = document.createElement('input')
+          pairingCode.type = 'text'; pairingCode.readOnly = true; pairingCode.value = pairing.code
+          pairingCode.setAttribute('aria-label', '主人绑定码（请私聊机器人发送，勿转发）')
+          pairingCode.addEventListener('click', function () { this.select() })
+          info.appendChild(pairingCode)
+          info.appendChild(socialStatusRow('绑定操作', '复制上面的完整绑定码，在钉钉私聊机器人发送。10分钟内有效，仅用一次；勿发到群里。'))
+        }
+        if (connection.connection) {
+          var transport = connection.connection
+          info.appendChild(socialStatusRow('连接诊断', '连接次数 ' + transport.connects + ' · 最近断开 ' + (SOCIAL_ERROR_LABELS[transport.lastReason] || transport.lastReason || '无')))
+          var healthNames = { healthy: 'Pong已确认', 'awaiting-pong': '等待Pong', unverified: '尚未验证', disconnected: '已断开', unmonitored: '未启用检测' }
+          info.appendChild(socialStatusRow('心跳检测', (healthNames[transport.health] || '旧版：无主动检测') + ' · Ping ' + (transport.pings || 0) + ' / Pong ' + (transport.pongs || 0) + ' · 超时 ' + (transport.pongTimeouts || 0), transport.health === 'disconnected' || transport.health === 'unmonitored'))
+          if (transport.lastPongAt) info.appendChild(socialStatusRow('最近Pong', new Date(transport.lastPongAt).toLocaleTimeString() + ' · 往返 ' + transport.lastPongRttMs + 'ms（仅验证连接，不保证平台已推送消息）'))
+        }
+      } else {
+        info.appendChild(socialStatusRow('凭证引用', connection.tokenEnv || '未设置'))
+      }
       row.appendChild(info)
       var actions = document.createElement('div')
       actions.className = 'cf-social-actions'
+      if (connection.platform === 'dingtalk') {
+        var pair = document.createElement('button')
+        pair.type = 'button'; pair.textContent = connection.owner && connection.owner.bound ? '生成改绑码' : '生成绑定码'
+        pair.disabled = socialBusy || socialLoading || connection.status !== 'connected'
+        pair.addEventListener('click', function () {
+          if (socialBusy) return
+          socialBusy = true; renderSocialView()
+          socialApi('POST', { action: 'pair_owner', connectionId: connection.connectionId }).then(function (payload) {
+            socialPairCodes[connection.connectionId] = payload.result
+            toast('绑定码已生成，请私聊机器人发送。新码会替换旧码。')
+          }).catch(function (error) { toast(error.message || '生成绑定码失败') }).finally(function () {
+            socialBusy = false; renderSocialView()
+          })
+        })
+        actions.appendChild(pair)
+      }
       if (pendingIds[connection.connectionId]) {
         var confirm = document.createElement('button')
         confirm.type = 'button'
@@ -1092,6 +1275,7 @@ function mountChonkyFishPage(wrap, chat, options) {
   }
 
   function renderSocialView() {
+    if (socialScreen !== 'form') socialClearSecret()
     var platform = socialPlatformInfo()
     if (socialCatalog) socialCatalog.hidden = socialScreen !== 'catalog'
     if (socialDetail) socialDetail.hidden = socialScreen !== 'detail'
@@ -1106,9 +1290,18 @@ function mountChonkyFishPage(wrap, chat, options) {
     if (socialCancel) socialCancel.disabled = socialBusy
     if (socialRefresh) socialRefresh.disabled = socialBusy || socialLoading
     if (socialFields.platform) socialFields.platform.disabled = true
+    var isDingtalk = socialPlatform === 'dingtalk'
+    if ($('social-onebot-token-field')) $('social-onebot-token-field').hidden = isDingtalk
+    if ($('social-onebot-endpoint-field')) $('social-onebot-endpoint-field').hidden = isDingtalk
+    if ($('social-dingtalk-fields')) $('social-dingtalk-fields').hidden = !isDingtalk
+    if (socialFields.endpoint) socialFields.endpoint.disabled = isDingtalk
+    if (socialFields.tokenEnv) socialFields.tokenEnv.disabled = isDingtalk
+    ;['clientId', 'clientSecret', 'robotCode'].forEach(function (field) {
+      if (socialFields[field]) socialFields[field].disabled = !isDingtalk
+    })
     if (socialFields.provider) {
       Array.prototype.forEach.call(socialFields.provider.options, function (option) {
-        option.hidden = option.disabled = socialPlatform === 'discord' ? option.value !== 'onebots-discord' : option.value === 'onebots-discord'
+        option.hidden = option.disabled = isDingtalk ? option.value !== 'dingtalk-stream' : socialPlatform === 'discord' ? option.value !== 'onebots-discord' : option.value !== 'napcat' && option.value !== 'snowluma'
       })
     }
     if (socialSummary) socialSummary.textContent = socialLoading ? '正在读取社交连接…' : !socialPayload ? '读取社交状态失败，请刷新重试。' : socialPayload.configError ? '配置读取失败，已阻止修改。进入详情查看原因。' : socialScreen === 'catalog' ? '选择一个渠道，查看连接与配置信息。' : socialScreen === 'form' ? '配置连接 · ' + platform.name : '已配置渠道 · ' + platform.name
@@ -1138,6 +1331,7 @@ function mountChonkyFishPage(wrap, chat, options) {
 
   function renderSocial() {
     if (!socialPanel) return
+    socialStartRefresh()
     if (!stateBridge || typeof fetch !== 'function' || !socialRoute()) {
       socialPayload = null
       renderSocialView()
@@ -1723,7 +1917,7 @@ function mountChonkyFishPage(wrap, chat, options) {
       panel: function () { return socialPanel },
       icon: '💬',
       title: '鱼鱼的社交',
-      subtitle: '连接管理、未读收件箱与「查看」入口；默认不自动回复。',
+      subtitle: '主人私聊跟随主会话，访客独立会话；回复自动投递本轮来源。',
       render: function () { renderSocial() },
     },
   }
@@ -1804,6 +1998,9 @@ function mountChonkyFishPage(wrap, chat, options) {
   }
 
   return function dispose() {
+    socialStopRefresh()
+    socialClearSecret()
+    document.removeEventListener('visibilitychange', onSocialVisibilityChange)
     timers.forEach(function (id) { clearTimeout(id) })
     timers.clear()
     if (toastTimer) {

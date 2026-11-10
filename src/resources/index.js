@@ -211,6 +211,11 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     socialIdentities: join(home, SOCIAL.directory, SOCIAL.files.identities),
     socialInbox: join(home, SOCIAL.directory, SOCIAL.files.inbox),
     socialBindings: join(home, SOCIAL.directory, SOCIAL.files.bindings),
+    socialMainDeliveries: join(home, SOCIAL.directory, SOCIAL.files.mainDeliveries),
+    socialReplies: join(home, SOCIAL.directory, SOCIAL.files.replies),
+    socialPeerBindings: join(home, SOCIAL.directory, SOCIAL.files.peerBindings),
+    socialChannelReplies: join(home, SOCIAL.directory, SOCIAL.files.channelReplies),
+    socialWebhooks: join(home, SOCIAL.directory, SOCIAL.files.webhooks),
     socialOperations: join(home, SOCIAL.directory, SOCIAL.files.operations),
     socialWorkspace: join(home, SOCIAL.directory, SOCIAL.workspace),
   }

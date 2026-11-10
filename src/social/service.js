@@ -1,14 +1,17 @@
-import { createConfigStore } from './config.js'
+import { createConfigStore, publicConfig, mergeConfigSecrets } from './config.js'
 import { createIdentityStore } from './identity-store.js'
 import { createInboxStore } from './inbox-store.js'
 import { createOneBotDriver } from './drivers/onebot.js'
+import { createDingTalkDriver } from './drivers/dingtalk.js'
+import { createDingTalkRouteStore } from './dingtalk-routes.js'
 import { providerFor, PROVIDERS } from './providers.js'
 import { acceptMessage, createScopeAuthority } from './policy.js'
 import { fail, readJson, writeJson, serial, sessionKey, text, digest, plain, publicError } from './core.js'
 
 /** No method in this module calls an LLM, follows up an agent, or schedules a reply. */
-export async function createSocialService({ paths, limits, env = process.env, driverFactory, now = Date.now }) {
+export async function createSocialService({ paths, limits, env = process.env, driverFactory, now = Date.now, peers }) {
   const configStore = createConfigStore(paths.socialConfig)
+  const routeStore = createDingTalkRouteStore(paths.socialWebhooks, { now })
   const identities = createIdentityStore(paths.socialIdentities)
   const inbox = await createInboxStore({ directory: paths.socialInbox, limits: limits.inbox, now })
   const scopes = createScopeAuthority()
@@ -72,7 +75,11 @@ export async function createSocialService({ paths, limits, env = process.env, dr
         const provider = providerFor(value)
         const token = value.tokenEnv ? env[value.tokenEnv] : undefined
         if (value.tokenEnv && !text(token, 8192)) fail('SOCIAL_TOKEN_MISSING')
-        entry.driver = driverFactory ? driverFactory(value, { token, protocol: provider.protocol }) : createOneBotDriver(value, { token, version: provider.protocol === 'onebot-v11' ? 11 : 12 })
+        const clientSecret = value.clientSecret
+        if (provider.protocol === 'dingtalk-stream' && !text(clientSecret, 8192)) fail('SOCIAL_DINGTALK_SECRET_MISSING')
+        entry.driver = driverFactory ? driverFactory(value, { token, clientSecret, protocol: provider.protocol })
+          : provider.protocol === 'dingtalk-stream' ? createDingTalkDriver(value, { clientSecret, routeStore })
+          : createOneBotDriver(value, { token, version: provider.protocol === 'onebot-v11' ? 11 : 12 })
         await entry.driver.start({
           onStatus(status, reason) {
             if (stopped || current !== generation) return
@@ -90,6 +97,9 @@ export async function createSocialService({ paths, limits, env = process.env, dr
                   if (stopped || current !== generation || verificationEpoch !== entry.epoch) return
                   entry.status = verified.status
                   entry.verified = verified.status === 'connected' ? verified : null
+                  // Reconnection makes retained unread messages visible again; wake delivery
+                  // even when no fresh platform message arrives after Host startup.
+                  if (entry.verified) notify()
                 } catch (error) { if (current === generation && verificationEpoch === entry.epoch) { entry.status = 'error'; entry.reason = publicError(error) } }
               })()
             }
@@ -98,6 +108,8 @@ export async function createSocialService({ paths, limits, env = process.env, dr
             await entry.ready
             if (stopped || current !== generation || entry.status !== 'connected' || !entry.verified) return { accepted: false }
             if (!acceptMessage(value, entry.verified.identity, message, limits.inbox.maxBatchChars)) return { accepted: false }
+            const paired = await peers?.consumeCode(message, entry.verified.identityRevision)
+            if (paired?.handled) { notify(); return { accepted: true, control: true } }
             const result = await inbox.append(message, { identityRevision: entry.verified.identityRevision })
             if (result.accepted) notify()
             return result
@@ -115,13 +127,28 @@ export async function createSocialService({ paths, limits, env = process.env, dr
       active()
       return { configError, configPath: paths.socialConfig, inferenceOnArrival: false, actionEngineConnected: false,
         providers: Object.values(PROVIDERS),
-        connections: [...connections.values()].map(entry => ({ connectionId: entry.config.id, platform: entry.config.platform, provider: entry.config.provider, status: entry.status, reason: entry.reason, identity: entry.verified?.identity, identityRevision: entry.verified?.identityRevision })),
+        connections: [...connections.values()].map(entry => ({ connectionId: entry.config.id, platform: entry.config.platform, provider: entry.config.provider, status: entry.status, reason: entry.reason, identity: entry.verified?.identity, identityRevision: entry.verified?.identityRevision, ...(entry.driver?.inspect?.() ?? {}), owner: { bound: !!peers?.owner(entry.config.id, entry.verified?.identityRevision), available: entry.status === 'connected' && !!peers?.owner(entry.config.id, entry.verified?.identityRevision) } })),
+        bindings: peers?.inspect(),
         notices: await listNotices() }
     },
-    readConfig: () => configStore.read(),
-    updateConfig: value => lifecycle(async () => { active(); await configStore.write(value); await reload(); return service.inspect() }),
+    readConfig: async () => publicConfig(await configStore.read()),
+    updateConfig(value) {
+      const input = structuredClone(value)
+      return lifecycle(async () => {
+        active()
+        const previous = await configStore.read()
+        await configStore.write(mergeConfigSecrets(input, previous))
+        await reload()
+        return service.inspect()
+      })
+    },
     reload: () => lifecycle(reload),
     confirmIdentity: input => lifecycle(async () => { active(); await identities.confirm(input); await reload(); return service.inspect() }),
+    issuePairingCode({ connectionId }) {
+      const entry = entryFor(connectionId)
+      if (!peers || entry.config.platform !== 'dingtalk') fail('SOCIAL_PAIRING_UNAVAILABLE')
+      return peers.issueCode({ connectionId, identityRevision: entry.verified.identityRevision })
+    },
     listIdentityRecords: () => identities.list(), // Host management only; tools use scopedIdentity.
     subscribe(listener) { active(); if (typeof listener !== 'function') fail('SOCIAL_INVALID_LISTENER'); listeners.add(listener); return () => listeners.delete(listener) },
     listNotices,
@@ -170,11 +197,43 @@ export async function createSocialService({ paths, limits, env = process.env, dr
       try { result = await entry.driver.sendText({ conversation: scope.conversation, text: input.text, replyToMessageId: input.replyToMessageId }) }
       catch { result = { status: 'unknown', errorCode: 'SOCIAL_SEND_UNKNOWN' } }
       if (!['accepted', 'failed', 'unknown'].includes(result?.status)) result = { status: 'unknown', errorCode: 'SOCIAL_SEND_UNKNOWN' }
-      row.result = { status: result.status, ...(text(result.messageId) ? { messageId: result.messageId } : {}), ...(result.status !== 'accepted' ? { errorCode: result.status === 'unknown' ? 'SOCIAL_SEND_UNKNOWN' : 'SOCIAL_SEND_FAILED' } : {}) }
+      const safeFailure = ['SOCIAL_WEBHOOK_EXPIRED', 'SOCIAL_REPLY_UNSUPPORTED', 'SOCIAL_RATE_LIMITED'].includes(result.errorCode) ? result.errorCode : 'SOCIAL_SEND_FAILED'
+      row.result = { status: result.status, ...(text(result.messageId) ? { messageId: result.messageId } : {}), ...(result.status !== 'accepted' ? { errorCode: result.status === 'unknown' ? 'SOCIAL_SEND_UNKNOWN' : safeFailure } : {}) }
       try { await writeJson(paths.socialOperations, operations) }
       catch { row.result = { status: 'unknown', errorCode: 'SOCIAL_SEND_UNKNOWN' } }
       return structuredClone(row.result)
     }) },
+    /** Host-initiated message to the owner's own DingTalk direct chat. No scope: the
+     * target is resolved inside the driver from privately stored routes only. */
+    sendOwner(input) {
+      input = structuredClone(input)
+      return lifecycle(async () => {
+        active()
+        if (!plain(input) || !text(input.operationId, 128) || !text(input.text, limits.maxSendChars)) fail('SOCIAL_INVALID_SEND')
+        const entry = [...connections.values()].find(value => value.config.provider === 'dingtalk-stream' && value.status === 'connected' && value.verified && typeof value.driver?.sendOwner === 'function' && peers?.owner(value.config.id, value.verified.identityRevision))
+        if (!entry) fail('SOCIAL_NO_OWNER_CHAT')
+        const owner = peers.owner(entry.config.id, entry.verified.identityRevision)
+        const fingerprint = digest(JSON.stringify(['owner', entry.config.id, entry.verified.identityRevision, owner.sender.id, owner.conversation, input.text]))
+        const previous = operations.operations.find(row => row.operationId === input.operationId)
+        if (previous) { if (previous.fingerprint !== fingerprint) fail('SOCIAL_OPERATION_CONFLICT'); return structuredClone(previous.result) }
+        if (operations.operations.length >= limits.maxOperations) fail('SOCIAL_OPERATION_CAPACITY')
+        const row = { operationId: input.operationId, fingerprint, at: now(), result: { status: 'unknown', errorCode: 'SOCIAL_SEND_UNKNOWN' } }
+        operations.operations.push(row)
+        try { await writeJson(paths.socialOperations, operations) }
+        catch { operations.operations.pop(); fail('SOCIAL_STORAGE_FAILED') }
+        active()
+        if (entryFor(entry.config.id) !== entry || JSON.stringify(peers.owner(entry.config.id, entry.verified.identityRevision)) !== JSON.stringify(owner)) fail('SOCIAL_OWNER_CHANGED')
+        let result
+        try { result = await entry.driver.sendOwner({ text: input.text, conversation: owner.conversation, staffId: owner.sender.staffId }) }
+        catch { result = { status: 'unknown', errorCode: 'SOCIAL_SEND_UNKNOWN' } }
+        if (!['accepted', 'failed', 'unknown'].includes(result?.status)) result = { status: 'unknown', errorCode: 'SOCIAL_SEND_UNKNOWN' }
+        const safeFailure = ['SOCIAL_NO_OWNER_CHAT', 'SOCIAL_OWNER_WEBHOOK_EXPIRED', 'SOCIAL_OWNER_SEND_FAILED', 'SOCIAL_OWNER_TOKEN_FAILED', 'SOCIAL_RATE_LIMITED', 'SOCIAL_NOT_CONNECTED', 'SOCIAL_INVALID_TEXT'].includes(result.errorCode) ? result.errorCode : 'SOCIAL_SEND_FAILED'
+        row.result = { status: result.status, ...(result.status !== 'accepted' ? { errorCode: result.status === 'unknown' ? 'SOCIAL_SEND_UNKNOWN' : safeFailure } : {}) }
+        try { await writeJson(paths.socialOperations, operations) }
+        catch { row.result = { status: 'unknown', errorCode: 'SOCIAL_SEND_UNKNOWN' } }
+        return structuredClone(row.result)
+      })
+    },
     close() {
       if (closePromise) return closePromise
       stopped = true; clearTimeout(notificationTimer); listeners.clear()

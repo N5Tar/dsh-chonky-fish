@@ -109,6 +109,11 @@ await test('paths: 所有文件都在 home 下，工作区在 home/小鱼塘', (
     socialIdentities: join(home, 'social', 'identities.json'),
     socialInbox: join(home, 'social', 'inbox'),
     socialBindings: join(home, 'social', 'session-bindings.json'),
+    socialMainDeliveries: join(home, 'social', 'main-deliveries.json'),
+    socialReplies: join(home, 'social', 'replies.json'),
+    socialPeerBindings: join(home, 'social', 'peer-bindings.json'),
+    socialChannelReplies: join(home, 'social', 'channel-replies.json'),
+    socialWebhooks: join(home, 'social', 'dingtalk-webhooks.json'),
     socialOperations: join(home, 'social', 'operations.json'),
     socialWorkspace: join(home, 'social', '会话'),
   })

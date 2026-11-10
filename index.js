@@ -95,6 +95,7 @@ export function apply(ctx) {
   const resources = createResources({ env: process.env })
   const { routes, limits, spec } = resources
   let writeChain = Promise.resolve()
+  let activePanelSession // Updated synchronously by the existing panel-session route.
 
   function warn(message, error) {
     try {
@@ -282,10 +283,10 @@ export function apply(ctx) {
     },
   }), 'chonkyfish: config route')
 
-  // Social retains target binding, without a plugin-wide tool permission gate.
+  // Social arrivals go to the panel's current main session, with source-scoped safeguards.
   ctx.effect(() => {
-    const social = installSocial(ctx, { resources, ready: layoutReady, warn })
-    return () => { void social.close().catch(() => warn('[chonkyfish/social] shutdown failed')) }
+    const social = installSocial(ctx, { resources, ready: layoutReady, warn, getActiveSessionId: () => activePanelSession })
+    return () => social.close().catch(() => warn('[chonkyfish/social] shutdown failed'))
   }, 'chonkyfish: social')
 
   /* ------------------------------------------------------- permissions */
@@ -370,7 +371,7 @@ export function apply(ctx) {
   ctx.effect(() => {
     let disposed = false
     let stop = () => {}
-    startProactive(ctx, { resources, ready: layoutReady, warn }).then((dispose) => {
+    startProactive(ctx, { resources, ready: layoutReady, warn, onActiveSession: id => { activePanelSession = id } }).then((dispose) => {
       if (disposed) dispose()
       else stop = dispose
     }).catch((error) => {
@@ -562,7 +563,7 @@ async function startEventEngine(ctx, { resources, ready, warn }) {
  *   POST /chonkyfish/proactive    让她往面板当前会话主动说一句（可选自定义旁白）
  * 返回一个幂等的 stop 函数。
  */
-async function startProactive(ctx, { resources, ready, warn }) {
+async function startProactive(ctx, { resources, ready, warn, onActiveSession }) {
   try {
     await ready
     const [{ createProactiveService }] = await Promise.all([import('./src/proactive/proactive.js')])
@@ -589,6 +590,7 @@ async function startProactive(ctx, { resources, ready, warn }) {
               replyJson(response, 400, result)
               return
             }
+            onActiveSession?.(result.sessionId)
             response.writeHead(204)
             response.end()
           })

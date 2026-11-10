@@ -111,6 +111,24 @@ test('非主人来源的 user 消息不进抽取（定时提醒 / 主动消息�
   }
 })
 
+test('投递到主会话的外部社交消息及回复不进入主人记忆，后续主人轮次正常', () => {
+  const { file, cleanup } = tempDb()
+  const engine = createEventEngine({ file, workspaceRoot: POND, now })
+  try {
+    const session = fishSession()
+    engine.feed(session, turnStart(1, 1))
+    engine.feed(session, event(2, 'user/message', { id: 'social-' + 'a'.repeat(64), role: 'user', content: [{ type: 'text', text: '我喜欢咖啡' }], source: { kind: 'user' } }))
+    engine.feed(session, assistantMessage(3, '收到外部消息'))
+    engine.feed(session, turnEnd(4, 1))
+    assert.equal(engine.stats().jobs.pending, 0)
+    engine.feed(session, turnStart(5, 2))
+    engine.feed(session, userMessage(6, '主人真正的偏好：我喜欢茶'))
+    engine.feed(session, assistantMessage(7, '记住啦'))
+    engine.feed(session, turnEnd(8, 2))
+    assert.equal(engine.stats().jobs.pending, 1)
+  } finally { engine.close(); cleanup() }
+})
+
 test('Social 会话的 user 与 assistant 都不进入主人记忆，即使配置成同一 preset/workspace', () => {
   const { file, cleanup } = tempDb()
   const engine = createEventEngine({ file, workspaceRoot: POND, preset: 'chonkyfish-social', now })

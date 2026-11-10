@@ -311,6 +311,9 @@ await test('读原文：跳过工具事件与被 compaction 换掉的 shadowed �
   assert.deepEqual(records.map((record) => record.seq), [2, 5])
   assert.deepEqual(records.map((record) => record.sourceKind), ['user_message', 'assistant_message'])
   assert.equal(records[0].recordId, SID + ':2')
+  const stored = eventsBySession.get(SID).get(2)
+  stored.data = { ...stored.data, id: 'social-' + 'b'.repeat(64), source: { kind: 'user' } }
+  assert.deepEqual(await loadTurnRecords({ sessionQuery: makeSessionQuery(eventsBySession), sessionId: SID, fromSeq: 2, toSeq: 5 }), [], 'replayed jobs cannot attribute plain channel messages to the owner')
 })
 
 await test('会话日志读不到 → payload_unavailable，可重试', async () => {

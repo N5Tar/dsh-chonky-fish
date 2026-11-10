@@ -11,6 +11,11 @@ const target = { type: 'direct', id: '20002' }
 const connection = { id: 'qq-main', platform: 'qq', provider: 'napcat', endpoint: 'ws://127.0.0.1:3001/' }
 const config = { version: 1, connections: [connection] }
 assert.deepEqual(validateConfig(config), config)
+const dingConnection = { id: 'ding', platform: 'dingtalk', provider: 'dingtalk-stream', clientId: 'ding-app', robotCode: 'ding-robot', clientSecret: 'test-secret-value' }
+assert.deepEqual(validateConfig({ version: 1, connections: [connection, dingConnection] }).connections, [connection, dingConnection])
+for (const patch of [{ endpoint: 'wss://example.com' }, { tokenEnv: 'TOKEN' }, { clientSecret: '' }, { clientSecret: 123 }, { clientSecret: 'x'.repeat(8193) }, { clientSecretEnv: 'DING_SECRET' }, { clientId: '' }, { clientId: ' app ' }, { robotCode: '' }, { robotCode: undefined }, { clientSecretEnv: '' }, { clientSecretEnv: 'not valid!' }, { platform: 'qq' }, { provider: 'napcat' }]) {
+  assert.throws(() => validateConfig({ version: 1, connections: [{ ...dingConnection, ...patch }] }))
+}
 // 只保留连接本身；旧的开关 / 接收范围 / 允许名单字段一律被拒绝。
 for (const patch of [{ protocol: 'onebot-v11' }, { provider: '__proto__' }, { provider: 'onebots-discord' }, { endpoint: 'ws://example.com/' }, { endpoint: 'ws://a:secret@localhost/' }, { endpoint: 'ws://localhost/?access_token=secret' }, { enabled: true }, { inbound: {} }, { allowedConversations: [] }]) {
   assert.throws(() => validateConfig({ version: 1, connections: [{ ...connection, ...patch }] }))

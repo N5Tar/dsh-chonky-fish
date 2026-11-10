@@ -13,6 +13,7 @@
  * 直接跳过并记审计，不去翻日志。
  */
 import { makeRecordId, messageText } from '../domain/contracts.js'
+import { isChannelUserMessage } from '../../social/policy.js'
 
 /** DSH 的时间戳是毫秒 epoch；防御性地兼容秒级。 */
 export function toIsoTime(value) {
@@ -77,10 +78,10 @@ export function createTurnCollector({ maxRecordsPerTurn = 400, onTurn, onSkip })
         case 'user/message':
           // 不是主人打字的 user 消息（定时提醒、主动消息旁白、系统注入……）不算「主人说了」，
           // 否则旁白里的第三人称说明会被抽成主人的事实。老日志没有 source 时按主人处理。
-          if (data.source && data.source.kind !== 'user') {
+          if (isChannelUserMessage(data) || (data.source && data.source.kind !== 'user')) {
             const buffer = buffers.get(sessionId)
             if (buffer) {
-              buffer.provenance = { ...data.source }
+              buffer.provenance = isChannelUserMessage(data) ? { kind: 'channel-message', messageId: data.id } : { ...data.source }
               buffer.records = []
             }
             return

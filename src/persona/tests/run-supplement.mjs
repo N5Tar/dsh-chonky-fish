@@ -136,7 +136,8 @@ test('个人档案独立成模块，目录更新与无效目录回退生效', ()
     assert.equal(supplement.provider().includes('个人资料'), false)
     assert.ok(first.includes(join(workspace.root, 'my profile')))
     assert.ok(first.indexOf('自定义人格') < first.indexOf('### 我的个人资料'))
-    const titles = ['我的个人资料', '感知', '日记', '社交', '技能']
+    const titles = ['我的个人资料', '感知', '日记', '技能']
+    assert.equal(first.includes('### 社交'), false, 'channel transport is not a model-facing persona module')
     const positions = titles.map(title => first.indexOf('### ' + title))
     assert.ok(positions.every((position, i) => position >= 0 && (i === 0 || position > positions[i - 1])))
     assert.equal(first.includes('ABS'), false)
@@ -191,7 +192,6 @@ test('各模块说明包含对应工具名称和常用操作', () => {
     ['我的个人资料', ['glob', 'read']],
     ['感知', ['perception_get_owner_state']],
     ['日记', ['diary', 'action="write"', 'action="list"', 'action="read"', 'schedule_create']],
-    ['社交', ['social_list_identities', 'social_list_inbox', 'social_read_messages', 'social_send_message', 'fish_skill', 'fish_skill_learn']],
     ['技能', ['fish_skill', 'fish_skill_learn', 'action="list"', 'action="read"', 'action="create"', 'action="record"', 'action="revise"']],
   ]
   for (const [title, names] of expected) {

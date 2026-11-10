@@ -7,6 +7,7 @@
  */
 import { toIsoTime } from '../adapters/dsh-source.js'
 import { makeRecordId, messageText } from '../domain/contracts.js'
+import { isChannelUserMessage } from '../../social/policy.js'
 
 const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])
 
@@ -34,7 +35,7 @@ export async function loadTurnRecords({ sessionQuery, sessionId, fromSeq, toSeq 
     if (record.type !== 'user/message' || Number(record.seq) < Number(start?.seq ?? 0) || Number(record.seq) > toSeq) continue
     const window = await sessionQuery.readEvent({ sessionId, seq: Number(record.seq), before: 0, after: 0 })
     const source = window?.target?.data?.source
-    if (source && source.kind !== 'user') return []
+    if (isChannelUserMessage(window?.target?.data) || (source && source.kind !== 'user')) return []
   }
   for (const record of ordered) {
     const seq = Number(record.seq)

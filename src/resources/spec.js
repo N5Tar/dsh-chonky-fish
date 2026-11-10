@@ -27,7 +27,7 @@ export const PERSONAL_PROFILE_DIR = '个人资料'
 /** Social is disabled until a strict, separate configuration is explicitly enabled. */
 export const SOCIAL = Object.freeze({
   directory: 'social', preset: 'chonkyfish-social', workspace: '会话',
-  files: Object.freeze({ config: 'config.json', identities: 'identities.json', inbox: 'inbox', bindings: 'session-bindings.json', operations: 'operations.json' }),
+  files: Object.freeze({ config: 'config.json', identities: 'identities.json', inbox: 'inbox', bindings: 'session-bindings.json', mainDeliveries: 'main-deliveries.json', replies: 'replies.json', peerBindings: 'peer-bindings.json', channelReplies: 'channel-replies.json', webhooks: 'dingtalk-webhooks.json', operations: 'operations.json' }),
   limits: Object.freeze({ notificationMs: 250, maxSendChars: 8000, sendIntervalMs: 2000, maxOperations: 10000, inbox: DEFAULT_INBOX_LIMITS }),
 })
 

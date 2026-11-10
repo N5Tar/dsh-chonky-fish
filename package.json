@@ -1,6 +1,6 @@
 {
   "name": "@local/chonkyfish-dashboard",
-  "version": "0.4.3",
+  "version": "0.4.9",
   "private": true,
   "type": "module",
   "description": "ChonkyFish（大肥鱼）· 小鱼塘管理台：安装本插件会同时注册「大肥鱼」agent preset（含通用工具），对话接入 DSH 会话；插件数据全部收拢在自己的 home（$DSH_HOME/chonkyfish/），面板补充人格设定作为 system prompt 补充动态生效，路径/路由/配置由资源管理模块统一提供。",
@@ -48,7 +48,7 @@
     "test:avatar": "node src/avatar/tests/run-player.mjs",
     "test:platform": "node src/platform/tests/run-platform.mjs",
     "test": "npm run test:event-engine:all && npm run test:resources && npm run test:platform && npm run test:persona && npm run test:proactive && npm run test:diary && npm run test:social && npm run test:abs && npm run test:skills && npm run test:avatar && npm run test:perception",
-    "test:social": "node src/social/tests/run-core.mjs && node src/social/tests/run-inbox.mjs && node src/social/tests/run-service.mjs && node src/social/tests/run-bridge.mjs && node src/social/tests/run-http-tools.mjs && node src/social/tests/run-host.mjs && node src/social/tests/run-client.mjs",
+    "test:social": "node src/social/tests/run-stream-liveness.mjs && node src/social/tests/run-peer-bindings.mjs && node src/social/tests/run-channel-reply.mjs && node src/social/tests/run-dingtalk.mjs && node src/social/tests/run-core.mjs && node src/social/tests/run-inbox.mjs && node src/social/tests/run-service.mjs && node src/social/tests/run-bridge.mjs && node src/social/tests/run-reply-outbox.mjs && node src/social/tests/run-main-pump.mjs && node src/social/tests/run-http-tools.mjs && node src/social/tests/run-host.mjs && node src/social/tests/run-client.mjs",
     "test:resources": "node src/resources/tests/run-resources.mjs",
     "test:persona": "node src/persona/tests/run-supplement.mjs"
   },
@@ -65,5 +65,8 @@
     "type": "git",
     "url": "https://github.com/N5Tar/dsh-chonky-fish.git"
   },
-  "homepage": "https://github.com/N5Tar/dsh-chonky-fish"
+  "homepage": "https://github.com/N5Tar/dsh-chonky-fish",
+  "dependencies": {
+    "ws": "8.22.2"
+  }
 }
