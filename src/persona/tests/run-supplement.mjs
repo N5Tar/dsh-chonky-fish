@@ -185,6 +185,23 @@ test('发布预设在面板补充后拼接模块，保留 complete 模式', () =
   }
 })
 
+test('各模块说明包含对应工具名称和常用操作', () => {
+  const text = createModulePrompt({ readContext: () => ({ profileDirectory: '/tmp/profile' }) }).read()
+  const expected = [
+    ['我的个人资料', ['glob', 'read']],
+    ['感知', ['perception_get_owner_state']],
+    ['日记', ['diary', 'action="write"', 'action="list"', 'action="read"', 'schedule_create']],
+    ['社交', ['social_list_identities', 'social_list_inbox', 'social_read_messages', 'social_send_message', 'fish_skill', 'fish_skill_learn']],
+    ['技能', ['fish_skill', 'fish_skill_learn', 'action="list"', 'action="read"', 'action="create"', 'action="record"', 'action="revise"']],
+  ]
+  for (const [title, names] of expected) {
+    const section = text.split('### ' + title + '\n\n')[1]?.split('\n\n### ')[0]
+    assert.ok(section, title)
+    for (const name of names) assert.ok(section.includes(name), `${title}: ${name}`)
+  }
+  assert.equal(text.includes('ABS'), false)
+})
+
 await new Promise((resolve) => setTimeout(resolve, 10))
 const failures = results.filter((item) => !item.ok)
 for (const failure of failures) {
