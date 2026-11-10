@@ -1,0 +1,67 @@
+/* Shared ChonkyFish section surface. Keep the existing light-blue product identity.
+   Both Shadow DOM section pages and React workbenches consume this file. */
+.cf-page,.cf-module{--cf-ink:#243b5e;--cf-muted:#627d9e;--cf-border:#e8f1fb;--cf-soft:#f4f8ff;--cf-accent:#316da9;background:linear-gradient(180deg,#fff 0%,#f6fbff 100%);color:var(--cf-ink)}
+.cf-page{flex:1 1 auto;min-height:0;overflow:auto;padding:36px 40px 48px}
+.cf-page-inner{width:min(780px,100%);margin:0 auto}
+.cf-page-head,.cf-module .module-head{display:flex;align-items:center;gap:14px;margin:0 0 22px}
+.cf-page-icon,.cf-module .module-icon{flex:none;width:46px;height:46px;border-radius:15px;display:grid;place-items:center;background:linear-gradient(150deg,#ecf7ff,#d5e9ff);box-shadow:0 6px 16px #81b2eb26;color:var(--cf-accent);font-size:22px}
+.cf-module .module-icon svg{width:24px;height:24px}
+.cf-page-title,.cf-module h1{margin:0;font-size:22px;font-weight:800;letter-spacing:.2px;line-height:1.4;color:#22456b}
+.cf-page-sub,.cf-module .module-sub{margin:5px 0 0;font-size:12px;line-height:1.7;color:var(--cf-muted)}
+.cf-page-body,.cf-module .module-card{background:#fff;border:1px solid var(--cf-border);border-radius:20px;padding:22px 24px 26px;box-shadow:0 18px 46px #87b2e01f}
+.cf-module{height:100%;min-height:0;overflow:auto;container-type:inline-size;font:14px/1.7 Inter,"SF Pro Display","PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;--dsw-alias-bg-base:#fff;--dsw-alias-bg-layer-1:#fff;--dsw-alias-bg-layer-2:var(--cf-soft);--dsw-alias-border-l1:var(--cf-border);--dsw-alias-border-l2:#d7e5f5;--dsw-alias-label-primary:var(--cf-ink);--dsw-alias-label-secondary:var(--cf-muted);--dsw-alias-text-primary:var(--cf-ink);--dsw-alias-brand-primary:var(--cf-accent)}
+.cf-module,.cf-module *{box-sizing:border-box}
+.cf-module .module-shell{width:100%;max-width:860px;padding:36px 40px 48px;margin:0 auto;min-width:0}
+.cf-module h2{font-size:16px;font-weight:700;letter-spacing:0;color:#22456b}
+.cf-module h3{font-size:14px;font-weight:700}
+.cf-module button,.cf-module input,.cf-module select{font:inherit;border-radius:11px;border:1px solid #d7e5f5;background:#fff;color:var(--cf-ink);padding:9px 14px;min-height:40px;max-width:100%}
+.cf-module button{font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+.cf-module button:hover:not(:disabled){background:#edf5ff;border-color:#b4d2f1}
+.cf-module button.primary{background:var(--cf-accent);border-color:var(--cf-accent);color:#fff}
+.cf-module button.primary:hover:not(:disabled){background:#285b90}
+.cf-module button:disabled{opacity:.5;cursor:default}
+.cf-module :focus-visible{outline:2px solid var(--cf-accent);outline-offset:3px}
+.cf-skills.cf-module header{border-bottom:0;padding:0;flex-wrap:wrap}
+.cf-skills.cf-module .module-heading{display:flex;align-items:center;gap:14px;flex:1;min-width:0}
+.cf-skills.cf-module .layout{grid-template-columns:200px minmax(0,1fr);gap:24px}
+.cf-skills.cf-module aside{padding-right:20px}
+.cf-skills.cf-module .eyebrow{font-size:12px;font-weight:700;letter-spacing:0}
+.cf-skills.cf-module .skill-row{padding:12px;margin:6px 0;border-radius:12px}
+.cf-skills.cf-module .skill-row[aria-pressed=true]{background:#edf5ff;border-color:#b4d2f1;color:#22456b}
+.cf-skills.cf-module .section-head{gap:12px;flex-wrap:wrap}
+.cf-skills.cf-module .content{min-width:0}
+.cf-skills.cf-module .tabs{gap:6px;flex-wrap:wrap}
+.cf-skills.cf-module .tabs button{padding:8px 12px;border-radius:10px}
+.cf-skills.cf-module .tabs button[aria-selected=true]{background:#edf5ff;color:var(--cf-accent)}
+.cf-skills.cf-module .guide-text{font-size:14px;line-height:1.9}
+.cf-skills.cf-module .empty{border-radius:12px;background:var(--cf-soft)}
+.cf-skills.cf-module .transfer{border-radius:16px;background:#fff;border-color:var(--cf-border)}
+.cf-abs-lab.cf-module .abs-header{margin-bottom:22px}
+.cf-abs-lab.cf-module .abs-states{grid-template-columns:minmax(0,.85fr) minmax(0,1.4fr);gap:16px}
+.cf-abs-lab.cf-module .abs-panel{background:#fff;border:1px solid var(--cf-border);border-radius:20px;padding:22px 24px;box-shadow:0 18px 46px #87b2e01f}
+.cf-abs-lab.cf-module .abs-owner-body{min-height:148px}
+.cf-abs-lab.cf-module .activity{font-size:28px;color:#22456b}
+.cf-abs-lab.cf-module .abs-value{font-size:28px;font-weight:700;color:#22456b}
+.cf-abs-lab.cf-module .abs-drives{gap:20px;padding:20px 0}
+.cf-abs-lab.cf-module .abs-drive+.abs-drive{padding-left:20px}
+.cf-abs-lab.cf-module .abs-settings{padding:0;margin-top:20px}
+.cf-abs-lab.cf-module .abs-settings>summary{padding:18px 24px}
+.cf-abs-lab.cf-module .cf-abs-events{margin-top:20px;background:#fff;border:1px solid var(--cf-border);border-radius:20px;padding:22px 24px;box-shadow:0 18px 46px #87b2e01f}
+.cf-abs-lab.cf-module .cf-abs-event{border-radius:12px;background:var(--cf-soft);border-color:var(--cf-border);padding:16px}
+.cf-abs-lab.cf-module .cf-abs-event-row{grid-template-columns:140px minmax(0,1fr) auto;gap:14px}
+.cf-abs-lab.cf-module .cf-abs-event-tag{border-radius:8px;color:var(--cf-muted)}
+@container(max-width:760px){.cf-abs-lab.cf-module .abs-states,.cf-abs-lab.cf-module .abs-time-grid{grid-template-columns:1fr}.cf-abs-lab.cf-module .cf-abs-event-row{grid-template-columns:minmax(0,1fr) auto}.cf-abs-lab.cf-module .cf-abs-event-time{grid-column:1/-1}}
+@container(max-width:620px){
+ .cf-page,.cf-module .module-shell{padding:22px 16px 30px}
+ .cf-page-head,.cf-module .module-head,.cf-skills.cf-module .module-heading{gap:10px;margin-bottom:16px}
+ .cf-skills.cf-module .module-heading{margin-bottom:0}
+ .cf-page-icon,.cf-module .module-icon{width:38px;height:38px;border-radius:12px;font-size:18px}
+ .cf-page-title,.cf-module h1{font-size:18px}
+ .cf-page-body,.cf-module .module-card,.cf-abs-lab.cf-module .abs-panel,.cf-abs-lab.cf-module .cf-abs-events{padding:16px 14px 20px;border-radius:16px}
+ .cf-skills.cf-module .layout{grid-template-columns:minmax(0,1fr);gap:20px}
+ .cf-skills.cf-module aside{border-right:0;border-bottom:1px solid var(--cf-border);padding:0 0 16px}
+ .cf-skills.cf-module .library-note{display:none}
+ .cf-abs-lab.cf-module .abs-settings{padding:0}
+ .cf-abs-lab.cf-module .abs-settings>summary{padding:16px 14px}
+ .cf-abs-lab.cf-module .abs-settings-summary{display:block;margin:8px 0 0}
+}

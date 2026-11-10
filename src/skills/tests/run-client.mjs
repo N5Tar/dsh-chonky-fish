@@ -6,6 +6,7 @@ const source = await readFile(new URL('../panel.js', import.meta.url), 'utf8')
 const states = [], effects = []
 let cursor = 0, tree
 const context = vm.createContext({
+  MODULE_SURFACE: await readFile(new URL('../../module-surface.css', import.meta.url), 'utf8'), ICON_SKILLS: () => null,
   zh: {}, en: {}, window: {}, RESOURCES: { routes: { skills: '/chonkyfish/skills' } },
   URLSearchParams, AbortController, Blob, URL, setTimeout,
   React: {
@@ -38,7 +39,10 @@ click('使用指南'); await flush(); assert.match(JSON.stringify(tree), /# Guid
 click('版本历史'); await flush(); assert.match(JSON.stringify(tree), /还没有版本记录/)
 click('学习经验'); click('使用指南'); click('版本历史'); await flush()
 console.log('PASS skills panel tab transitions and rapid switching')
-assert.ok(nodes(tree).some(n => n.props.className === 'shell'))
+assert.ok(nodes(tree).some(n => n.props.className === 'shell module-shell'))
+assert.ok(nodes(tree).some(n => n.props.className === 'module-head'))
+assert.ok(nodes(tree).some(n => n.props.className === 'layout module-card'))
+assert.ok(nodes(tree).some(n => n.props.className === 'cf-skills cf-module'))
 assert.ok(nodes(tree).some(n => n.props.className === 'skill-id' && n.children.includes('test')))
 assert.ok(nodes(tree).some(n => n.props.className === 'library-note'))
 assert.ok(nodes(tree).some(n => n.props.className === 'footnote'))

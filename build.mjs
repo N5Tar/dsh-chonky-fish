@@ -40,6 +40,7 @@ const clientResources = {
   defaultPanelPrompt: DEFAULT_PANEL_PROMPT,
   assets: { avatar: assets.avatar, poses: assets.poses },
 }
+const moduleSurface = readFileSync(join(here, 'src/module-surface.css'), 'utf8')
 const styleMatch = raw.match(/<style>([\s\S]*?)<\/style>/)
 const bodyMatch = raw.match(/<body>([\s\S]*)<\/body>/)
 if (!styleMatch || !bodyMatch) throw new Error(`cannot extract <style>/<body> from ${sourcePath}`)
@@ -120,20 +121,7 @@ css += `
    .cf-section markup is moved out of the modal into a full-page card. */
 .dfy-page.cf-section-view > .app { display: none; }
 .dfy-page.cf-section-view > .modal-backdrop { display: none; }
-.cf-page { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 36px 40px 48px; background: linear-gradient(180deg,#ffffff 0%,#f6fbff 100%); }
-.cf-page-inner { width: min(780px, 100%); margin: 0 auto; }
-.cf-page-head { display: flex; align-items: center; gap: 14px; margin: 0 0 22px; }
-.cf-page-icon { flex: none; width: 46px; height: 46px; border-radius: 15px; display: grid; place-items: center; font-size: 22px; background: linear-gradient(150deg,#ecf7ff,#d5e9ff); box-shadow: 0 6px 16px #81b2eb26; }
-.cf-page-title { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: .2px; color: #22456b; }
-.cf-page-sub { margin: 5px 0 0; font-size: 12px; line-height: 1.7; color: #9aacc4; }
-.cf-page-body { background: #fff; border: 1px solid #e8f1fb; border-radius: 20px; padding: 22px 24px 26px; box-shadow: 0 18px 46px #87b2e01f; }
-@container (max-width: 620px) {
-  .cf-page { padding: 22px 16px 30px; }
-  .cf-page-head { gap: 10px; margin-bottom: 16px; }
-  .cf-page-icon { width: 38px; height: 38px; border-radius: 12px; font-size: 18px; }
-  .cf-page-title { font-size: 18px; }
-  .cf-page-body { padding: 16px 14px 20px; border-radius: 16px; }
-}
+${moduleSurface}
 `
 
 /* ------------------------------------------------------------------ runtime */
@@ -328,6 +316,7 @@ window.__ModuleLoader__.load({
     }
 
 ${runtime}
+var MODULE_SURFACE = ${JSON.stringify(moduleSurface)}
 ${absEventsPanel}
 ${absLab}
 ${skillsPanel}

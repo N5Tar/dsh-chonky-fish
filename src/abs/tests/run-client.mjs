@@ -62,7 +62,7 @@ for (const token of [undefined, 'bad']) {
 await module.close()
 assert.equal(removed, true)
 
-const display = vm.createContext({})
+const display = vm.createContext({ MODULE_SURFACE: await readFile(new URL('../../module-surface.css', import.meta.url), 'utf8'), ICON_SENSE: 'sense-icon' })
 vm.runInContext(source, display)
 assert.equal(display.formatAbsTime('2026-11-07T03:34:11.000Z'), '2026-11-07 11:34:11 UTC+8')
 assert.equal(display.formatAbsTime('2026-11-07T16:00:00Z'), '2026-11-08 00:00:00 UTC+8')
@@ -76,7 +76,7 @@ assert.equal(presented.nested.nextReviewAt, '2026-11-08 00:00:00 UTC+8')
 assert.equal(presented.description, audit.description, 'do not rewrite arbitrary content')
 assert.equal(JSON.stringify(audit), untouched)
 assert.match(display.ABS_LAB_SURFACE, /grid-template-columns:\.85fr 1.4fr/)
-assert.match(display.ABS_LAB_SURFACE, /@media\(max-width:600px\)/)
+assert.match(display.ABS_LAB_SURFACE, /@container\(max-width:600px\)/)
 assert.doesNotMatch(display.ABS_LAB_SURFACE, /backdrop-filter/)
 assert.match(display.ABS_LAB_SURFACE, /var\(--dsw-alias-bg-base\)/)
 
