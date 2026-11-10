@@ -49,7 +49,7 @@ const post=requests.find(r=>r.options.method==='POST');assert.equal(post.url,'/c
 await click('暂停');assert.equal(liveState,'paused');await click('停止');assert.equal(liveState,'stopped')
 console.log('PASS explicit JSON start pause stop controls')
 hasData=true;await click('刷新')
-assert.match(JSON.stringify(tree),/开发倾向/);assert.equal(nodes(tree).filter(n=>n.type==='svg').length,3)
+assert.equal(context.perceptionLabel('development'),'工作');assert.match(JSON.stringify(tree),/工作占比/);assert.doesNotMatch(JSON.stringify(tree),/开发倾向|开发占比/);assert.equal(nodes(tree).filter(n=>n.type==='svg').length,3)
 assert.match(JSON.stringify(tree),/非实时结果/)
 assert.ok(!nodes(tree).some(n=>'dangerouslySetInnerHTML' in n.props));assert.ok(nodes(tree).some(n=>n.type==='li'&&n.children.some(x=>typeof x==='string'&&x.includes('<script>'))))
 await click('查看');assert.ok(nodes(tree).some(n=>n.type==='pre'));await click('收起')

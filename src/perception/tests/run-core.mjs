@@ -46,6 +46,13 @@ test('clock jumps are gaps with evidence and no overlapping intervals', () => {
   assert.equal(intervals.reduce((sum, i) => sum + i.toMs - i.fromMs, 0), 6000);
 });
 const full = Array.from({ length: 181 }, (_, i) => sample(i));
+test('DSH and Codex combine into the work category with the compatible development key', () => {
+  assert.equal(classifyApp({ platform: 'macos', id: 'com.deepseek.dsh' }), 'development');
+  const samples = full.map((s, i) => ({ ...s, foregroundApp: { platform: 'macos', id: i < 101 ? 'com.deepseek.dsh' : i < 162 ? 'com.openai.codex' : 'com.google.Chrome' } }));
+  const result = analyzeActivity(samples, { nowMs: base + 900000 });
+  assert.equal(result.windowStats.long.categoryShare.development, .9);
+  assert.equal(result.candidateActivity, 'development');
+});
 test('activity needs two distinct rounds and does not confirm repeated source', () => {
   const first = analyzeActivity(full, { nowMs: base + 900000 });
   assert.equal(first.activity, 'unknown');

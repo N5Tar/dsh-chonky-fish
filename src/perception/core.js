@@ -6,6 +6,8 @@ export const RULE_VERSION = 'activity-v1.1';
 const TIMESTAMP_ROUNDING_MS = 2;
 const MINUTE = 60000;
 const APP_CATEGORIES = new Map([
+  // Keep the persisted development key for compatibility; the category is displayed as work.
+  ['macos:com.deepseek.dsh', 'development'],
   ['macos:com.microsoft.VSCode', 'development'],
   // Verified from a real foreground API comparison, not inferred from a name.
   ['macos:com.openai.codex', 'development'],
