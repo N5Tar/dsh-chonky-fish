@@ -1,14 +1,14 @@
-# 平台层（src/platform）设计
+# 平台层（app/shared/platform）设计
 
 ## 目的
 
 同一个插件要跑在 macOS / Windows / Linux 上。凡是 **文件系统与路径语义** 上会随操作系统变化的
-行为，集中放在 `src/platform/`，业务模块只调用能力，不判断 `process.platform`、不自己写兼容分支。
+行为，集中放在 `app/shared/platform/`，业务模块只调用能力，不判断 `process.platform`、不自己写兼容分支。
 
 ## 布局
 
 ```
-src/platform/
+app/shared/platform/
   index.js         选路：process.platform → 具体实现；导出 createPlatform/platform/describePlatform
   posix.js         文件系统语义（macOS / Linux / *BSD）
   win32.js         Windows 语义
@@ -21,7 +21,7 @@ src/platform/
 export const platform = platformNameFor() === 'win32' ? win32Platform : posixPlatform
 ```
 
-业务模块一律 `import { platform } from '../platform/index.js'`。
+应用适配器从 `app/shared/platform/index.js` 选取实现，并将 `isWithin`、`isSamePath`、`syncDirectory` 等所需能力作为依赖注入核心模块；核心模块不直接导入应用平台实现。
 
 ## 当前能力
 
@@ -49,24 +49,23 @@ export const platform = platformNameFor() === 'win32' ? win32Platform : posixPla
 
 ## 加一个操作系统 / 加一个能力
 
-1. 在 `src/platform/` 新增 `<os>.js`，导出同名能力（可以先用 POSIX 版本兜底）。
+1. 在 `app/shared/platform/` 新增 `<os>.js`，导出同名能力（可以先用 POSIX 版本兜底）。
 2. 在 `index.js` 的 `platformNameFor()` 与 `platform` 选路里登记。
 3. 在 `tests/run-platform.mjs` 增加该实现的用例（能力函数应当是纯函数或可注入依赖，保证在任何 host 上都能测）。
 4. 业务模块不改，只换 `platform` 的实现。
 
 ## 约束（由测试守着）
 
-- `src/` 下除 `src/platform/` 外，**不允许出现 `process.platform`**。
+- `core/modules/` 与应用业务适配中不得自行判断 `process.platform`；选路只在 `app/shared/platform/index.js`。
 - 业务模块不允许自己 `open(dir).sync()`，也不允许用 `relative(resolve(...))` 之类的字符串前缀判断路径归属。
 - 路径归属判断必须走 `platform.isWithin`；目录持久化必须走 `platform.syncDirectory`。
 
-`src/platform/tests/run-platform.mjs` 会扫描 `src/**/*.js`（跳过 `tests/` 与 `platform/`）执行上述检查，
-并且在任何 host 上都能跑（win32 的 `isWithin` 是纯字符串实现，不需要真的在 Windows 上）。
+`app/shared/platform/tests/run-platform.mjs` 会扫描 `core/modules/**/*.js`（跳过 `tests/`）执行上述检查，确认没有平台分支或直接依赖应用适配；同时验证路径语义和目录同步的注入边界。测试在任何 host 上都能跑（win32 的 `isWithin` 是纯字符串实现，不需要真的在 Windows 上）。
 
 ## 路径与依赖边界补充
 
 - `isSamePath(left, right)` 判断同一路径；`isWithin(root, target)` 仅判断严格子路径。两者接收调用方 resolve 后的绝对路径，均不解析符号链接。
 - 会话身份判断使用这两个接口，避免 Windows 路径大小写差异导致漏采集。POSIX 的 `/` 根目录同样支持子路径判断。
-- 业务模块只能导入 `platform/index.js`；两份平台实现仅依赖 Node 内建模块，不依赖业务层或彼此。
+- 只有应用适配器应导入 `platform/index.js`；核心通过注入的窄接口使用所需能力。两份平台实现仅依赖 Node 内建模块，不依赖业务层或彼此。
 - 静态测试检查常见的直接实现导入和路径前缀写法；它是回归护栏，不是完整 JavaScript 语法分析器。
 - macOS 与 Linux 当前共享 POSIX 实现；这里的大小写规则是词法比较策略，不是对实际卷大小写敏感性的探测。

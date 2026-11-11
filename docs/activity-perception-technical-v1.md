@@ -1,6 +1,6 @@
 # 活动感知模块 V1 · 插件托管技术方案
 
-日期：2026-11-09。状态：V1 实现与验证中。当前桌面宿主同一 Electron 可执行文件已验证 node:sqlite 可用，原生 arm64/x64 构建与合成信号测试已进行；真实桌面权限行为、物理 Intel 机器和运行中 GUI 仍需单独验收。实现说明见 [模块 README](../src/perception/README.md)。
+日期：2026-11-09。状态：V1 实现与验证中。当前桌面宿主同一 Electron 可执行文件已验证 node:sqlite 可用，原生 arm64/x64 构建与合成信号测试已进行；真实桌面权限行为、物理 Intel 机器和运行中 GUI 仍需单独验收。实现说明见 [模块 README](../core/modules/perception/README.md)。
 
 产品范围见 [活动感知实验台设计](activity-perception-design-v1.md)。本方案替代此前的独立服务方案：**感知模块随大肥鱼插件安装和启动，复用插件宿主的运行能力，仅原生采集器是额外常驻进程。**
 
@@ -43,7 +43,7 @@ DSH 现有宿主进程
 建议新增以下目录；均为规划，尚未创建：
 
 ```text
-src/perception/
+core/modules/perception/
   core.js             区间统计、分类、防抖、新鲜度
   collector.js        启停采集器、解析和校验采样
   store.js            两张表、查询、TTL

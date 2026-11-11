@@ -1,0 +1,162 @@
+/**
+ * ChonkyFish（大肥鱼）· 资源规格（single source of truth）。
+ *
+ * 这个文件只放**纯数据**，不 import 任何 node 模块：Host 侧
+ * （app/dsh/host / app/shared/resources / 事件引擎 / 主动消息）与 client 构建
+ * （build.mjs → client.js）共同读取同一份规格，避免两边各写一套常量。
+ *
+ * 新增/修改 home 布局、文件名、路由、请求体上限、schema 版本、
+ * localStorage key、preset 名或素材目录时，**只改这里**，其它模块不许再硬编码。
+ */
+
+import { DEFAULT_INBOX_LIMITS } from '../modules/social/limits.js'
+import { ABS_DEFAULTS } from '../modules/abs/config.js'
+
+/** 插件自己的 home 目录名：$DSH_HOME/chonkyfish/ */
+export const HOME_DIR = 'chonkyfish'
+
+/** 鱼鱼工作区目录名：$DSH_HOME/chonkyfish/小鱼塘/ */
+export const WORKSPACE_DIR = '小鱼塘'
+
+/** 日记目录名：$DSH_HOME/chonkyfish/日记/（一天一个 YYYY-MM-DD.md） */
+export const DIARY_DIR = '日记'
+
+/** 人格页默认个人档案目录，独立于日记与会话工作区。 */
+export const PERSONAL_PROFILE_DIR = '个人资料'
+
+/** Social is disabled until a strict, separate configuration is explicitly enabled. */
+export const SOCIAL = Object.freeze({
+  directory: 'social', preset: 'chonkyfish-social', workspace: '会话',
+  files: Object.freeze({ config: 'config.json', identities: 'identities.json', inbox: 'inbox', bindings: 'session-bindings.json', mainDeliveries: 'main-deliveries.json', replies: 'replies.json', peerBindings: 'peer-bindings.json', channelReplies: 'channel-replies.json', webhooks: 'dingtalk-webhooks.json', operations: 'operations.json' }),
+  limits: Object.freeze({ notificationMs: 250, maxSendChars: 8000, sendIntervalMs: 2000, maxOperations: 10000, inbox: DEFAULT_INBOX_LIMITS }),
+})
+
+/** agent preset 名：鱼鱼会话 =（cwd 在工作区内, header.agentPreset === 该值） */
+export const PRESET = 'chonkyfish'
+
+/**
+ * 插件 home 下的固定文件名。
+ * events.db 是 SQLite 库；其它都是 UTF-8 JSON（写入一律 2 空格缩进 + 换行）。
+ */
+export const FILES = Object.freeze({
+  config: 'config.json',
+  state: 'state.json',
+  proactive: 'proactive.json',
+  abs: 'abs',
+  skills: 'skills',
+  perception: 'perception',
+  perceptionDatabase: 'activity.db',
+  perceptionPreferences: 'collection-preference.json',
+  events: 'events.db',
+})
+
+/** Bundled native collector locations, relative to plugin package root. */
+export const PERCEPTION_ASSETS = Object.freeze({
+  darwin: Object.freeze({
+    arm64: 'app/shared/platform/perception/native/macos/arm64/activity-collector',
+    x64: 'app/shared/platform/perception/native/macos/x64/activity-collector',
+  }),
+})
+
+/** Host 暴露给面板的本地 HTTP 路由（无插件私有 token 鉴权）。 */
+export const ROUTES = Object.freeze({
+  state: '/chonkyfish/state',
+  events: '/chonkyfish/events',
+  session: '/chonkyfish/session',
+  proactive: '/chonkyfish/proactive',
+  config: '/chonkyfish/config',
+  diary: '/chonkyfish/diary',
+  skills: '/chonkyfish/skills',
+  perception: '/chonkyfish/perception',
+  social: '/chonkyfish/social',
+  abs: '/chonkyfish/abs',
+})
+
+/** 请求体上限（字节）。state 是整份面板状态，其它是小型控制 JSON。 */
+export const LIMITS = Object.freeze({
+  stateBodyBytes: 1024 * 1024,
+  jsonBodyBytes: 16 * 1024,
+})
+
+/** 活动技能库的有界存储与读取限制。 */
+export const SKILL_LIMITS = Object.freeze({
+  maxFileBytes: 512 * 1024,
+  maxSkills: 128,
+  maxTitleChars: 200,
+  maxDescriptionChars: 1000,
+  maxRevisions: 64,
+  maxExperiences: 128,
+  maxGuideChars: 16000,
+  maxClaimChars: 2000,
+  maxReasonChars: 500,
+  maxEvidenceRefs: 12,
+  maxEvidenceRefChars: 500,
+  defaultPageSize: 10,
+  maxPageSize: 50,
+  defaultGuideChars: 2000,
+  maxReadGuideChars: 8000,
+});
+
+/** 各类落盘 JSON 的 schema 版本；读到不匹配的版本按「恢复默认」处理。 */
+export const VERSIONS = Object.freeze({
+  config: 1,
+  state: 1,
+  proactive: 2,
+  skills: 1,
+})
+
+/**
+ * 浏览器 localStorage key。
+ * Host 文件才是事实源，localStorage 只当浏览器缓存。
+ */
+export const STORAGE_KEYS = Object.freeze({
+  panelState: 'chonkyfish-mini-demo-v1',
+  session: 'chonkyfish-session-v2',
+  workspace: 'chonkyfish-workspace-v1',
+})
+
+/** 面板「补充人格设定」的默认文案：等于它就不算用户自定义，不进 system prompt。 */
+export const DEFAULT_PANEL_PROMPT =
+  '你是一只喜欢吃白饭的蓝色大肥鱼。你有点傲娇，喜欢摸鱼，偶尔嘴硬，但实际上非常关心和你聊天的人。请用轻松可爱、简短自然的中文交流。'
+
+/**
+ * system prompt 变量名：预设里的 persona 模板用 `{{chonkyfish_supplement}}`
+ * 引用面板补充人格设定，Host 侧注册同名 provider 动态提供文本。
+ */
+export const PANEL_SUPPLEMENT_VARIABLE = 'chonkyfish_supplement'
+
+/** 素材目录（相对包根）。poses 是立绘表情名。 */
+export const ASSETS = Object.freeze({
+  avatar: 'avatar',
+  poses: Object.freeze(['idle', 'eat', 'think', 'happy', 'blush', 'sleep']),
+})
+
+/**
+ * 可编辑的默认配置。
+ * config.json 缺失/损坏/字段非法时回退到这里；字段范围由
+ * app/shared/resources/index.js 的消毒逻辑负责（本文件不写逻辑）。
+ */
+export const DEFAULT_CONFIG = Object.freeze({
+  version: VERSIONS.config,
+  abs: ABS_DEFAULTS,
+  skills: Object.freeze({ enabled: true }),
+  perception: Object.freeze({ enabled: true, rawTtlMs: 3600000, summaryTtlMs: 604800000 }),
+  proactive: Object.freeze({ enabled: true }),
+  eventEngine: Object.freeze({
+    enabled: true,
+    extractTickMs: 5000,
+    extractBatch: 2,
+    maxRecordsPerTurn: 400,
+  }),
+  /**
+   * 日记模块：同一个大肥鱼会话里写日记，正文落本地 Markdown。
+   * - maxContentChars：单篇日记正文上限
+   *
+   * 注意：模块本身**没有定时器**。写日记的时间由大肥鱼自己用 DSH 的
+   * `schedule_create` 安排（想每天写就排一个 daily 提醒）。
+   */
+  diary: Object.freeze({
+    enabled: true,
+    maxContentChars: 50000,
+  }),
+})

@@ -96,11 +96,11 @@
 
 实现组织：
 
-- [模块装配](<../src/skills/index.js>)：模块启停、全局工具注册与卸载清理，不检查调用会话身份。
-- [模型工具](<../src/skills/tools.js>)：参数与结构化输出。
-- [技能核心](<../src/skills/core.js>)：目录、读取、记录、修订、回退与持久化。
+- [模块装配](<../app/dsh/adapters/skills/index.js>)：模块启停、全局工具注册与卸载清理，不检查调用会话身份。
+- [模型工具](<../core/modules/skills/tools.js>)：参数与结构化输出。
+- [技能核心](<../core/modules/skills/core.js>)：目录、读取、记录、修订、回退与持久化。
 - 技能目录：扫描 `<skills>/` 下已创建的 JSON 文件。
-- [资源规格](<../src/resources/spec.js>)：统一目录、默认开关与限制。
+- [资源规格](<../core/contracts/spec.js>)：统一目录、默认开关与限制。
 
 拟运行位置（不在源码目录写运行数据）：
 

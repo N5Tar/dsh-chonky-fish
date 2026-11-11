@@ -6,7 +6,7 @@
 >
 > **访问边界已变更：所有 ChonkyFish HTTP 接口均不再做插件私有鉴权，也不要求 `x-chonkyfish-token`。能访问这些路由的调用方即可读取数据或执行接口支持的写入/投递；不要将它们无保护地暴露到公网。** DSH 宿主自身的认证、权限与审批机制不因此移除；第三方平台凭证仍必需，目标会话/聊天绑定、数据校验和 ABS 休息规则仍保留。
 
-![icon](icon.svg)
+![icon](app/dsh/packaging/icon.svg)
 
 ## 特性
 
@@ -18,7 +18,7 @@
 - **专属 home**：插件所有数据都在 `$DSH_HOME/chonkyfish/` 下（状态、配置、事件库、鱼鱼工作区），不再散落
 - **主题皮肤**：加载插件后把 DSH 的 14 个语义 token 之外、整套 `--dsw-static-*` 调色板重映射成小鱼塘配色（明暗主题都适配），卸载即恢复
 - **角色养成**：名字 / 补充人格设定、贝壳钱包与账本、6 套姿态互动（点击害羞、投喂、思考/开心/睡着）；补充人格设定会作为 **system prompt 的补充**动态生效，不会混进用户消息
-- **资源管理**：路径、路由、请求体上限、schema 版本、localStorage key、素材目录、默认配置集中由 `src/resources/` 统一管理，Host / Client 构建 / 各功能模块都从这里读取，不各自硬编码；可编辑配置落在 home 下的 `config.json`
+- **资源管理**：路径、路由、请求体上限、schema 版本、localStorage key、素材目录、默认配置集中由 `app/shared/resources/` 统一管理，Host / Client 构建 / 各功能模块都从这里读取，不各自硬编码；可编辑配置落在 home 下的 `config.json`
 - **状态落盘**：名字、补充人格、钱包、账本保存在 home 里的 `state.json`（Host 通过无插件私有鉴权的本地路由读写），HTTP API 与嵌入式浏览器存储只作为缓存/降级
 - **事件感知（模块0）**：Host 侧监听 DSH 会话事件，把「小鱼塘 + chonkyfish」会话里每个 turn 交给该会话自己的模型抽取语义事件（说了喜欢 / 打算做 / 否认做过……），落 `$DSH_HOME/chonkyfish/events.db`，面板右上角「感知」可查看，每条都带原文引用与事实地位
 - **主动消息（能力）**：保留「让大肥鱼先开口」的能力——Host 往**面板当前会话**里注入一条隐藏旁白，她就会主动说一句；主动消息本身没有定时器，不会自己新建或另找会话
@@ -28,7 +28,7 @@
 
 ## 人格设定与能力说明
 
-人格设定描述“我是谁”；人格后由插件追加的能力、工具用法和限制，统一叫 **能力说明**。个人资料、感知、日记、技能等各占一项。钉钉连接正常时动态加入钉钉能力说明；已绑定主人时，会明确说明可用 `social_send_owner_message` 主动找到主人并聊天。断线后移除，不暴露凭证或联系人标识。详见[人格设定与能力说明](<src/persona/README.md>)。
+人格设定描述“我是谁”；人格后由插件追加的能力、工具用法和限制，统一叫 **能力说明**。个人资料、感知、日记、技能等各占一项。钉钉连接正常时动态加入钉钉能力说明；已绑定主人时，会明确说明可用 `social_send_owner_message` 主动找到主人并聊天。断线后移除，不暴露凭证或联系人标识。详见[人格设定与能力说明](<core/modules/persona/README.md>)。
 
 感知页「主人状态」的采集开关保存在本机：首次默认关闭，用户开启后DSH重启会恢复，明确暂停/停止后保持关闭。关闭DSH本身不会清除选择；平台不支持、权限或存储异常时不会伪装成已开启。
 
@@ -40,7 +40,7 @@
 - 独立 `chonkyfish-social` preset 不注入主人日记、私人补充人格和主会话历史，Host工具保护继续生效。
 - QQ NapCatQQ / SnowLuma 与 Discord OneBots 的既有驱动仍保留；真实平台兼容性需分别验证。
 - 主动联系主人使用固定绑定目标的 `social_send_owner_message`，不允许模型任意指定联系人。
-- 参见[钉钉配置、配对、能力与限制](<src/social/DINGTALK.md>)。不要把代码和本地测试完成理解为所有真实平台场景都已验收。
+- 参见[钉钉配置、配对、能力与限制](<core/modules/social/DINGTALK.md>)。不要把代码和本地测试完成理解为所有真实平台场景都已验收。
 
 ## 主动消息
 
@@ -82,7 +82,7 @@ await fetch('/chonkyfish/proactive').then(r => r.json())
 ```
 
 以后要接自动触发（空闲、事件、外部 webhook），在对应触发点调用同一个 `send()` 就行：
-Host 会把消息投到面板当前会话。事件回访计划器 `src/proactive/revisit.js` 已经写好、有测试，
+Host 会把消息投到面板当前会话。事件回访计划器 `core/modules/proactive/revisit.js` 已经写好、有测试，
 目前**未接线**，等触发点确定后再接。
 
 > 注意：主动消息需要 DSH 正在运行；每条消息都会真实消耗模型 token；更新代码后要
@@ -120,7 +120,7 @@ Host 会把消息投到面板当前会话。事件回访计划器 `src/proactive
 
 鱼鱼可以「自己给自己排一个提醒」，用的是 DSH 自带的耐久定时任务（`@deepseek-ai/dsh-schedule` 服务 + `@deepseek-ai/dsh-tool-schedule` 工具），不是我们另写的一套。
 
-- 挂载位置：`cordis.patch.yml` 的 `preset-chonkyfish.plugins` 里挂了 `@deepseek-ai/dsh-tool-schedule`；
+- 挂载位置：`app/dsh/packaging/cordis.patch.yml` 的 `preset-chonkyfish.plugins` 里挂了 `@deepseek-ai/dsh-tool-schedule`；
   `dsh-schedule` 服务由 DSH Web 组合全局提供，所以 Host 侧不用新增代码。
 - 鱼鱼可用的工具：
   - `schedule_create(prompt, title, <after_seconds | at | every_seconds | daily | weekly | cron>)`
@@ -153,8 +153,8 @@ $DSH_HOME/chonkyfish/            # 大肥鱼默认主目录
   如果 DSH 里还留着旧版软链工作区（例如 `$DSH_HOME/小鱼塘`），面板会忽略它并新建 canonical 工作区；
   旧条目/软链可在侧栏或文件系统里手动删除（DSH 会拒绝把新会话挂到软链路径的工作区上）。
 - **工作区识别**：鱼鱼会话身份 =（cwd 落在 `$DSH_HOME/chonkyfish/小鱼塘` 内，`agentPreset === 'chonkyfish'`）。
-- **资源管理模块**：`src/resources/spec.js` 是静态资源规格（home 布局、文件名、路由、限制、版本、
-  localStorage key、素材目录、默认配置）的单一事实源；`src/resources/index.js` 负责解析/建目录/读写配置。
+- **资源管理模块**：`core/contracts/spec.js` 是静态资源规格（home 布局、文件名、路由、限制、版本、
+  localStorage key、素材目录、默认配置）的单一事实源；`app/shared/resources/index.js` 负责解析/建目录/读写配置。
   `index.js`、事件引擎、主动消息、`build.mjs`/`client.js` 都从它取配置，不各自写死。
 
 ### config.json
@@ -213,10 +213,10 @@ $DSH_HOME/chonkyfish/            # 大肥鱼默认主目录
 ### 方式二：开发
 
 ```bash
-node build.mjs      # 从 src/original.html + src/runtime.js 生成 client.js
+node app/dsh/build.mjs      # 从 app/dsh/ui/original.html + app/dsh/ui/runtime.js 生成 client.js
 ```
 
-`src/assets.json` 内是压缩后的 6 套姿态 WebP；`client.js` 是最终被 DSH 加载的产物。
+`assets/assets.json` 内是压缩后的 6 套姿态 WebP；`client.js` 是最终被 DSH 加载的产物。
 
 ## 安全说明（重要）
 
@@ -235,26 +235,25 @@ node build.mjs      # 从 src/original.html + src/runtime.js 生成 client.js
 - 「感知」事件保存在 `$DSH_HOME/chonkyfish/events.db`（只存抽取结果，原始对话仍在 DSH 会话日志里）；抽取会把该 turn 的对话原文发给当前配置的模型
 - 主动消息的「面板当前会话 id、发送计数、最近发送记录」保存在 `$DSH_HOME/chonkyfish/proactive.json`；旁白正文与鱼鱼回复都会进入 DSH 会话日志
 - 日记正文保存在 `$DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md`；定时任务由 DSH 自己保存（`$DSH_HOME` 下的 schedule 存储）
-- 路径、路由、上限、默认配置由 `src/resources/` 统一管理，可编辑配置在 `$DSH_HOME/chonkyfish/config.json`
+- 路径、路由、上限、默认配置由 `app/shared/resources/` 统一管理，可编辑配置在 `$DSH_HOME/chonkyfish/config.json`
 - Social 默认没有任何连接；配置一条连接后 Host 才会连它的 OneBot Endpoint 并缓存收到的消息。其余图片资源无外部请求；`web_search` / `web_fetch` 会走 DSH 配置的 Web 服务
 
 ## 仓库结构
 
 ```
-cordis.patch.yml   # bundle 入口：插面板 row + chonkyfish preset row
-index.js           # Host 半：消费资源管理模块、给 chonkyfish 会话全权限、状态/配置/主动消息路由
-client.js          # 构建产物：面板 UI + DSH 会话桥 + 主题皮肤
-build.mjs          # client.js 构建脚本
-src/original.html  # 融合版聊天 UI 设计稿（Shadow DOM 适配前）
-src/runtime.js     # 面板控制器（增量消息、鱼鱼姿态、钱包/人格）
-src/assets.json    # 6 套姿态 + 头像（WebP data URI）
-src/event-engine/  # 模块0：事件结构化引擎（采集 / 提取 / 分发，自带测试）
-src/resources/     # 资源管理：home 布局 / config.json / 路由 / 限制 / 素材规格（自带测试）
-src/proactive/     # 主动消息：仅保留发送能力（会话上报 / 旁白 / 投递，自带测试）
-src/diary/         # 日记：单工具 diary + 本地 Markdown + 面板只读查看（自带测试）
-src/persona/       # 面板补充人格 → system prompt 变量（自带测试）
-locale/            # 插件列表显示名与描述（zh / en）
-icon.svg           # 插件图标
+index.js                         # 向后兼容入口，转发到 DSH Host 实现
+build.mjs                        # 向后兼容构建入口，转发到 DSH builder
+client.js                        # DSH 面板构建产物
+core/contracts/                  # 业务与资源契约
+core/modules/                    # ABS、日记、事件引擎、人格、感知、技能、社交等模块
+app/dsh/host/                    # 当前唯一应用：DSH Host 生命周期与服务装配
+app/dsh/adapters/                # DSH 服务、事件、工具、路由与投递适配器
+app/dsh/ui/                      # DSH 专属 UI 与静态资源源文件
+app/dsh/packaging/               # Cordis bundle patch、插件图标
+app/dsh/locale/                  # DSH 插件列表显示名与描述
+app/shared/platform/             # POSIX/Win32 平台能力和现有 macOS 感知采集器
+app/shared/resources/            # DSH 当前资源/路径解析适配器
+assets/                          # 非 UI 代码共享的现有素材
 ```
 
 ## 兼容性
