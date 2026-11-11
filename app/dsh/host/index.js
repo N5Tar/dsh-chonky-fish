@@ -357,38 +357,7 @@ export function apply(ctx) {
   // 全局提供日记工具，不设置 preset 或会话访问门禁；保留模块启停与存储校验。
   const diaryConfig = resources.getConfig().diary
   if (diaryConfig.enabled) {
-    let diaryHandle = null
-    let diaryDisposed = false
-
-    ctx.effect(() => {
-      diaryDisposed = false
-      startDiary(ctx, { resources, ready: layoutReady, warn }).then((handle) => {
-        if (diaryDisposed) {
-          if (handle) {
-            try {
-              handle.stop()
-            } catch (ignored) {
-              /* already gone */
-            }
-          }
-          return
-        }
-        diaryHandle = handle
-      }).catch((error) => {
-        warn('[chonkyfish] 日记模块启动失败（面板不受影响）', error)
-      })
-      return () => {
-        diaryDisposed = true
-        if (diaryHandle) {
-          try {
-            diaryHandle.stop()
-          } catch (ignored) {
-            /* already gone */
-          }
-          diaryHandle = null
-        }
-      }
-    }, 'chonkyfish: diary')
+    ctx.effect(() => startDiary(ctx, { resources, ready: layoutReady, warn }), 'chonkyfish: diary')
   }
 
   // 事件引擎（模块0）：采集 → 提取 → 查询。任何失败都不许影响面板本身。
@@ -432,68 +401,56 @@ function service(ctx, name) {
 }
 
 /**
- * 启动日记模块：注册 diary 工具 + 面板只读路由（没有定时器）。
- * 和事件引擎一样用动态 import + 整段 try/catch：日记挂了，面板和聊天照常。
- * @returns {Promise<{ stop: () => void } | null>}
+ * 先同步登记面板路由，再异步加载 diary service；请求会等待布局恢复完成。
+ * 这样 WebServer 路由不会因 layout/import Promise 的时序而漏注册。
+ * @returns {() => void}
  */
-async function startDiary(ctx, { resources, ready, warn }) {
-  try {
-    await ready
-    const [{ createDiaryModule }] = await Promise.all([import('../../../core/modules/diary/index.js')])
+function startDiary(ctx, { resources, ready, warn }) {
+  let disposed = false
+  let disposeTool = () => {}
+  const diaryReady = Promise.all([
+    import('../../../core/modules/diary/index.js'),
+    import('../../../core/modules/diary/http.js'),
+  ]).then(([{ createDiaryModule }, { handleDiaryRequest }]) => {
     const diary = createDiaryModule({ resources })
-    let disposeTool = () => {}
-    try {
-      disposeTool = ctx.tools.register(diary.tool)
-    } catch (error) {
-      warn('[chonkyfish] diary 工具注册失败', error)
-      return null
+    if (!disposed) {
+      try { disposeTool = ctx.tools.register(diary.tool) }
+      catch (error) { warn('[chonkyfish] 日记工具注册失败', error) }
     }
-    // 面板「日记」弹窗的只读路由（list / read）。注册失败不影响工具本身。
-    try {
-      const { handleDiaryRequest } = await import('../../../core/modules/diary/http.js')
-      ctx.effect(() => ctx.webServer.register({
-        kind: 'exact',
-        path: resources.routes.diary,
-        handler: (request, response) => {
-          if (migrationMaintaining) { replyJson(response, 409, { ok: false, error: { code: 'MIGRATION_BUSY' } }); return }
-          if (request.method !== 'GET' && request.method !== 'HEAD') {
-            response.writeHead(405)
-            response.end()
-            return
-          }
-          handleDiaryRequest({
-            service: diary.service,
-            headers: request.headers,
-            url: request.url,
-              }).then((result) => {
-            const body = JSON.stringify(result.body)
-            response.writeHead(result.status, { 'content-type': 'application/json; charset=utf-8' })
-            response.end(request.method === 'HEAD' ? undefined : body)
-          }).catch(() => {
-            try {
-              response.writeHead(500)
-              response.end()
-            } catch (ignored) {
-              /* response already gone */
-            }
-          })
-        },
-      }), 'chonkyfish: diary route')
-    } catch (error) {
-      warn('[chonkyfish] 日记面板路由注册失败（日记工具仍可用）', error)
-    }
-    return {
-      stop() {
-        try {
-          disposeTool()
-        } catch (ignored) {
-          /* already gone */
-        }
-      },
-    }
-  } catch (error) {
+    return { diary, handleDiaryRequest }
+  }).catch((error) => {
     warn('[chonkyfish] 日记模块启动失败（面板不受影响）', error)
-    return null
+    throw error
+  })
+  const disposeRoute = ctx.webServer.register({
+    kind: 'exact',
+    path: resources.routes.diary,
+    handler: (request, response) => {
+      if (resources.isMigrationBusy?.()) { replyJson(response, 409, { ok: false, error: { code: 'MIGRATION_BUSY' } }); return }
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        replyJson(response, 405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED' } })
+        return
+      }
+      void (async () => {
+        try {
+          await ready
+          const { diary, handleDiaryRequest } = await diaryReady
+          const result = await handleDiaryRequest({ service: diary.service, headers: request.headers, url: request.url })
+          response.writeHead(result.status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+          response.end(request.method === 'HEAD' ? undefined : JSON.stringify(result.body))
+        } catch (error) {
+          warn('[chonkyfish] 日记面板读取失败', error)
+          try { replyJson(response, 503, { ok: false, error: { code: 'DIARY_UNAVAILABLE' } }) } catch { /* response already gone */ }
+        }
+      })()
+    },
+  })
+  // Avoid an unhandled rejection if no panel request arrives after a startup failure.
+  void diaryReady.catch(() => {})
+  return () => {
+    disposed = true
+    try { disposeTool() } catch { /* already gone */ }
+    try { disposeRoute() } catch { /* already gone */ }
   }
 }
 
