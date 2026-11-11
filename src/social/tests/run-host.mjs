@@ -53,15 +53,17 @@ try {
   assert.equal(grants.length, 0, 'social preset never inherits automatic full access')
   for (const listener of listeners.get('agent/created') ?? []) listener({ agent: owner })
   assert.equal(grants.length, 1, 'owner behavior remains compatible')
-  assert.equal(guards.length, 1, 'source guard installed before main-session delivery')
-  assert.equal(guards[0]({ agent: owner, name: 'bash' }), undefined, 'ordinary owner tools remain unchanged')
+  assert.equal(guards.length, 0, 'social module never installs a channel-based tool guard')
   const events = [{ type: 'turn/start', data: { turn: 1 } }, { type: 'user/message', data: { id: 'social-' + 'a'.repeat(64), content: [{ type: 'text', text: '喂' }], source: { kind: 'user' } } }]
   const external = { status: 'running', session: { id: 'main', header: { agentPreset: 'chonkyfish', cwd: join(home, 'chonkyfish', '小鱼塘') }, snapshotEvents: () => events } }
-  assert.equal(typeof guards[0]({ agent: external, name: 'bash' }), 'string', 'external arrivals cannot run local tools')
-  assert.equal(typeof guards[0]({ agent: external, name: 'social_send_message' }), 'string', 'model cannot duplicate Host automatic sending')
-  assert.doesNotMatch(guards[0]({ agent: external, name: 'bash' }), /钉钉|渠道|外部|来源/)
+  assert.equal(ownerSend.options.when({ agent: external }), true, 'channel-origin main turns retain owner messaging')
+  assert.equal(ownerSend.options.when({ agent: social }), false, 'visitor sessions do not inherit the main owner messaging tool')
   events.push({ type: 'turn/end', data: { turn: 1 } }, { type: 'turn/start', data: { turn: 2 } }, { type: 'user/message', data: { source: { kind: 'user' } } })
-  assert.equal(guards[0]({ agent: external, name: 'bash' }), undefined, 'next owner turn recovers normal tools')
+  assert.equal(ownerSend.options.when({ agent: external }), true, 'ordinary turns keep the same tool availability')
+  const patch = await readFile(new URL('../../../cordis.patch.yml', import.meta.url), 'utf8')
+  const visitorPreset = patch.split('    - id: preset-chonkyfish\n')[0]
+  assert.doesNotMatch(visitorPreset, /不调用工具|不包含通用工具|社交受限会话/)
+  for (const tool of ['bash', 'pwsh', 'fs', 'fs-search', 'jobs', 'todo', 'schedule', 'web']) assert.ok(visitorPreset.includes("name: '@deepseek-ai/dsh-tool-" + tool + "'"), 'visitor preset includes ' + tool)
   const request = (path, method, body) => new Promise(resolve => {
     const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]); req.method = method
     const response = { writeHead(status) { this.status = status }, end(body) { resolve({ status: this.status, body: body ? JSON.parse(body) : null }) } }
@@ -86,7 +88,7 @@ try {
   for (const dispose of effects.splice(0).reverse()) await dispose()
   const resources = createResources({ homeRoot: home })
   await assert.rejects(readFile(resources.paths.socialChannelReplies, 'utf8'), { code: 'ENOENT' }, 'unregistered DSH-only turns never allocate channel reply ledger capacity')
-  console.log('social-host: PASS (session/event adapter, peer-backed owner absence, main selection, source guard, missing-host isolation, no model/source prompt)')
+  console.log('social-host: PASS (session/event adapter, peer-backed owner absence, main selection, channel tool access, visitor tool preset, missing-host isolation, no model/source prompt)')
 } finally {
   clearTimeout(timeout)
   for (const dispose of effects.reverse()) await dispose()

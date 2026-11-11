@@ -1275,12 +1275,16 @@ function mountChonkyFishPage(wrap, chat, options) {
     socialStatusBox.appendChild(socialStatusRow('投递状态', deliveryStatus, !!reason || !bridge.available))
     var replyLabels = { waiting: '等待回复完成', pending: '等待发送', sending: '发送中', sent: '已发送', failed: '发送失败', unknown: '发送结果不确定，请勿重复发送', canceled: '已取消发送' }
     var replies = Array.isArray(bridge.replies) ? bridge.replies : []
+    var replyGroups = {}, replyWarning = false
     replies.slice(-10).forEach(function (reply) {
       if (!reply || !replyLabels[reply.status]) return
       var label = replyLabels[reply.status]
       if (reply.errorCode && SOCIAL_ERROR_LABELS[reply.errorCode]) label += ' · ' + SOCIAL_ERROR_LABELS[reply.errorCode]
-      socialStatusBox.appendChild(socialStatusRow('回复发送', label, reply.status === 'failed' || reply.status === 'unknown'))
+      replyGroups[label] = (replyGroups[label] || 0) + 1
+      if (reply.status === 'failed' || reply.status === 'unknown') replyWarning = true
     })
+    var replySummary = Object.keys(replyGroups).map(function (label) { return label + ' ' + replyGroups[label] + ' 条' }).join('；')
+    if (replySummary) socialStatusBox.appendChild(socialStatusRow('最近回复（最多 10 条）', replySummary, replyWarning))
     if (socialPayload.configPath) socialStatusBox.appendChild(socialStatusRow('配置文件', socialPayload.configPath))
     if (socialPayload.configError) {
       var error = document.createElement('div')
