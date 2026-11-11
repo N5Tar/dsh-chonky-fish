@@ -6,8 +6,8 @@ import { createSkillTools } from '../../../../core/modules/skills/tools.js'
 /** Knowledge library with lifecycle checks, without caller permission gates. */
 export function installSkills(ctx, { resources, ready = Promise.resolve() }) {
   let closed = false
-  const service = createSkillService({ storage: createSkillFileStorage({ directory: resources.paths.skills, maxFileBytes: SKILL_LIMITS.maxFileBytes }) })
-  const isAvailable = () => !closed && resources.getConfig().skills.enabled
+  const service = createSkillService({ storage: createSkillFileStorage({ directory: resources.paths.skills, maxFileBytes: SKILL_LIMITS.maxFileBytes, isMigrationBusy: resources.isMigrationBusy || (() => false), withMigrationWrite: resources.withMigrationWrite || (operation => operation()), withMigrationRead: resources.withMigrationRead || (operation => operation()) }) })
+  const isAvailable = () => !closed && !(resources.isMigrationBusy?.()) && resources.getConfig().skills.enabled
   const tools = createSkillTools(service, { isAvailable, ready })
   const disposers = []
   const close = () => {

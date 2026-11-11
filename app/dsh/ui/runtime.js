@@ -40,6 +40,7 @@ function mountChonkyFishPage(wrap, chat, options) {
     stateBridge = null
   }
   var fileSaveTimer = null
+  var stateGeneration = 0
 
   // 存储 key 与素材目录都由资源管理模块在构建时注入（app/dsh/build.mjs ← core/contracts/spec.js），
   // 这里不再硬编码，避免 Host / Client 两端各写一份。
@@ -139,7 +140,10 @@ function mountChonkyFishPage(wrap, chat, options) {
         headers: {
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ version: 1, savedAt: new Date().toISOString(), state: state }),
+        body: JSON.stringify({ version: 1, generation: stateGeneration, savedAt: new Date().toISOString(), state: state }),
+      }).then(function (response) {
+        if (response.status === 204) stateGeneration += 1
+        else if (response.status === 409) hydrateFromFile()
       }).catch(function () {
         /* the file may be unavailable; localStorage remains the cache */
       })
@@ -163,6 +167,7 @@ function mountChonkyFishPage(wrap, chat, options) {
         scheduleFileSave(0)
         return
       }
+      if (Number.isSafeInteger(payload.generation) && payload.generation >= 0) stateGeneration = payload.generation
       var merged = defaults()
       Object.keys(payload.state).forEach(function (key) {
         merged[key] = payload.state[key]
@@ -1988,6 +1993,7 @@ function mountChonkyFishPage(wrap, chat, options) {
   renderChat()
   applyStatus()
   hydrateFromFile()
+  if (typeof window !== 'undefined') window.addEventListener('chonkyfish:migration-complete', hydrateFromFile)
 
   if (pageView !== 'chat') {
     mountSectionPage()
@@ -2002,6 +2008,7 @@ function mountChonkyFishPage(wrap, chat, options) {
   }
 
   return function dispose() {
+    if (typeof window !== 'undefined') window.removeEventListener('chonkyfish:migration-complete', hydrateFromFile)
     socialStopRefresh()
     socialClearSecret()
     document.removeEventListener('visibilitychange', onSocialVisibilityChange)

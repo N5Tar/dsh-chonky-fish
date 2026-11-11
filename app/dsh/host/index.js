@@ -27,11 +27,12 @@ import { installSocial } from '../adapters/social/index.js'
 import { installAbs } from '../adapters/abs/index.js'
 import { installSkills } from '../adapters/skills/index.js'
 import { installPerception } from '../adapters/perception/index.js'
+import { installMigration } from '../adapters/migration/index.js'
 import { isSocialHeader } from '../../../core/modules/social/policy.js'
 
 const FULL_ACCESS = 'danger-full-access'
 
-export const inject = ['permissionPresets', 'agents', 'agentPresets', 'systemPrompt', 'webServer', 'tools']
+export const inject = ['permissionPresets', 'agents', 'agentPresets', 'systemPrompt', 'webServer', 'connection', 'tools']
 
 function isFishAgent(ctx, agent, preset) {
   try {
@@ -95,6 +96,9 @@ export function apply(ctx) {
   const resources = createResources({ env: process.env })
   const { routes, limits, spec } = resources
   let writeChain = Promise.resolve()
+  let stateGeneration = 0
+  let migrationMaintaining = false
+  let activePerception = null
   let activePanelSession // Updated synchronously by the existing panel-session route.
   let socialCapabilities = () => ({ dingtalk: { connected: false, ownerBound: false } })
 
@@ -107,15 +111,19 @@ export function apply(ctx) {
   }
 
   // home 布局（目录 + 默认 config）；所有异步启动器都会 await 它。
-  const layoutReady = resources.ensureLayout({ logger: ctx.logger }).catch((error) => {
-    warn('[chonkyfish] home 布局初始化失败（面板仍可继续使用）', error)
-    return null
+  const layoutReady = resources.ensureLayout({ logger: ctx.logger }).then(async (layout) => {
+    const { createMigrationRepository } = await import('../../shared/storage/migration/repository.js')
+    await createMigrationRepository({ resources }).recover()
+    return layout
+  }).catch((error) => {
+    warn('[chonkyfish] home 布局或迁移恢复初始化失败', error)
+    throw error
   })
 
   // 面板「补充人格设定」→ system prompt 变量：预设里的 persona 模板用
   // {{chonkyfish_supplement}} 引用它，所以人格不再混进用户消息。
   ctx.effect(() => {
-    const supplement = createPanelSupplement({ statePath: resources.paths.state, defaultProfileDirectory: resources.paths.personalProfile, logger: ctx.logger })
+    const supplement = createPanelSupplement({ statePath: resources.paths.state, defaultProfileDirectory: resources.paths.personalProfile, logger: ctx.logger, isMigrationBusy: resources.isMigrationBusy })
     const modules = createModulePrompt({ readContext: () => ({ ...supplement.readState(), ...socialCapabilities() }) })
     const disposeSupplement = ctx.systemPrompt.variable(supplement.variableName, supplement.provider)
     let disposeModules
@@ -129,14 +137,17 @@ export function apply(ctx) {
   }, 'chonkyfish: panel persona supplement')
 
   function writeState(body, profileDirectory) {
-    const pending = writeChain.then(async () => {
-      await layoutReady
-      await mkdir(dirname(resources.paths.state), { recursive: true })
-      await mkdir(profileDirectory, { recursive: true })
-      const temporary = resources.paths.state + '.' + process.pid + '.' + randomUUID() + '.tmp'
-      await writeFile(temporary, body, 'utf8')
-      await rename(temporary, resources.paths.state)
-    })
+    let pending
+    try {
+      pending = resources.withMigrationWrite(() => writeChain.then(async () => {
+        await layoutReady
+        await mkdir(dirname(resources.paths.state), { recursive: true })
+        await mkdir(profileDirectory, { recursive: true })
+        const temporary = resources.paths.state + '.' + process.pid + '.' + randomUUID() + '.tmp'
+        await writeFile(temporary, body, 'utf8')
+        await rename(temporary, resources.paths.state)
+      }))
+    } catch (error) { pending = Promise.reject(error) }
     // Keep the queue usable, but report this operation's failure to its caller.
     writeChain = pending.catch((error) => { warn('[chonkyfish] 状态文件写入失败', error) })
     return pending
@@ -174,14 +185,20 @@ export function apply(ctx) {
     kind: 'exact',
     path: routes.state,
     handler: (request, response) => {
+      if (migrationMaintaining) { replyJson(response, 409, { ok: false, error: { code: 'MIGRATION_BUSY' } }); return }
       if (request.method === 'GET' || request.method === 'HEAD') {
-        readFile(resources.paths.state, 'utf8').then((text) => {
-          response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-          response.end(request.method === 'HEAD' ? undefined : text)
+        layoutReady.then(() => resources.withMigrationRead(() => readFile(resources.paths.state, 'utf8'))).then((text) => {
+          const payload = JSON.parse(text)
+          if (Number.isSafeInteger(payload.generation) && payload.generation >= 0) stateGeneration = payload.generation
+          else stateGeneration = 0
+          response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+          response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ ...payload, generation: stateGeneration }))
         }).catch((error) => {
           if (error.code === 'ENOENT') {
             response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
             response.end('{}')
+          } else if (error?.code === 'MIGRATION_BUSY') {
+            replyJson(response, 409, { ok: false, error: { code: 'MIGRATION_BUSY' } })
           } else {
             response.writeHead(500)
             response.end()
@@ -225,6 +242,11 @@ export function apply(ctx) {
           response.end('missing state object')
           return
         }
+        if ((payload.generation ?? 0) !== stateGeneration) {
+          replyJson(response, 409, { ok: false, error: { code: 'STALE_TARGET' } })
+          return
+        }
+        payload.generation = stateGeneration + 1
         try {
           payload.state.profileDirectory = normalizeProfileDirectory(payload.state.profileDirectory, resources.paths.personalProfile)
         } catch (error) {
@@ -232,11 +254,12 @@ export function apply(ctx) {
           return
         }
         writeState(JSON.stringify(payload), payload.state.profileDirectory).then(() => {
+          stateGeneration = payload.generation
           response.writeHead(204)
           response.end()
-        }).catch(() => {
-          response.writeHead(500)
-          response.end()
+        }).catch((error) => {
+          if (error?.code === 'MIGRATION_BUSY') replyJson(response, 409, { ok: false, error: { code: 'MIGRATION_BUSY' } })
+          else { response.writeHead(500); response.end() }
         })
       })
       request.on('error', () => {
@@ -254,6 +277,7 @@ export function apply(ctx) {
     kind: 'exact',
     path: routes.config,
     handler: (request, response) => {
+      if (migrationMaintaining) { replyJson(response, 409, { ok: false, error: { code: 'MIGRATION_BUSY' } }); return }
       if (request.method === 'GET' || request.method === 'HEAD') {
         const body = JSON.stringify({
           ok: true,
@@ -279,7 +303,8 @@ export function apply(ctx) {
           replyJson(response, 200, { ok: true, config })
         })
       }).catch((error) => {
-        replyJson(response, 500, { ok: false, error: String((error && error.message) || error) })
+        if (error?.code === 'MIGRATION_BUSY') replyJson(response, 409, { ok: false, error: { code: 'MIGRATION_BUSY' } })
+        else replyJson(response, 500, { ok: false, error: String((error && error.message) || error) })
       })
     },
   }), 'chonkyfish: config route')
@@ -306,10 +331,11 @@ export function apply(ctx) {
     /* no live agents is the normal case at boot */
   }
 
+  // Owner-controlled transfer for ChonkyFish data only; never exposed as an Agent tool.
   ctx.effect(() => {
-    void layoutReady
-    return () => {}
-  }, 'chonkyfish: home layout')
+    const migration = installMigration(ctx, { resources, ready: layoutReady, pluginVersion: '0.4.10', beforeExclusive: async () => { await resources.waitForMigrationWrites(); await writeChain }, beforePublish: async () => { const service = activePerception?.getService?.(); if (service) await service.stop() }, onExclusive: value => { migrationMaintaining = value; resources.setMigrationMaintenance?.(value) }, onCommitted: async () => { try { const saved = JSON.parse(await readFile(resources.paths.state, 'utf8')); stateGeneration = saved.generation || stateGeneration + 1 } catch { stateGeneration += 1 } } })
+    return () => migration.close()
+  }, 'chonkyfish: migration')
 
   // Skills are a local knowledge library; no timer, approval state or website deployment.
   ctx.effect(() => {
@@ -320,7 +346,8 @@ export function apply(ctx) {
   // Perception shares the host runtime; collection starts only on explicit UI action.
   ctx.effect(() => {
     const perception = installPerception(ctx, { resources, ready: layoutReady })
-    return () => perception.close()
+    activePerception = perception
+    return () => { if (activePerception === perception) activePerception = null; return perception.close() }
   }, 'chonkyfish: perception')
 
   /* ------------------------------------------------------------- diary */
@@ -428,6 +455,7 @@ async function startDiary(ctx, { resources, ready, warn }) {
         kind: 'exact',
         path: resources.routes.diary,
         handler: (request, response) => {
+          if (migrationMaintaining) { replyJson(response, 409, { ok: false, error: { code: 'MIGRATION_BUSY' } }); return }
           if (request.method !== 'GET' && request.method !== 'HEAD') {
             response.writeHead(405)
             response.end()

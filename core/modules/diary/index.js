@@ -20,7 +20,7 @@ import { createDiaryTool } from './tools.js'
  * }} options
  */
 export function createDiaryModule({ resources }) {
-  const provider = createLocalDiaryProvider({ directory: resources.paths.diary })
+  const provider = createLocalDiaryProvider({ directory: resources.paths.diary, isMigrationBusy: resources.isMigrationBusy || (() => false), withMigrationWrite: resources.withMigrationWrite || (operation => operation()), withMigrationRead: resources.withMigrationRead || (operation => operation()) })
   const service = createDiaryService({
     provider,
     // 每次写入时重新读配置，PUT /chonkyfish/config 改上限后立即生效。

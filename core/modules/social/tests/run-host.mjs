@@ -27,6 +27,7 @@ const ctx = {
     guard(fn) { guards.push(fn); return () => { const i = guards.indexOf(fn); if (i >= 0) guards.splice(i, 1) } },
     register(tool, options = {}) { tools.set(tool.name, { ...tool, options }); return () => tools.delete(tool.name) },
   },
+  connection: { requestRejection() { return undefined } },
   webServer: { register(route) {
     routes.set(route.path, route)
     if (expected.every(path => routes.has(path))) readyResolve()

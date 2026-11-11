@@ -219,10 +219,42 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     socialWebhooks: join(home, SOCIAL.directory, SOCIAL.files.webhooks),
     socialOperations: join(home, SOCIAL.directory, SOCIAL.files.operations),
     socialWorkspace: join(home, SOCIAL.directory, SOCIAL.workspace),
+    migration: join(home, FILES.migration),
   }
 
   /** ensureLayout 传进来的 logger 会留给 updateConfig 的写盘失败告警用。 */
   let activeLogger = null
+  let migrationMaintenance = false
+  let migrationConfigSnapshot = null
+  let activeMigrationWrites = 0
+  let migrationWriteWaiters = []
+  let migrationReadWaiters = []
+
+  function withMigrationAccess(operation) {
+    if (migrationMaintenance) throw Object.assign(new Error('Migration is replacing data'), { code: 'MIGRATION_BUSY' })
+    activeMigrationWrites += 1
+    let result
+    try { result = operation() }
+    catch (error) { finishMigrationWrite(); throw error }
+    return Promise.resolve(result).finally(finishMigrationWrite)
+  }
+  const withMigrationWrite = withMigrationAccess
+  async function withMigrationRead(operation) {
+    while (migrationMaintenance) await new Promise(resolve => migrationReadWaiters.push(resolve))
+    return withMigrationAccess(operation)
+  }
+  function finishMigrationWrite() {
+    activeMigrationWrites -= 1
+    if (activeMigrationWrites === 0) {
+      const waiters = migrationWriteWaiters
+      migrationWriteWaiters = []
+      for (const resolve of waiters) resolve()
+    }
+  }
+  async function waitForMigrationWrites() {
+    while (activeMigrationWrites > 0) await new Promise(resolve => migrationWriteWaiters.push(resolve))
+  }
+  const waitForMigrationAccesses = waitForMigrationWrites
 
   /** 静态资源规格快照：给 index.js / build 输出统一入口。 */
   const spec = Object.freeze({
@@ -241,8 +273,8 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     DEFAULT_CONFIG,
   })
 
-  /** 每次读完都消毒；文件缺失/JSON 坏/字段非法都回退默认，不抛错。 */
-  function getConfig() {
+  /** 每次读完都消毒；维护期间返回迁移前的稳定快照。 */
+  function readConfigFromDisk() {
     let raw = null
     try {
       raw = JSON.parse(readFileSync(paths.config, 'utf8'))
@@ -251,6 +283,10 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     }
     return sanitizeConfig(raw)
   }
+  function getConfig() {
+    if (migrationMaintenance && migrationConfigSnapshot) return JSON.parse(JSON.stringify(migrationConfigSnapshot))
+    return readConfigFromDisk()
+  }
 
   /**
    * 合并 patch 后原子落盘，返回合并结果。
@@ -258,14 +294,16 @@ export function createResources({ env = process.env, homeRoot } = {}) {
    * @param {unknown} patch
    */
   async function updateConfig(patch) {
-    const next = mergeConfig(getConfig(), patch)
-    try {
-      await writeJsonAtomic(paths.config, next)
-    } catch (error) {
-      warn(activeLogger, '[chonkyfish] config.json 写入失败', error)
-      throw error
-    }
-    return next
+    return withMigrationWrite(async () => {
+      const next = mergeConfig(getConfig(), patch)
+      try {
+        await writeJsonAtomic(paths.config, next)
+      } catch (error) {
+        warn(activeLogger, '[chonkyfish] config.json 写入失败', error)
+        throw error
+      }
+      return next
+    })
   }
 
   /** config.json 不存在才写默认值；已存在（哪怕是用户手改成半坏）都不动。 */
@@ -345,6 +383,22 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     ensureLayout,
     getConfig,
     updateConfig,
+    setMigrationMaintenance(value) {
+      const entering = value === true && !migrationMaintenance
+      if (entering) migrationConfigSnapshot = readConfigFromDisk()
+      migrationMaintenance = value === true
+      if (!migrationMaintenance) {
+        migrationConfigSnapshot = null
+        const waiters = migrationReadWaiters
+        migrationReadWaiters = []
+        for (const resolve of waiters) resolve()
+      }
+    },
+    isMigrationBusy() { return migrationMaintenance },
+    withMigrationWrite,
+    withMigrationRead,
+    waitForMigrationWrites,
+    waitForMigrationAccesses,
     clientState,
     perceptionCollector() {
       const target = perceptionTarget()

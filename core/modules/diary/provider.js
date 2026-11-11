@@ -30,7 +30,7 @@ function normalizeContent(content) {
 /**
  * @param {{ directory: string }} options
  */
-export function createLocalDiaryProvider({ directory }) {
+export function createLocalDiaryProvider({ directory, isMigrationBusy = () => false, withMigrationWrite = operation => operation(), withMigrationRead = operation => operation() }) {
   if (typeof directory !== 'string' || directory.trim() === '') {
     throw new TypeError('local diary provider requires a directory')
   }
@@ -69,7 +69,8 @@ export function createLocalDiaryProvider({ directory }) {
    * @param {boolean} [overwrite]
    * @returns {Promise<'created'|'updated'>}
    */
-  async function write(diary, overwrite = false) {
+  async function writeImpl(diary, overwrite = false) {
+    if (isMigrationBusy()) throw storageError('资料迁移期间暂不能写入日记')
     const date = diary && diary.date
     if (!isValidDateText(date)) throw invalidDate()
     const content = diary && typeof diary.content === 'string' ? diary.content : ''
@@ -139,7 +140,7 @@ export function createLocalDiaryProvider({ directory }) {
    * @param {string} date
    * @returns {Promise<{ date: string, content: string } | null>}
    */
-  async function read(date) {
+  async function readImpl(date) {
     const path = pathFor(date)
     try {
       const content = await readFile(path, 'utf8')
@@ -155,7 +156,7 @@ export function createLocalDiaryProvider({ directory }) {
    * @param {number} limit
    * @returns {Promise<string[]>}
    */
-  async function list(limit) {
+  async function listImpl(limit) {
     let names
     try {
       names = await readdir(directory)
@@ -179,9 +180,16 @@ export function createLocalDiaryProvider({ directory }) {
    * @param {string} date
    * @returns {Promise<boolean>}
    */
-  async function has(date) {
+  async function hasImpl(date) {
     return exists(pathFor(date))
   }
+
+  function write(diary, overwrite = false) {
+    return withMigrationWrite(() => writeImpl(diary, overwrite))
+  }
+  function read(date) { return withMigrationRead(() => readImpl(date)) }
+  function list(limit) { return withMigrationRead(() => listImpl(limit)) }
+  function has(date) { return withMigrationRead(() => hasImpl(date)) }
 
   return { directory, write, read, list, has }
 }

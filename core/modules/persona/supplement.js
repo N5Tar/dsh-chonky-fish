@@ -6,16 +6,19 @@ import { normalizeProfileDirectory } from './profile-directory.js'
 
 const HEADING = '补充人格设定（来自大肥鱼面板，可随时修改）：'
 
-export function createPanelSupplement({ statePath, defaultProfileDirectory, logger } = {}) {
+export function createPanelSupplement({ statePath, defaultProfileDirectory, logger, isMigrationBusy = () => false } = {}) {
   if (typeof statePath !== 'string' || statePath === '') throw new Error('createPanelSupplement: statePath is required')
   const fallback = defaultProfileDirectory || join(dirname(statePath), PERSONAL_PROFILE_DIR)
   const defaults = Object.freeze({ prompt: '', profileDirectory: fallback })
   let cachedKey = ''
   let cachedState = defaults
+  let wasMigrationBusy = false
   function warn(message, error) {
     try { logger?.warn?.('[chonkyfish/persona] ' + message, error) } catch {}
   }
   function readState() {
+    if (isMigrationBusy()) { wasMigrationBusy = true; return cachedState }
+    if (wasMigrationBusy) { cachedKey = ''; wasMigrationBusy = false }
     let stat
     try { stat = statSync(statePath) }
     catch { cachedKey = ''; cachedState = defaults; return cachedState }

@@ -3,13 +3,13 @@ import { dirname, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 const fault = (code, message) => Object.assign(new Error(message), { code })
 /** Only explicit local collection intent; never samples, activity or OS permissions. */
-export function createCollectionPreferences(file, { syncDirectory } = {}) {
+export function createCollectionPreferences(file, { syncDirectory, withMigrationWrite = operation => operation(), withMigrationRead = operation => operation() } = {}) {
   if (typeof syncDirectory !== 'function') throw new TypeError('createCollectionPreferences requires syncDirectory')
   const target = resolve(file)
   let tail = Promise.resolve()
   const serial = fn => { const next = tail.then(fn); tail = next.catch(() => {}); return next }
   return {
-    read: () => serial(async () => {
+    read: () => withMigrationRead(() => serial(async () => {
       let handle
       try {
         handle = await open(target, 'r')
@@ -31,10 +31,10 @@ export function createCollectionPreferences(file, { syncDirectory } = {}) {
         if (error.code === 'PREFERENCE_INVALID') throw error
         throw fault('PREFERENCE_READ_FAILED', '无法读取采集偏好，未自动开始采集')
       } finally { await handle?.close() }
-    }),
-    write: value => save(value, false),
+    })),
+    write: value => withMigrationWrite(() => save(value, false)),
     // Explicit migration only: atomically create if absent, never replace a user choice.
-    createIfAbsent: value => save(value, true),
+    createIfAbsent: value => withMigrationWrite(() => save(value, true)),
   }
   function save(value, exclusive) {
     return serial(async () => {

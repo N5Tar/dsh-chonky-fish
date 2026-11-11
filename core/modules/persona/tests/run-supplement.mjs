@@ -106,6 +106,23 @@ test('坏 JSON → 保留默认档案目录且不抛错', () => {
   }
 })
 
+test('迁移维护期只读缓存状态，结束后强制刷新', () => {
+  const workspace = makeStateDir()
+  try {
+    let busy = false
+    const supplement = createPanelSupplement({ statePath: workspace.statePath, isMigrationBusy: () => busy })
+    workspace.write({ state: { prompt: '迁移前' } })
+    assert.ok(supplement.provider().includes('迁移前'))
+    busy = true
+    workspace.write({ state: { prompt: '迁移中间态' } })
+    assert.ok(supplement.provider().includes('迁移前'))
+    busy = false
+    assert.ok(supplement.provider().includes('迁移中间态'))
+  } finally {
+    workspace.cleanup()
+  }
+})
+
 test('mtime 缓存：内容不变不重复解析，变更后能读出新值', () => {
   const workspace = makeStateDir()
   try {

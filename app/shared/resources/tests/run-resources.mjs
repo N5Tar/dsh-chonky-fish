@@ -117,6 +117,7 @@ await test('paths: 所有文件都在 home 下，工作区在 home/小鱼塘', (
     socialWebhooks: join(home, 'social', 'dingtalk-webhooks.json'),
     socialOperations: join(home, 'social', 'operations.json'),
     socialWorkspace: join(home, 'social', '会话'),
+    migration: join(home, FILES.migration),
   })
   // 没有任何 legacy 路径字段
   assert.equal('legacyWorkspace' in resources.paths, false)
@@ -316,6 +317,44 @@ await test('config: 非法 patch 不抛错，按消毒规则回退', async () =>
   } finally {
     workspace.cleanup()
   }
+})
+
+await test('getConfig serves a stable pre-migration snapshot during maintenance', async () => {
+  const workspace = makeHome()
+  try {
+    const resources = createResources({ homeRoot: workspace.dshHome })
+    await resources.ensureLayout()
+    await resources.updateConfig({ skills: { enabled: true } })
+    const before = resources.getConfig()
+    resources.setMigrationMaintenance(true)
+    writeFileSync(resources.paths.config, JSON.stringify({ ...before, skills: { enabled: false } }))
+    assert.equal(resources.getConfig().skills.enabled, true)
+    resources.setMigrationMaintenance(false)
+    assert.equal(resources.getConfig().skills.enabled, false)
+  } finally {
+    workspace.cleanup()
+  }
+})
+
+await test('migration gate: waits for admitted writes and rejects new writes during maintenance', async () => {
+  const resources = createResources({ homeRoot: '/tmp/dsh' })
+  let release
+  const admitted = resources.withMigrationWrite(() => new Promise(resolve => { release = resolve }))
+  resources.setMigrationMaintenance(true)
+  await assert.rejects(async () => resources.withMigrationWrite(async () => {}), error => error.code === 'MIGRATION_BUSY')
+  await assert.rejects(() => resources.updateConfig({ proactive: { enabled: false } }), error => error.code === 'MIGRATION_BUSY')
+  let drained = false, readStarted = false
+  const waitingRead = resources.withMigrationRead(() => { readStarted = true; return 'consistent read' })
+  const wait = resources.waitForMigrationWrites().then(() => { drained = true })
+  await Promise.resolve()
+  assert.equal(drained, false)
+  assert.equal(readStarted, false)
+  release()
+  await Promise.all([admitted, wait])
+  assert.equal(drained, true)
+  resources.setMigrationMaintenance(false)
+  assert.equal(await waitingRead, 'consistent read')
+  assert.equal(readStarted, true)
 })
 
 /* ------------------------------------------------------------------ */

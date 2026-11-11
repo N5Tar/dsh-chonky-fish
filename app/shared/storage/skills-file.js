@@ -39,7 +39,7 @@ async function checkFile(filename, maxFileBytes) {
 }
 
 /** Filesystem adapter for the local skill repository; business validation stays in core. */
-export function createSkillFileStorage({ directory, maxFileBytes = SKILL_LIMITS.maxFileBytes } = {}) {
+export function createSkillFileStorage({ directory, maxFileBytes = SKILL_LIMITS.maxFileBytes, isMigrationBusy = () => false, withMigrationWrite = operation => operation(), withMigrationRead = operation => operation() } = {}) {
   if (typeof directory !== 'string' || !directory.trim() || directory.includes('\0')) fail('INVALID_ARGUMENT', 'directory is required')
   if (directory.split(/[\\/]/).includes('..')) fail('UNSAFE_PATH', 'Parent traversal is not allowed')
   if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1) throw new TypeError('maxFileBytes must be a positive integer')
@@ -48,7 +48,7 @@ export function createSkillFileStorage({ directory, maxFileBytes = SKILL_LIMITS.
     if (typeof id !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(id)) fail('INVALID_ARGUMENT', 'Invalid skillId')
     return path.join(root, `${id}.json`)
   }
-  return {
+  const storage = {
     lockKey: root,
     async ensureReady() { await ensureDirectory(root) },
     async listIds() {
@@ -83,6 +83,7 @@ export function createSkillFileStorage({ directory, maxFileBytes = SKILL_LIMITS.
       } finally { await handle?.close() }
     },
     async write(id, state, { exclusive = false } = {}) {
+      if (isMigrationBusy()) fail('UNAVAILABLE', 'Migration is replacing data')
       const file = filename(id)
       const data = JSON.stringify(state)
       if (Buffer.byteLength(data) > maxFileBytes) fail('LIMIT_EXCEEDED', 'State byte limit reached; no changes saved')
@@ -100,6 +101,7 @@ export function createSkillFileStorage({ directory, maxFileBytes = SKILL_LIMITS.
         handle = undefined
         await ensureDirectory(root)
         await checkFile(file, maxFileBytes)
+        if (isMigrationBusy()) fail('UNAVAILABLE', 'Migration is replacing data')
         if (exclusive) {
           try { await link(temporary, file) }
           catch (error) { if (error.code === 'EEXIST') fail('CONFLICT', 'Skill already exists; import never overwrites'); throw error }
@@ -112,6 +114,17 @@ export function createSkillFileStorage({ directory, maxFileBytes = SKILL_LIMITS.
       }
     },
   }
+  const unguardedWrite = storage.write.bind(storage)
+  const unguardedEnsureReady = storage.ensureReady.bind(storage)
+  const unguardedListIds = storage.listIds.bind(storage)
+  const unguardedExists = storage.exists.bind(storage)
+  const unguardedRead = storage.read.bind(storage)
+  storage.write = (id, state, options) => withMigrationWrite(() => unguardedWrite(id, state, options))
+  storage.ensureReady = (...args) => withMigrationRead(() => unguardedEnsureReady(...args))
+  storage.listIds = (...args) => withMigrationRead(() => unguardedListIds(...args))
+  storage.exists = (...args) => withMigrationRead(() => unguardedExists(...args))
+  storage.read = (...args) => withMigrationRead(() => unguardedRead(...args))
+  return storage
 }
 
 export default createSkillFileStorage

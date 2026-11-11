@@ -38,11 +38,12 @@
     "requeue:dead-letters": "node app/shared/storage/event-engine/maintenance.mjs",
     "test:proactive": "node core/modules/proactive/tests/run-revisit.mjs && node core/modules/proactive/tests/run-proactive.mjs",
     "test:diary": "node core/modules/diary/tests/run-diary.mjs",
+    "test:migration": "node core/modules/migration/tests/run-migration.mjs && node core/modules/migration/tests/run-http.mjs",
     "test:skills": "node core/modules/skills/tests/run-core.mjs && node core/modules/skills/tests/run-host.mjs && node core/modules/skills/tests/run-http.mjs && node core/modules/skills/tests/run-client.mjs",
     "test:abs": "node core/modules/abs/tests/run-rest.mjs && node core/modules/abs/tests/run-clock.mjs && node core/modules/abs/tests/run-core.mjs && node core/modules/abs/tests/run-review.mjs && node core/modules/abs/tests/run-host.mjs && node core/modules/abs/tests/run-service.mjs && node core/modules/abs/tests/run-client.mjs && node core/modules/abs/tests/run-events-client.mjs",
     "test:avatar": "node app/dsh/ui/avatar/tests/run-player.mjs",
     "test:platform": "node app/shared/platform/tests/run-platform.mjs",
-    "test": "npm run test:event-engine:all && npm run test:resources && npm run test:platform && npm run test:persona && npm run test:proactive && npm run test:diary && npm run test:social && npm run test:abs && npm run test:skills && npm run test:avatar && npm run test:perception",
+    "test": "npm run test:event-engine:all && npm run test:resources && npm run test:platform && npm run test:persona && npm run test:proactive && npm run test:diary && npm run test:migration && npm run test:social && npm run test:abs && npm run test:skills && npm run test:avatar && npm run test:perception",
     "test:social": "node core/modules/social/tests/run-stream-liveness.mjs && node core/modules/social/tests/run-peer-bindings.mjs && node core/modules/social/tests/run-channel-reply.mjs && node core/modules/social/tests/run-dingtalk.mjs && node core/modules/social/tests/run-core.mjs && node core/modules/social/tests/run-inbox.mjs && node core/modules/social/tests/run-service.mjs && node core/modules/social/tests/run-bridge.mjs && node core/modules/social/tests/run-reply-outbox.mjs && node core/modules/social/tests/run-main-pump.mjs && node core/modules/social/tests/run-http-tools.mjs && node core/modules/social/tests/run-host.mjs && node core/modules/social/tests/run-client.mjs",
     "test:resources": "node app/shared/resources/tests/run-resources.mjs",
     "test:persona": "node core/modules/persona/tests/run-supplement.mjs"

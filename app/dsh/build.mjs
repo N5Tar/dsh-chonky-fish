@@ -133,6 +133,7 @@ const absLab = readFileSync(join(ui, 'abs/lab.js'), 'utf8')
 const absEventsPanel = readFileSync(join(ui, 'abs/events-panel.js'), 'utf8')
 const skillsPanel = readFileSync(join(ui, 'skills/panel.js'), 'utf8')
 const perceptionPanel = readFileSync(join(ui, 'perception/client.js'), 'utf8')
+const settingsPanel = readFileSync(join(ui, 'settings/panel.js'), 'utf8')
 const avatarPlayer = readFileSync(join(ui, 'avatar/player.js'), 'utf8')
 const avatarWidget = readFileSync(join(ui, 'avatar/widget.js'), 'utf8')
 const avatarAsset = JSON.parse(readFileSync(join(root, 'assets/avatar/manifest.json'), 'utf8'))
@@ -323,6 +324,7 @@ ${absEventsPanel}
 ${absLab}
 ${skillsPanel}
 ${perceptionPanel}
+${settingsPanel}
     var AVATAR_ASSET = ${JSON.stringify(avatarAsset)}
 ${avatarPlayer}
 ${avatarWidget}
@@ -855,6 +857,11 @@ ${avatarWidget}
       h('path', { key: 'spine', d: 'M12 5v15M6 8l3 1M6 12l3 1M15 9l3-1M15 13l3-1' }),
     ])
 
+    var ICON_SETTINGS = makePanelIcon([
+      h('path', { key: 'gear', d: 'M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z' }),
+      h('path', { key: 'shape', d: 'm19.4 15 .1.1a1.7 1.7 0 1 1-2.4 2.4l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a1.7 1.7 0 1 1-3.4 0v-.2a1.7 1.7 0 0 0-2.9-1.2l-.1.1a1.7 1.7 0 1 1-2.4-2.4l.1-.1a1.7 1.7 0 0 0-1.2-2.9H4a1.7 1.7 0 1 1 0-3.4h.2a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a1.7 1.7 0 1 1 2.4-2.4l.1.1a1.7 1.7 0 0 0 2.9-1.2V2a1.7 1.7 0 1 1 3.4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a1.7 1.7 0 1 1 2.4 2.4l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a1.7 1.7 0 1 1 0 3.4h-.2a1.7 1.7 0 0 0-1.2 2.9Z' }),
+    ])
+
     var ICON_SOCIAL = makePanelIcon([
       h('rect', { key: 'frame', x: 3, y: 3, width: 18, height: 18, rx: 2 }),
       h('path', { key: 'split', d: 'M9 3v18' }),
@@ -872,6 +879,7 @@ ${avatarWidget}
       { id: 'chonkyfish-social', view: 'social', label: 'navSocial', icon: ICON_SOCIAL, order: 25 },
       { id: 'chonkyfish-skills', view: 'skills', label: 'navSkills', icon: ICON_SKILLS, order: 25.5 },
       { id: 'abs-lab', view: 'abs', label: 'navAbs', icon: ICON_SENSE, order: 26 },
+      { id: 'chonkyfish-settings', view: 'preferences', label: 'navSettings', icon: ICON_SETTINGS, order: 27 },
     ]
 
     function apply(ctx) {
@@ -912,7 +920,7 @@ ${avatarWidget}
             name: 'main',
             key: panel.id,
             locale: NS,
-          }, panel.view === 'abs' ? AbsLabPage : panel.view === 'skills' ? createSafeSkillsPage(t) : createPanelPage(panel.view))
+          }, panel.view === 'abs' ? AbsLabPage : panel.view === 'skills' ? createSafeSkillsPage(t) : panel.view === 'preferences' ? createMigrationSettings(t) : createPanelPage(panel.view))
         })
       })
 

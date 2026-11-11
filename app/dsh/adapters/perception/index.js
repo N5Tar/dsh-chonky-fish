@@ -38,8 +38,8 @@ export function installPerception(ctx, { resources, ready: layoutReady = Promise
       if (closed) return
       store = storeFactory({ dbPath: resources.paths.perceptionDatabase, DatabaseSync: sqlite.DatabaseSync, config })
       service = serviceFactory({ store, binaryPath: target.binaryPath, capabilities, config, collectorFactory: createCollector,
-        preferences: createCollectionPreferences(resources.paths.perceptionPreferences ?? join(resources.paths.perception, 'collection-preference.json'), { syncDirectory: platform.syncDirectory }),
-        isEnabled: () => !closed && resources.getConfig().perception.enabled })
+        preferences: createCollectionPreferences(resources.paths.perceptionPreferences ?? join(resources.paths.perception, 'collection-preference.json'), { syncDirectory: platform.syncDirectory, withMigrationWrite: resources.withMigrationWrite || (operation => operation()), withMigrationRead: resources.withMigrationRead || (operation => operation()) }),
+        isEnabled: () => !closed && !(resources.isMigrationBusy?.()) && resources.getConfig().perception.enabled })
       await service.initialize()
       if (closed) await service.close()
     } catch (cause) {

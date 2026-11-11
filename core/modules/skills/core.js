@@ -95,6 +95,10 @@ function initialState({ id, title, description, guide, reason, now }) {
   return { format: VERSIONS.skills, skillId: id, title, description,
     snapshots: [{ revision: 1, action: 'create', reason, createdAt: now, guide, experiences: [] }] };
 }
+export function validateSkillArchive(state) {
+  if (!object(state) || typeof state.skillId !== 'string') fail('INVALID_ARGUMENT', 'Invalid skill archive')
+  return validateState(state, state.skillId)
+}
 function validateState(state, id) {
   try {
     keys(state, ['format', 'skillId', 'title', 'description', 'snapshots']);

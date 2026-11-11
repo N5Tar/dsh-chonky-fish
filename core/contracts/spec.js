@@ -48,6 +48,7 @@ export const FILES = Object.freeze({
   perceptionDatabase: 'activity.db',
   perceptionPreferences: 'collection-preference.json',
   events: 'events.db',
+  migration: 'migration',
 })
 
 /** Bundled native collector locations, relative to plugin package root. */
@@ -70,12 +71,20 @@ export const ROUTES = Object.freeze({
   perception: '/chonkyfish/perception',
   social: '/chonkyfish/social',
   abs: '/chonkyfish/abs',
+  migration: '/chonkyfish/migration',
+  migrationExport: '/chonkyfish/migration/exports',
+  migrationImportInspect: '/chonkyfish/migration/imports/inspect',
+  migrationImportCommit: '/chonkyfish/migration/imports/commit',
+  migrationImportCancel: '/chonkyfish/migration/imports/cancel',
+  migrationStatus: '/chonkyfish/migration/status',
 })
 
 /** 请求体上限（字节）。state 是整份面板状态，其它是小型控制 JSON。 */
 export const LIMITS = Object.freeze({
   stateBodyBytes: 1024 * 1024,
   jsonBodyBytes: 16 * 1024,
+  migrationArchiveBytes: 128 * 1024 * 1024,
+  migrationExpandedBytes: 256 * 1024 * 1024,
 })
 
 /** 活动技能库的有界存储与读取限制。 */
