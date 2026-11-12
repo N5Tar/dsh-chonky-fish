@@ -13,9 +13,9 @@ import { createPeerBindings } from '../peer-bindings.js'
 import { digest } from '../core.js'
 
 const target = { type: 'direct', id: '20002' }, other = { type: 'group', id: '30003' }
-// Keep the legacy connection ID while exercising real DingTalk owner pairing and peer routing.
-const config = { version: 1, connections: [{ id: 'qq', platform: 'dingtalk', provider: 'dingtalk-stream', clientId: 'mock-app', clientSecret: 'mock-only-secret', robotCode: 'mock-robot' }] }
-const input = conversation => ({ connectionId: 'qq', conversation: conversation ?? target })
+// Exercise owner pairing and peer routing with a DingTalk-specific connection ID.
+const config = { version: 1, connections: [{ id: 'dingtalk-main', platform: 'dingtalk', provider: 'dingtalk-stream', clientId: 'mock-app', clientSecret: 'mock-only-secret', robotCode: 'mock-robot' }] }
+const input = conversation => ({ connectionId: 'dingtalk-main', conversation: conversation ?? target })
 async function fixture() {
   const resources = createResources({ homeRoot: await mkdtemp(join(tmpdir(), 'social-main-bridge-')) })
   await createConfigStore(resources.paths.socialConfig).write(config)
@@ -23,7 +23,7 @@ async function fixture() {
   const peers = await createPeerBindings({ file: resources.paths.socialPeerBindings })
   const service = await createSocialService({ paths: resources.paths, peers, limits: { ...resources.spec.SOCIAL.limits, sendIntervalMs: 0 }, driverFactory: value => (driver = createFakeDriver(value)) })
   const revision = (await service.inspect()).connections[0].identityRevision
-  const pairing = await peers.issueCode({ connectionId: 'qq', identityRevision: revision })
+  const pairing = await peers.issueCode({ connectionId: 'dingtalk-main', identityRevision: revision })
   assert.equal((await driver.emit({ messageId: 'pair-control', conversation: target, sender: { id: '20002' }, text: pairing.code, sentAt: Date.now() })).control, true)
   assert.equal((await service.listNotices()).length, 0, 'pairing code is consumed as control, never model input')
   const logs = new Map(), agents = new Map()
@@ -162,7 +162,7 @@ await test('owner group never enters main and cannot share reply capability with
     assert.equal(peer.session.header.agentPreset, f.resources.spec.SOCIAL.preset)
     assert.equal(peer.session.header.cwd, join(f.resources.paths.socialWorkspace, digest(result.sessionId)))
     assert.equal(f.a.events.filter(event => event.type === 'user/message').length, 1)
-    assert.deepEqual(f.service.scopedIdentity(ownerScope).connectionId, 'qq', 'independent main capability is not borrowed by the group')
+    assert.deepEqual(f.service.scopedIdentity(ownerScope).connectionId, 'dingtalk-main', 'independent main capability is not borrowed by the group')
     const foreign = structuredClone(f.a.events.find(event => event.type === 'user/message').data)
     peer.publish({ type: 'user/message', data: foreign })
     assert.equal(f.bridge.scopeForAgent(peer), null)
@@ -543,13 +543,13 @@ for (const roundTrip of [false, true]) await test('owner rebind during resolve r
     bridge = await createSocialBridge({ ctx, service: f.service, resources: f.resources, peers: f.peers, getActiveSessionId: f.getActiveSessionId })
     const attempt = bridge.view(input()); await reached
     const revision = (await f.service.inspect()).connections[0].identityRevision
-    const original = f.peers.owner('qq', revision)
+    const original = f.peers.owner('dingtalk-main', revision)
     for (const sender of roundTrip ? ['different-owner', '20002'] : ['different-owner']) {
-      const code = await f.peers.issueCode({ connectionId: 'qq', identityRevision: revision })
+      const code = await f.peers.issueCode({ connectionId: 'dingtalk-main', identityRevision: revision })
       const result = await f.driver.emit({ messageId: 'pair-' + sender, conversation: sender === '20002' ? target : { type: 'direct', id: 'different-owner-chat' }, sender: { id: sender }, text: code.code, sentAt: Date.now() })
       assert.equal(result.control, true)
     }
-    assert.notEqual(f.peers.owner('qq', revision).claimId, original.claimId)
+    assert.notEqual(f.peers.owner('dingtalk-main', revision).claimId, original.claimId)
     release(); await assert.rejects(attempt, { code: 'SOCIAL_OWNER_CHANGED' })
     assert.equal(f.counters.followup, 0)
     assert.equal((await f.service.listNotices())[0].unreadCount, 1)

@@ -86,7 +86,7 @@ await test('expired, wrong binding and malformed codes are consumed, never forwa
     assert.deepEqual(await f.store.consumeCode(peer({ text: 'ordinary text mentioning nothing reserved' }), binding.identityRevision), { handled: false, bound: false })
     assert.equal((await f.store.consumeCode(peer({ text: code, connectionId: 'other' }), binding.identityRevision)).bound, false)
     assert.equal((await f.store.consumeCode(peer({ text: code }), 'different-revision')).bound, false)
-    assert.equal((await f.store.consumeCode(peer({ text: code, platform: 'qq' }), binding.identityRevision)).bound, false)
+    assert.equal((await f.store.consumeCode(peer({ text: code, platform: 'retired-platform' }), binding.identityRevision)).bound, false)
     f.clock.value = expiresAt
     assert.deepEqual(await f.store.consumeCode(peer({ text: code }), binding.identityRevision), { handled: true, bound: false })
     assert.equal(f.store.owner(binding.connectionId, binding.identityRevision), null)

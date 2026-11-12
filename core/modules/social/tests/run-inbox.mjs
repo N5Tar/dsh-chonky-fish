@@ -10,7 +10,7 @@ const root = await mkdtemp(join(tmpdir(), 'social-inbox-test-'));
 let tests = 0;
 const revision = 'identity-1';
 const message = (id, overrides = {}) => ({
-  platform: 'qq', connectionId: 'qq-main', provider: 'napcat',
+  platform: 'discord', connectionId: 'discord-main', provider: 'onebots-discord',
   messageId: String(id), conversation: { type: 'direct', id: 'peer' },
   sender: { id: 'peer', name: 'External text' }, text: `message-${id}`,
   sentAt: 1000 - Number(id), ...overrides,
@@ -81,7 +81,7 @@ await test('identity, guild, platform and connection isolation', async (director
   await append(store, 1, { platform: 'discord', conversation: { type: 'channel', guildId: 'g2', id: 'same' } });
   assert.equal((await store.listNotices()).length, 5);
   assert.equal(await store.readBatch(ref({ identityRevision: 'unknown' })), null);
-  assert.equal(createSessionKey(message(1)), JSON.stringify(['qq', 'qq-main', 'direct', '', 'peer']));
+  assert.equal(createSessionKey(message(1)), JSON.stringify(['discord', 'discord-main', 'direct', '', 'peer']));
   assert.notEqual(createSessionKey(message(1, { connectionId: 'a,b', conversation: { type: 'direct', id: 'c' } })), createSessionKey(message(1, { connectionId: 'a', conversation: { type: 'direct', id: 'b,c' } })));
   await store.close();
 });

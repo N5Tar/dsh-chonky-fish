@@ -15,7 +15,7 @@ const directory = await mkdtemp(join(tmpdir(), 'social-service-'))
 const resources = createResources({ homeRoot: directory })
 const limits = { ...resources.spec.SOCIAL.limits, inbox: DEFAULT_INBOX_LIMITS, sendIntervalMs: 1 }
 const target = { type: 'direct', id: '20002' }
-const config = { version: 1, connections: [{ id: 'main', platform: 'qq', provider: 'napcat', endpoint: 'ws://127.0.0.1:3001/' }] }
+const config = { version: 1, connections: [{ id: 'main', platform: 'discord', provider: 'onebots-discord', endpoint: 'ws://127.0.0.1:3001/' }] }
 await createConfigStore(resources.paths.socialConfig).write(config)
 let driver
 const service = await createSocialService({ paths: resources.paths, limits, driverFactory: value => (driver = createFakeDriver(value)) })
@@ -68,7 +68,7 @@ const delayed = await createSocialService({ paths: delayedResources.paths, limit
 }) })
 callbacks.onStatus('connected')
 callbacks.onStatus('disconnected')
-resolveIdentity({ connectionId: 'main', platform: 'qq', provider: 'napcat', protocolUserId: '10001' })
+resolveIdentity({ connectionId: 'main', platform: 'discord', provider: 'onebots-discord', protocolUserId: '10001' })
 await callbacks.onMessage(message)
 assert.equal((await delayed.inspect()).connections[0].status, 'disconnected')
 assert.throws(() => delayed.issueScope({ sessionId: 'x', connectionId: 'main', conversation: target }))

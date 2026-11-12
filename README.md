@@ -38,7 +38,7 @@
 
 - 钉钉支持Ping/Pong保活、断线恢复及诊断；同一应用同时接入多个Stream客户端可能被平台随机分流，应避免重复接入。
 - 独立 `chonkyfish-social` preset 不注入主人日记、私人补充人格和主会话历史，Host工具保护继续生效。
-- QQ NapCatQQ / SnowLuma 与 Discord OneBots 的既有驱动仍保留；真实平台兼容性需分别验证。
+- 社交模块保留 Discord OneBots v12 驱动；真实平台兼容性仍需单独验证。
 - 主动联系主人使用固定绑定目标的 `social_send_owner_message`，不允许模型任意指定联系人。
 - 参见[钉钉配置、配对、能力与限制](<core/modules/social/DINGTALK.md>)。不要把代码和本地测试完成理解为所有真实平台场景都已验收。
 

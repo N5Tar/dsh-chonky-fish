@@ -119,32 +119,32 @@ for (const stale of ['默认手动', '手动点「查看」', '不会自动调�
 }
 const payload = {
   config: { version: 1, connections: [
-    { id: 'qq-main', platform: 'qq', provider: 'napcat', endpoint: 'ws://localhost:3001', tokenEnv: 'QQ_TOKEN' },
-    { id: 'qq-offline', platform: 'qq', provider: 'snowluma', endpoint: 'ws://localhost:3002' },
-    { id: 'old-discord', platform: 'discord', provider: 'onebots-discord', endpoint: 'ws://localhost:3003' },
+    { id: 'ding-offline', platform: 'dingtalk', provider: 'dingtalk-stream', clientId: 'offline-app', robotCode: 'offline-robot', clientSecretSet: true },
+    { id: 'discord-main', platform: 'discord', provider: 'onebots-discord', endpoint: 'ws://localhost:3003', tokenEnv: 'DISCORD_TOKEN' },
   ] },
-  connections: [{ connectionId: 'qq-main', platform: 'qq', provider: 'napcat', status: 'connected' }],
+  connections: [{ connectionId: 'ding-offline', platform: 'dingtalk', provider: 'dingtalk-stream', status: 'connected' }],
   notices: [
-    { connectionId: 'qq-main', conversation: { type: 'direct', id: '123' }, unreadCount: 2 },
-    { connectionId: 'old-discord', conversation: { type: 'direct', id: '456' }, unreadCount: 7 },
+    { connectionId: 'ding-offline', conversation: { type: 'direct', id: '123' }, unreadCount: 2 },
+    { connectionId: 'discord-main', conversation: { type: 'direct', id: '456' }, unreadCount: 7 },
   ],
 }
 context.fixture = payload
 evaluate('socialPayload = fixture; renderSocialView()')
-assert.equal(getNode('social-catalog').children.length, 3, 'legacy Discord remains accessible')
-assert.match(text(getNode('social-catalog')), /部分连接/)
-assert.match(text(getNode('social-catalog')), /未配置/)
+assert.equal(getNode('social-catalog').children.length, 2, 'only supported channels remain accessible')
+assert.match(text(getNode('social-catalog')), /1 条配置/)
+assert.match(text(getNode('social-catalog')), /管理已有的 Discord 连接/)
 assert.match(text(getNode('social-catalog')), /绑定码认领主人/, 'card description is retained and wraps through CSS')
-assert.ok(getNode('social-catalog').children[1].children.some(node => node.className === 'cf-social-card-description'))
+assert.ok(getNode('social-catalog').children[0].children.some(node => node.className === 'cf-social-card-description'))
 assert.equal(getNode('social-detail').hidden, true)
 assert.equal(getNode('social-form').hidden, true)
 getNode('social-catalog').children[0].listeners.click()
 assert.equal(getNode('social-catalog').hidden, true)
 assert.equal(getNode('social-detail').hidden, false)
 assert.equal(getNode('social-form').hidden, true)
-assert.equal(getNode('social-list').children.length, 2, 'saved offline connection is visible')
-assert.match(text(getNode('social-list')), /QQ_TOKEN/)
-assert.match(text(getNode('social-list')), /localhost:3002/)
+assert.equal(getNode('social-list').children.length, 1, 'saved DingTalk connection is visible')
+assert.match(text(getNode('social-list')), /ding-offline/)
+assert.match(text(getNode('social-list')), /offline-app/)
+assert.match(text(getNode('social-list')), /已保存（不回显）/)
 assert.equal(getNode('social-unread-count').textContent, '2', 'unreads are scoped to platform')
 assert.match(text(getNode('social-status')), /主人私聊进入当前主会话/)
 assert.match(text(getNode('social-status')), /先打开大肥鱼聊天页面/)
@@ -181,21 +181,24 @@ evaluate('renderSocialView()')
 assert.equal(getNode('social-id').value, 'draft', 'refresh does not reset an unfinished form')
 getNode('social-cancel').listeners.click()
 evaluate('socialSelect(0)')
-assert.equal(getNode('social-id').value, 'qq-main')
+assert.equal(getNode('social-id').value, 'ding-offline')
 assert.equal(getNode('social-delete').hidden, false)
 assert.equal(getNode('social-detail').hidden, true)
 getNode('social-cancel').listeners.click()
 getNode('social-back').listeners.click()
 getNode('social-catalog').children[1].listeners.click()
-assert.equal(getNode('social-new').hidden, false, 'DingTalk Stream supports setup')
-assert.match(text(getNode('social-list')), /还没有配置 钉钉/)
-assert.match(getNode('social-detail-description').textContent, /绑定码认领主人/)
+assert.equal(getNode('social-new').hidden, false, 'Discord supports setup')
+assert.match(text(getNode('social-list')), /discord-main/)
+assert.match(text(getNode('social-list')), /localhost:3003/)
+assert.match(getNode('social-detail-description').textContent, /管理已有的 Discord 连接/)
+getNode('social-back').listeners.click()
+getNode('social-catalog').children[0].listeners.click()
 
 // Exercise real navigation, form validation and save serialization, stubbing only POST.
 const submissions = []
 context.captureSubmit = body => submissions.push(JSON.parse(JSON.stringify(body)))
 evaluate('var originalSubmit = socialSubmit; socialSubmit = captureSubmit')
-getNode('social-provider').options = ['napcat', 'snowluma', 'onebots-discord', 'dingtalk-stream'].map(value => ({ value }))
+getNode('social-provider').options = ['onebots-discord', 'dingtalk-stream'].map(value => ({ value }))
 getNode('social-new').listeners.click()
 assert.equal(getNode('social-provider').value, 'dingtalk-stream')
 assert.equal(getNode('social-platform').value, 'dingtalk')
@@ -230,8 +233,8 @@ getNode('social-endpoint').value = 'ws://stale.example'
 getNode('social-token-env').value = 'STALE_TOKEN'
 getNode('social-save').listeners.click()
 const added = submissions.at(-1).config
-assert.deepEqual(added.connections.slice(0, 3), payload.config.connections, 'adding DingTalk preserves QQ and Discord')
-assert.deepEqual(added.connections[3], { id: 'ding-main', platform: 'dingtalk', provider: 'dingtalk-stream', clientId: 'app-key-example', clientSecret: 'test-only-secret-initial', robotCode: 'robot-initial' })
+assert.deepEqual(added.connections.slice(0, 2), payload.config.connections, 'adding DingTalk preserves supported existing channels')
+assert.deepEqual(added.connections[2], { id: 'ding-main', platform: 'dingtalk', provider: 'dingtalk-stream', clientId: 'app-key-example', clientSecret: 'test-only-secret-initial', robotCode: 'robot-initial' })
 // Model the GET contract: the backend retains secrets, returning only a presence marker.
 const redact = config => ({ ...config, connections: config.connections.map(row => {
   if (row.platform !== 'dingtalk') return { ...row }
@@ -240,7 +243,7 @@ const redact = config => ({ ...config, connections: config.connections.map(row =
 }) })
 const redactedAdded = redact(added)
 context.savedConfig = redactedAdded
-evaluate('socialPayload.config = savedConfig; socialSelect(3)')
+evaluate('socialPayload.config = savedConfig; socialSelect(2)')
 assert.equal(getNode('social-client-id').value, 'app-key-example')
 assert.equal(getNode('social-client-secret').value, '', 'secret never refilled')
 assert.equal(getNode('social-endpoint').value, '')
@@ -254,19 +257,19 @@ for (const [field, value] of [['social-id', 'ding-renamed'], ['social-client-id'
   assert.equal(submissions.length, before, 'identity changes require re-entered secret: ' + field)
   getNode(field).value = old
 }
-evaluate('socialPayload.config.connections[3].clientSecretSet = false')
+evaluate('socialPayload.config.connections[2].clientSecretSet = false')
 const beforeMigration = submissions.length
 getNode('social-save').listeners.click()
 assert.equal(submissions.length, beforeMigration, 'legacy env configuration needs a new direct secret')
-evaluate('socialPayload.config.connections[3].clientSecretSet = true')
+evaluate('socialPayload.config.connections[2].clientSecretSet = true')
 getNode('social-robot-code').value = ' robot-example '
 getNode('social-client-secret').value = 'test-only-secret-replacement'
 getNode('social-save').listeners.click()
 const editedPost = submissions.at(-1).config
-assert.equal(editedPost.connections.length, 4)
-assert.equal(editedPost.connections[3].robotCode, 'robot-example')
-assert.equal(editedPost.connections[3].clientSecret, 'test-only-secret-replacement')
-assert.deepEqual(editedPost.connections.slice(0, 3), added.connections.slice(0, 3))
+assert.equal(editedPost.connections.length, 3)
+assert.equal(editedPost.connections[2].robotCode, 'robot-example')
+assert.equal(editedPost.connections[2].clientSecret, 'test-only-secret-replacement')
+assert.deepEqual(editedPost.connections.slice(0, 2), added.connections.slice(0, 2))
 const edited = redact(editedPost)
 context.savedConfig = edited
 evaluate('socialPayload.config = savedConfig')
@@ -281,8 +284,8 @@ assert.equal(text(getNode('social-list')).includes('SOCIAL_DINGTALK_SECRET_MISSI
 assert.match(evaluate("socialErrorMessage(new Error('SOCIAL_WEBHOOK_EXPIRED'))"), /新消息/)
 assert.match(evaluate("socialErrorMessage(new Error('SOCIAL_SEND_UNKNOWN'))"), /勿重复/)
 getNode('social-back').listeners.click()
-getNode('social-catalog').children[0].listeners.click()
-evaluate('socialSelect(0)')
+getNode('social-catalog').children[1].listeners.click()
+evaluate('socialSelect(1)')
 assert.equal(getNode('social-dingtalk-fields').hidden, true)
 assert.equal(getNode('social-client-id').disabled, true)
 assert.equal(getNode('social-client-secret').disabled, true)
@@ -291,15 +294,10 @@ assert.equal(getNode('social-onebot-endpoint-field').hidden, false)
 assert.equal(getNode('social-onebot-token-field').hidden, false)
 assert.equal(getNode('social-endpoint').disabled, false)
 assert.equal(getNode('social-token-env').disabled, false)
-assert.deepEqual(getNode('social-provider').options.filter(option => !option.disabled).map(option => option.value), ['napcat', 'snowluma'])
+assert.deepEqual(getNode('social-provider').options.filter(option => !option.disabled).map(option => option.value), ['onebots-discord'])
 assert.equal(getNode('social-client-id').value, '')
 getNode('social-save').listeners.click()
-assert.deepEqual(submissions.at(-1).config, edited, 'editing QQ after DingTalk preserves all config')
-evaluate('socialSelect(2)')
-assert.equal(getNode('social-provider').value, 'onebots-discord')
-assert.deepEqual(getNode('social-provider').options.filter(option => !option.disabled).map(option => option.value), ['onebots-discord'])
-getNode('social-save').listeners.click()
-assert.deepEqual(submissions.at(-1).config, edited, 'editing Discord after DingTalk preserves all config')
+assert.deepEqual(submissions.at(-1).config, edited, 'editing Discord preserves the other supported channels')
 evaluate("socialPlatform = 'dingtalk'; socialResetForm()")
 for (const field of ['social-id', 'social-endpoint', 'social-token-env', 'social-client-id', 'social-client-secret', 'social-robot-code']) assert.equal(getNode(field).value, '', 'new form clears stale values: ' + field)
 assert.equal(getNode('social-provider').value, 'dingtalk-stream')
@@ -309,21 +307,21 @@ const messages = []
 context.mockApi = (method, body) => { transport.push(JSON.parse(JSON.stringify(body))); return Promise.resolve({ ok: true }) }
 context.ask = () => Promise.resolve(true)
 context.toast = message => messages.push(message)
-evaluate('socialApi = mockApi; loadSocial = function () {}; socialSelect(3); socialSubmit = originalSubmit')
+evaluate('socialApi = mockApi; loadSocial = function () {}; socialSelect(2); socialSubmit = originalSubmit')
 getNode('social-client-secret').value = ' test-only-secret-success '
 getNode('social-save').listeners.click()
 await new Promise(resolve => setImmediate(resolve))
 assert.equal(getNode('social-client-secret').value, '', 'successful save clears secret input')
 assert.equal(evaluate('socialScreen'), 'detail')
-assert.equal(transport.at(-1).config.connections[3].clientSecret, ' test-only-secret-success ', 'secret is sent verbatim, not trimmed')
-evaluate('socialSelect(0)')
+assert.equal(transport.at(-1).config.connections[2].clientSecret, ' test-only-secret-success ', 'secret is sent verbatim, not trimmed')
+evaluate('socialSelect(1)')
 getNode('social-client-secret').value = 'test-only-secret-delete'
 evaluate('socialDeleteConnection()')
 await new Promise(resolve => setImmediate(resolve))
 assert.equal(getNode('social-client-secret').value, '', 'successful deletion clears secret without waiting for refresh')
 const deleteConfig = transport.at(-1).config
-assert.equal(deleteConfig.connections.some(row => row.id === 'qq-main'), false)
-assert.deepEqual(deleteConfig.connections.find(row => row.id === 'ding-main'), edited.connections[3], 'deleting another connection preserves redacted secret marker')
+assert.equal(deleteConfig.connections.some(row => row.id === 'discord-main'), false)
+assert.deepEqual(deleteConfig.connections.find(row => row.id === 'ding-main'), edited.connections[2], 'deleting another connection preserves redacted secret marker')
 assert.equal(JSON.stringify(deleteConfig).includes('test-only-secret'), false)
 assert.equal(messages.some(message => message.includes('test-only-secret')), false)
 // Closing the dashboard modal also clears a typed secret.
@@ -341,7 +339,7 @@ console.log('social-dingtalk: PASS (direct secret, redacted edits, required migr
 context.ask = () => assert.fail('delivery retry must not request confirmation')
 for (const [status, label] of [['viewed', /已投递到对应会话/], ['busy', /稍后会自动投递/], ['pending', /请先打开大肥鱼聊天页面/], ['empty', /没有待投递消息/]]) {
   context.mockApi = (method, body) => { assert.equal(method, 'POST'); assert.equal(body.action, 'view'); return Promise.resolve({ result: { status } }) }
-  evaluate("socialApi = mockApi; socialView('qq-main', { type: 'direct', id: '123' })")
+  evaluate("socialApi = mockApi; socialView('ding-main', { type: 'direct', id: '123' })")
   await new Promise(resolve => setImmediate(resolve))
   assert.match(messages.at(-1), label)
 }
@@ -415,7 +413,7 @@ await new Promise(resolve => setImmediate(resolve))
 assert.equal(evaluate('socialPayload.bridge.targetSessionId'), 'new-main')
 console.log('social-auto-delivery: PASS (main-session status, retry without confirmation, pending/busy, polling lifecycle, draft retention, response ordering)')
 evaluate("socialPayload = null; socialScreen = 'catalog'; renderSocialView()")
-assert.equal(getNode('social-catalog').children.length, 2)
+assert.equal(getNode('social-catalog').children.length, 1, 'Discord remains visible only when already configured')
 assert.match(text(getNode('social-catalog')), /状态不可用/)
 evaluate('socialLoading = true; renderSocialView()')
 assert.match(text(getNode('social-catalog')), /读取中/)

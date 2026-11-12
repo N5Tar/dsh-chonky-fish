@@ -451,12 +451,12 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
         <button class="cf-refresh" id="social-cancel" type="button">← 返回渠道详情</button>
         <div class="cf-social-title"><span id="social-form-title">新增连接</span></div>
         <div class="cf-social-grid">
-          <div class="cf-field"><label for="social-id">连接 ID</label><input id="social-id" maxlength="80" placeholder="qq-main"/></div>
-          <div class="cf-field"><label for="social-platform">平台</label><select id="social-platform"><option value="qq">QQ</option><option value="dingtalk">钉钉</option><option value="discord">Discord</option></select></div>
+          <div class="cf-field"><label for="social-id">连接 ID</label><input id="social-id" maxlength="80" placeholder="discord-main"/></div>
+          <div class="cf-field"><label for="social-platform">平台</label><select id="social-platform"><option value="dingtalk">钉钉</option><option value="discord">Discord</option></select></div>
         </div>
         <div class="cf-social-grid">
-          <div class="cf-field"><label for="social-provider">接入方式</label><select id="social-provider"><option value="napcat">NapCatQQ</option><option value="snowluma">SnowLuma</option><option value="onebots-discord">OneBots（Discord）</option><option value="dingtalk-stream">钉钉 Stream</option></select></div>
-          <div class="cf-field" id="social-onebot-token-field"><label for="social-token-env">凭证环境变量名</label><input id="social-token-env" maxlength="128" placeholder="DSH_QQ_MAIN_ONEBOT_TOKEN"/></div>
+          <div class="cf-field"><label for="social-provider">接入方式</label><select id="social-provider"><option value="onebots-discord">OneBots（Discord）</option><option value="dingtalk-stream">钉钉 Stream</option></select></div>
+          <div class="cf-field" id="social-onebot-token-field"><label for="social-token-env">凭证环境变量名</label><input id="social-token-env" maxlength="128" placeholder="DISCORD_ONEBOT_TOKEN"/></div>
         </div>
         <div class="cf-field" id="social-onebot-endpoint-field"><label for="social-endpoint">连接地址（ws:// 或本机 wss://）</label><input id="social-endpoint" maxlength="2048" placeholder="ws://127.0.0.1:3001/"/></div>
         <div id="social-dingtalk-fields" hidden>
@@ -466,7 +466,7 @@ body.embed .dsh-shell{display:none}body.embed .app{background:#fff}body.embed .c
           <div class="cf-note">创建钉钉企业内部应用，启用机器人并选择 Stream 模式，然后发布应用。支持机器人单聊与群聊 @机器人。连接后在渠道详情生成绑定码，用你的钉钉私聊发送给机器人认领主人。主人私聊跟随主会话，访客与群聊独立；正文不添加来源标签，正常回复由后台自动发送。密钥保存在本机，不回显；编辑留空保留。新增、迁移旧配置或更改连接 ID / Client ID / Robot Code 时需重新输入密钥。</div>
         </div>
         <div class="cf-actions"><button class="cf-ghost" type="button" id="social-delete">删除这条</button><button class="primary" type="button" id="social-save">保存</button></div>
-        <div class="cf-note">保存即启用。钉钉密钥保存在本机，不回显；QQ / Discord 凭证仍填写环境变量名。</div>
+        <div class="cf-note">保存即启用。钉钉密钥保存在本机，不回显；Discord 凭证填写环境变量名。</div>
         <div id="social-form-error" class="cf-social-error" role="alert" hidden></div>
       </form>
     </div>

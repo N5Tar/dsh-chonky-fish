@@ -1,5 +1,5 @@
 import { readJson, writeJson, keys, text, fail, serial } from './core.js'
-import { providerFor } from './providers.js'
+import { providerFor, PROVIDERS } from './providers.js'
 
 /** 配置里只有连接本身：OneBot 保留凭证引用，钉钉密钥值只保存在本机私有配置。
  * 没有模块/连接开关，也没有接收范围或允许名单——配置好一条连接就接收它的消息。 */
@@ -68,10 +68,32 @@ export function mergeConfigSecrets(input, previous) {
   }) }
 }
 
+function readCompatibleConfig(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Array.isArray(raw.connections)) {
+    return { config: validateConfig(raw), unavailable: [] }
+  }
+  const supported = []
+  const unavailable = []
+  for (const connection of raw.connections) {
+    if (connection && typeof connection === 'object' && !Array.isArray(connection) && typeof connection.provider === 'string' && !Object.hasOwn(PROVIDERS, connection.provider)) unavailable.push(connection)
+    else supported.push(connection)
+  }
+  return { config: validateConfig({ ...raw, connections: supported }), unavailable }
+}
+
 export function createConfigStore(file, { syncDirectory = async () => {} } = {}) {
   const run = serial()
   return {
-    read: () => run(async () => validateConfig(await readJson(file, EMPTY_CONFIG))),
-    write: raw => run(async () => { const value = validateConfig(raw); try { validateConfig(await readJson(file, EMPTY_CONFIG)) } catch { fail('SOCIAL_CONFIG_RECOVERY_REQUIRED') } await writeJson(file, value, { syncDirectory }); return value }),
+    // Retired/unknown providers remain on disk but never enter the active connection list.
+    // This keeps unrelated supported connections usable without destructive config migration.
+    read: () => run(async () => readCompatibleConfig(await readJson(file, EMPTY_CONFIG)).config),
+    write: raw => run(async () => {
+      const value = validateConfig(raw)
+      let unavailable
+      try { unavailable = readCompatibleConfig(await readJson(file, EMPTY_CONFIG)).unavailable }
+      catch { fail('SOCIAL_CONFIG_RECOVERY_REQUIRED') }
+      await writeJson(file, { ...value, connections: [...value.connections, ...unavailable] }, { syncDirectory })
+      return value
+    }),
   }
 }

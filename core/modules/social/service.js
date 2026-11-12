@@ -79,7 +79,7 @@ export async function createSocialService({ paths, limits, env = process.env, dr
         if (provider.protocol === 'dingtalk-stream' && !text(clientSecret, 8192)) fail('SOCIAL_DINGTALK_SECRET_MISSING')
         entry.driver = driverFactory ? driverFactory(value, { token, clientSecret, protocol: provider.protocol })
           : provider.protocol === 'dingtalk-stream' ? createDingTalkDriver(value, { clientSecret, routeStore })
-          : createOneBotDriver(value, { token, version: provider.protocol === 'onebot-v11' ? 11 : 12 })
+          : createOneBotDriver(value, { token })
         await entry.driver.start({
           onStatus(status, reason) {
             if (stopped || current !== generation) return

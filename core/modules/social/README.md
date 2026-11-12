@@ -15,7 +15,7 @@
 ## 已实现的边界
 
 - 面板顶栏 🧩 入口：只有连接本身（平台、接入方式、地址、凭证引用）、未读会话和显式「查看」；没有开关、接收范围或允许名单，也没有自动回复和直接发信按钮。
-- QQ NapCatQQ / SnowLuma 共用 OneBot v11 客户端；OneBots Discord 使用 v12 客户端。**均未完成真实平台联调，Provider Registry 明确标记 verified:false。**
+- 当前包含钉钉企业机器人 Stream 与 OneBots Discord（OneBot v12）两个接入方式；**均未完成真实平台联调，Provider Registry 明确标记 verified:false。**
 - Platform / Provider 决定协议，不允许用户配置 protocol；远程连接要求 wss 和凭证引用。
 - 配置好一条连接就接收它的消息（私聊/群/频道）；只过滤自身回声和机器人，其余靠去重、有界收件箱和批次确认。
 - 有界持久化收件箱、身份版本、跨重启批次与发送结果；未知发送结果不自动重发。
@@ -37,16 +37,16 @@ $DSH_HOME/chonkyfish/social/config.json
 {
   "version": 1,
   "connections": [{
-    "id": "qq-main",
-    "platform": "qq",
-    "provider": "napcat",
+    "id": "discord-main",
+    "platform": "discord",
+    "provider": "onebots-discord",
     "endpoint": "ws://127.0.0.1:3001/",
-    "tokenEnv": "DSH_QQ_MAIN_ONEBOT_TOKEN"
+    "tokenEnv": "DISCORD_ONEBOT_TOKEN"
   }]
 }
 ```
 
-没有连接就什么都不连接；非法配置失败关闭，不会带着半套配置跑起来。私有部署把 OneBot 直接暴露在公网时有风险：一旦配置成功，任何能给该账号发消息的人都会进入有界收件箱（不会因此调用模型）。凭证 URL 不允许写在配置中；运行时 Driver 使用 OneBot access_token 查询参数鉴权，因此远程只允许 wss。不要让代理访问日志记录该查询参数。
+没有连接就什么都不连接；合法的已支持连接会独立校验，非法配置失败关闭。存档中不再支持的 Provider 会被运行时忽略并原样留在配置文件里，不会连接或被自动删除；改动其他连接时也会保留这些旧行。私有部署把 OneBot 直接暴露在公网时有风险：一旦配置成功，任何能给该账号发消息的人都会进入有界收件箱（不会因此调用模型）。凭证 URL 不允许写在配置中；运行时 Driver 使用 OneBot access_token 查询参数鉴权，因此远程只允许 wss。不要让代理访问日志记录该查询参数。
 
 独立运行第三方 Provider，配置其正向 WebSocket、鉴权及文本消息段输出。本插件不安装、扫码、启动或管理 Provider。
 
@@ -71,8 +71,8 @@ await fetch('/chonkyfish/social', {
 await fetch('/chonkyfish/social', {
   method: 'POST', headers,
   body: JSON.stringify({
-    action: 'view', connectionId: 'qq-main',
-    conversation: { type: 'direct', id: '替换为测试账号QQ号' }
+    action: 'view', connectionId: 'discord-main',
+    conversation: { type: 'direct', id: '替换为测试账号 ID' }
   })
 }).then(r => r.json());
 ```
@@ -142,4 +142,4 @@ npm run test:social
 npm test
 ```
 
-测试覆盖配置、身份、协议动作、无自动推理、稳定批次、精确确认、重启防重、限额与损坏保护、目标绑定桥接和目标路由与无私有 Token HTTP。真实 NapCatQQ / SnowLuma / OneBots、接收端可见以及 GUI 冷恢复仍需使用独立测试账号联调，禁止据模拟测试声称生产可用。
+测试覆盖配置、身份、OneBot v12 协议动作、钉钉 Stream、无自动推理、稳定批次、精确确认、重启防重、限额与损坏保护、目标绑定桥接和目标路由与无私有 Token HTTP。真实 OneBots Discord / 钉钉、接收端可见以及 GUI 冷恢复仍需使用独立测试账号联调，禁止据模拟测试声称生产可用。

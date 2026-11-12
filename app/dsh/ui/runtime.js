@@ -634,10 +634,9 @@ function mountChonkyFishPage(wrap, chat, options) {
   var socialBack = $('social-back')
   var socialCancel = $('social-cancel')
   var socialScreen = 'catalog'
-  var socialPlatform = 'qq'
+  var socialPlatform = 'dingtalk'
   var socialLoading = false
   var SOCIAL_PLATFORMS = [
-    { id: 'qq', name: 'QQ', mark: 'QQ', description: '通过 QQ 私聊与群聊，和鱼鱼保持联系。', available: true },
     { id: 'dingtalk', name: '钉钉', mark: '钉', description: '企业内部应用 · Stream 模式。用绑定码认领主人；主人私聊跟随当前主会话，其他发送者使用独立会话。回复自动回到本轮来源。', available: true },
     { id: 'discord', name: 'Discord', mark: 'D', description: '管理已有的 Discord 连接。', available: true }
   ]
@@ -874,7 +873,7 @@ function mountChonkyFishPage(wrap, chat, options) {
     if (socialFormTitle) socialFormTitle.textContent = '新增连接'
     if (socialFields.id) socialFields.id.value = ''
     if (socialFields.platform) socialFields.platform.value = socialPlatform
-    if (socialFields.provider) socialFields.provider.value = socialPlatform === 'dingtalk' ? 'dingtalk-stream' : socialPlatform === 'discord' ? 'onebots-discord' : 'napcat'
+    if (socialFields.provider) socialFields.provider.value = socialPlatform === 'dingtalk' ? 'dingtalk-stream' : 'onebots-discord'
     if (socialFields.endpoint) socialFields.endpoint.value = ''
     if (socialFields.tokenEnv) socialFields.tokenEnv.value = ''
     if (socialFields.clientId) socialFields.clientId.value = ''
@@ -908,7 +907,7 @@ function mountChonkyFishPage(wrap, chat, options) {
   function socialReadForm() {
     var id = socialFields.id ? String(socialFields.id.value || '').trim() : ''
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) throw new Error('连接 ID 只能用字母、数字、下划线和连字符')
-    var platform = socialFields.platform ? socialFields.platform.value : 'qq'
+    var platform = socialFields.platform ? socialFields.platform.value : 'dingtalk'
     if (platform === 'dingtalk') {
       var clientId = socialFields.clientId ? String(socialFields.clientId.value || '').trim() : ''
       var clientSecret = socialFields.clientSecret ? String(socialFields.clientSecret.value || '') : ''
@@ -925,13 +924,14 @@ function mountChonkyFishPage(wrap, chat, options) {
       else dingtalk.clientSecretSet = true
       return dingtalk
     }
+    if (platform !== 'discord') throw new Error('请选择可用的社交平台')
     var endpoint = socialFields.endpoint ? String(socialFields.endpoint.value || '').trim() : ''
     if (!endpoint) throw new Error('请填写连接地址')
     if (endpoint.length > 2048) throw new Error('连接地址太长')
     var connection = {
       id: id,
       platform: platform,
-      provider: socialFields.provider ? socialFields.provider.value : 'napcat',
+      provider: socialFields.provider ? socialFields.provider.value : 'onebots-discord',
       endpoint: endpoint
     }
     var tokenEnv = socialFields.tokenEnv ? String(socialFields.tokenEnv.value || '').trim() : ''
@@ -1310,7 +1310,7 @@ function mountChonkyFishPage(wrap, chat, options) {
     })
     if (socialFields.provider) {
       Array.prototype.forEach.call(socialFields.provider.options, function (option) {
-        option.hidden = option.disabled = isDingtalk ? option.value !== 'dingtalk-stream' : socialPlatform === 'discord' ? option.value !== 'onebots-discord' : option.value !== 'napcat' && option.value !== 'snowluma'
+        option.hidden = option.disabled = isDingtalk ? option.value !== 'dingtalk-stream' : option.value !== 'onebots-discord'
       })
     }
     if (socialSummary) socialSummary.textContent = socialLoading ? '正在读取社交连接…' : !socialPayload ? '读取社交状态失败，请刷新重试。' : socialPayload.configError ? '配置读取失败，已阻止修改。进入详情查看原因。' : socialScreen === 'catalog' ? '选择一个渠道，查看连接与配置信息。' : socialScreen === 'form' ? '配置连接 · ' + platform.name : '已配置渠道 · ' + platform.name
