@@ -311,3 +311,20 @@ test('explicit stop admitted immediately before close still persists false; new 
 })
 for (const [name, fn] of tests) { await fn(); console.log('PASS', name) }
 console.log(`perception service: ${tests.length} passed`)
+
+// Conditional Hello controls cannot overwrite a newer native settings action.
+{
+  const f = fixture()
+  await f.service.initialize()
+  const original = f.service.getControlState()
+  const pending = f.service.start()
+  assert.equal(f.service.getControlState().revision, original.revision + 1, 'start reserves revision synchronously')
+  assert.throws(() => f.service.setRequested(false, { expectedRevision: original.revision, expectedRequested: original.requested }), { code: 'STALE_TARGET', outcome: 'not_applied' })
+  await pending
+  const current = f.service.getControlState()
+  await f.service.setRequested(false, { expectedRevision: current.revision, expectedRequested: current.requested })
+  assert.equal(f.service.getControlState().requested, false)
+  assert.throws(() => f.service.setRequested(true, { expectedRevision: current.revision, expectedRequested: current.requested }), { code: 'STALE_TARGET' })
+  await f.service.close()
+}
+console.log('perception conditional control: PASS')

@@ -40,6 +40,7 @@ export const PRESET = 'chonkyfish'
  */
 export const FILES = Object.freeze({
   config: 'config.json',
+  hello: 'hello/state.json',
   state: 'state.json',
   proactive: 'proactive.json',
   abs: 'abs',
@@ -62,6 +63,7 @@ export const PERCEPTION_ASSETS = Object.freeze({
 /** Host 暴露给面板的本地 HTTP 路由（无插件私有 token 鉴权）。 */
 export const ROUTES = Object.freeze({
   state: '/chonkyfish/state',
+  hello: '/chonkyfish/hello',
   events: '/chonkyfish/events',
   session: '/chonkyfish/session',
   proactive: '/chonkyfish/proactive',
@@ -82,6 +84,7 @@ export const ROUTES = Object.freeze({
 /** 请求体上限（字节）。state 是整份面板状态，其它是小型控制 JSON。 */
 export const LIMITS = Object.freeze({
   stateBodyBytes: 1024 * 1024,
+  helloBodyBytes: 128 * 1024,
   jsonBodyBytes: 16 * 1024,
   migrationArchiveBytes: 128 * 1024 * 1024,
   migrationExpandedBytes: 256 * 1024 * 1024,

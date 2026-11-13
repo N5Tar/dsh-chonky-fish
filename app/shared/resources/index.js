@@ -13,7 +13,7 @@
  *   - ensureLayout 里任何异常都只 warn，不让 Host 崩；
  *   - 所有写盘都是「临时文件 + rename」，进程被杀不会留下半截 JSON。
  */
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { sanitizeAbsConfig, mergeAbsConfig } from '../../../core/modules/abs/config.js'
 import { readFileSync } from 'node:fs'
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
@@ -196,6 +196,7 @@ export function createResources({ env = process.env, homeRoot } = {}) {
   const paths = {
     home,
     config: join(home, FILES.config),
+    hello: join(home, FILES.hello),
     state: join(home, FILES.state),
     proactive: join(home, FILES.proactive),
     events: join(home, FILES.events),
@@ -293,8 +294,15 @@ export function createResources({ env = process.env, homeRoot } = {}) {
    * 非法 patch 不抛错；写盘失败会 warn 后抛出（由调用方转成失败响应）。
    * @param {unknown} patch
    */
-  async function updateConfig(patch) {
-    return withMigrationWrite(async () => {
+  let configWriteChain = Promise.resolve()
+  function configRevision() {
+    return createHash('sha256').update(JSON.stringify(getConfig())).digest('hex')
+  }
+  function updateConfig(patch, { expectedRevision } = {}) {
+    const operation = configWriteChain.catch(() => {}).then(() => withMigrationWrite(async () => {
+      if (expectedRevision !== undefined && expectedRevision !== configRevision()) {
+        throw Object.assign(new Error('Configuration changed'), { code: 'STALE_TARGET', outcome: 'not_applied' })
+      }
       const next = mergeConfig(getConfig(), patch)
       try {
         await writeJsonAtomic(paths.config, next)
@@ -303,7 +311,9 @@ export function createResources({ env = process.env, homeRoot } = {}) {
         throw error
       }
       return next
-    })
+    }))
+    configWriteChain = operation.catch(() => {})
+    return operation
   }
 
   /** config.json 不存在才写默认值；已存在（哪怕是用户手改成半坏）都不动。 */
@@ -383,6 +393,7 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     ensureLayout,
     getConfig,
     updateConfig,
+    configRevision,
     setMigrationMaintenance(value) {
       const entering = value === true && !migrationMaintenance
       if (entering) migrationConfigSnapshot = readConfigFromDisk()

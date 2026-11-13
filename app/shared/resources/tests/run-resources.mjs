@@ -94,6 +94,7 @@ await test('paths: 所有文件都在 home 下，工作区在 home/小鱼塘', (
   assert.deepEqual(resources.paths, {
     home,
     config: join(home, FILES.config),
+    hello: join(home, FILES.hello),
     state: join(home, FILES.state),
     proactive: join(home, FILES.proactive),
     events: join(home, FILES.events),
@@ -376,6 +377,30 @@ await test('clientState: 路径/路由/预设齐全且不含 token、不含 lega
   })
   assert.equal('token' in state, false)
   assert.equal('legacyWorkspace' in state.paths, false)
+})
+
+await test('config updates serialize merge and CAS without changing ABS mode', async () => {
+  const workspace = makeHome()
+  try {
+    const resources = createResources({ homeRoot: workspace.dshHome })
+    await resources.ensureLayout()
+    const old = resources.configRevision()
+    const mode = resources.getConfig().abs.mode
+    await Promise.all([
+      resources.updateConfig({ abs: { timeScale: 2 } }),
+      resources.updateConfig({ abs: { restHours: { enabled: true, start: '22:00', end: '07:00' } } }),
+    ])
+    assert.equal(resources.getConfig().abs.timeScale, 2)
+    assert.equal(resources.getConfig().abs.restHours.start, '22:00')
+    assert.equal(resources.getConfig().abs.mode, mode)
+    await assert.rejects(resources.updateConfig({ abs: { timeScale: 3 } }, { expectedRevision: old }), error => error.code === 'STALE_TARGET' && error.outcome === 'not_applied')
+    const revision = resources.configRevision()
+    const results = await Promise.allSettled([
+      resources.updateConfig({ abs: { timeScale: 4 } }, { expectedRevision: revision }),
+      resources.updateConfig({ abs: { timeScale: 5 } }, { expectedRevision: revision }),
+    ])
+    assert.deepEqual(results.map(x => x.status), ['fulfilled', 'rejected'])
+  } finally { workspace.cleanup() }
 })
 
 /* -------------------------------------------------------------- report */

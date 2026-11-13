@@ -43,10 +43,11 @@
     "test:abs": "node core/modules/abs/tests/run-rest.mjs && node core/modules/abs/tests/run-clock.mjs && node core/modules/abs/tests/run-core.mjs && node core/modules/abs/tests/run-review.mjs && node core/modules/abs/tests/run-host.mjs && node core/modules/abs/tests/run-service.mjs && node core/modules/abs/tests/run-client.mjs && node core/modules/abs/tests/run-events-client.mjs",
     "test:avatar": "node app/dsh/ui/avatar/tests/run-player.mjs",
     "test:platform": "node app/shared/platform/tests/run-platform.mjs",
-    "test": "npm run test:event-engine:all && npm run test:resources && npm run test:platform && npm run test:persona && npm run test:proactive && npm run test:diary && npm run test:migration && npm run test:social && npm run test:abs && npm run test:skills && npm run test:avatar && npm run test:perception",
+    "test": "npm run test:event-engine:all && npm run test:resources && npm run test:platform && npm run test:persona && npm run test:proactive && npm run test:diary && npm run test:migration && npm run test:social && npm run test:abs && npm run test:skills && npm run test:avatar && npm run test:perception && npm run test:hello",
     "test:social": "node core/modules/social/tests/run-stream-liveness.mjs && node core/modules/social/tests/run-peer-bindings.mjs && node core/modules/social/tests/run-channel-reply.mjs && node core/modules/social/tests/run-dingtalk.mjs && node core/modules/social/tests/run-core.mjs && node core/modules/social/tests/run-inbox.mjs && node core/modules/social/tests/run-service.mjs && node core/modules/social/tests/run-bridge.mjs && node core/modules/social/tests/run-reply-outbox.mjs && node core/modules/social/tests/run-main-pump.mjs && node core/modules/social/tests/run-http-tools.mjs && node core/modules/social/tests/run-host.mjs && node core/modules/social/tests/run-client.mjs",
     "test:resources": "node app/shared/resources/tests/run-resources.mjs",
-    "test:persona": "node core/modules/persona/tests/run-supplement.mjs"
+    "test:persona": "node core/modules/persona/tests/run-supplement.mjs",
+    "test:hello": "node core/modules/hello/tests/run-core.mjs && node core/modules/hello/tests/run-store.mjs && node app/dsh/adapters/hello/tests/run-http.mjs && node app/dsh/adapters/hello/tests/run-host.mjs && node app/dsh/adapters/hello/tests/run-persona-host.mjs && node app/dsh/ui/hello/tests/run-client.mjs"
   },
   "dsh": {
     "bundle": {

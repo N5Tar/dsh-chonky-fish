@@ -15,8 +15,15 @@
  *    proactive routes. Every path, route, limit and default comes from the
  *    resource module — this file does not hardcode them.
  */
+import { createHelloService } from '../../../core/modules/hello/service.js'
+import { createCollectionPreferences } from '../../shared/storage/perception/preferences.js'
+import { createHelloRepository } from '../../shared/storage/hello/repository.js'
+import { createHelloHttpHandler } from '../adapters/hello/http.js'
+import { platform } from '../../shared/platform/index.js'
+import { validateTimeScale } from '../../../core/modules/abs/clock.js'
+import { validRestTime } from '../../../core/modules/abs/rest.js'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import { createPanelSupplement } from '../../../core/modules/persona/supplement.js'
@@ -99,6 +106,9 @@ export function apply(ctx) {
   let stateGeneration = 0
   let migrationMaintaining = false
   let activePerception = null
+  let activeAbs = null
+  let helloService = null
+  let helloFailure = null
   let activePanelSession // Updated synchronously by the existing panel-session route.
   let socialCapabilities = () => ({ dingtalk: { connected: false, ownerBound: false } })
 
@@ -136,16 +146,48 @@ export function apply(ctx) {
     return () => { disposeModules(); disposeSupplement() }
   }, 'chonkyfish: panel persona supplement')
 
+  async function readPanelFile() {
+    try {
+      const saved = JSON.parse(await readFile(resources.paths.state, 'utf8'))
+      if (!saved.state || typeof saved.state !== 'object' || Array.isArray(saved.state)) throw new Error('INVALID_PANEL_STATE')
+      return { ...saved, generation: Number.isSafeInteger(saved.generation) ? saved.generation : 0 }
+    } catch (error) { if (error.code === 'ENOENT') return { generation: 0, state: {} }; throw error }
+  }
+  async function readPanel() {
+    await layoutReady
+    await writeChain
+    return resources.withMigrationRead(readPanelFile)
+  }
+
   function writeState(body, profileDirectory) {
     let pending
     try {
       pending = resources.withMigrationWrite(() => writeChain.then(async () => {
         await layoutReady
+        const latest = await readPanelFile()
+        const payload = typeof body === 'function' ? await body(latest) : JSON.parse(body)
+        if ((payload.generation ?? 0) !== latest.generation) throw Object.assign(new Error('STALE_TARGET'), { code: 'STALE_TARGET', outcome: 'not_applied' })
+        payload.generation = latest.generation + 1
         await mkdir(dirname(resources.paths.state), { recursive: true })
         await mkdir(profileDirectory, { recursive: true })
         const temporary = resources.paths.state + '.' + process.pid + '.' + randomUUID() + '.tmp'
-        await writeFile(temporary, body, 'utf8')
-        await rename(temporary, resources.paths.state)
+        let handle
+        let renamed = false
+        try {
+          handle = await open(temporary, 'wx', 0o600)
+          await handle.writeFile(JSON.stringify(payload), 'utf8')
+          await handle.sync(); await handle.close(); handle = null
+          await rename(temporary, resources.paths.state); renamed = true
+          await platform.syncDirectory(dirname(resources.paths.state))
+          stateGeneration = payload.generation
+          return payload
+        } catch (error) {
+          if (!renamed) error.outcome = 'not_applied'
+          throw error
+        } finally {
+          await handle?.close().catch(() => {})
+          await unlink(temporary).catch(() => {})
+        }
       }))
     } catch (error) { pending = Promise.reject(error) }
     // Keep the queue usable, but report this operation's failure to its caller.
@@ -242,11 +284,6 @@ export function apply(ctx) {
           response.end('missing state object')
           return
         }
-        if ((payload.generation ?? 0) !== stateGeneration) {
-          replyJson(response, 409, { ok: false, error: { code: 'STALE_TARGET' } })
-          return
-        }
-        payload.generation = stateGeneration + 1
         try {
           payload.state.profileDirectory = normalizeProfileDirectory(payload.state.profileDirectory, resources.paths.personalProfile)
         } catch (error) {
@@ -254,11 +291,10 @@ export function apply(ctx) {
           return
         }
         writeState(JSON.stringify(payload), payload.state.profileDirectory).then(() => {
-          stateGeneration = payload.generation
           response.writeHead(204)
           response.end()
         }).catch((error) => {
-          if (error?.code === 'MIGRATION_BUSY') replyJson(response, 409, { ok: false, error: { code: 'MIGRATION_BUSY' } })
+          if (['MIGRATION_BUSY', 'STALE_TARGET'].includes(error?.code)) replyJson(response, 409, { ok: false, error: { code: error.code } })
           else { response.writeHead(500); response.end() }
         })
       })
@@ -365,8 +401,83 @@ export function apply(ctx) {
 
   ctx.effect(() => {
     const abs = installAbs(ctx, { resources, ready: layoutReady, warn })
-    return () => { void abs.close().catch((error) => warn('[chonkyfish/abs] shutdown failed', error)) }
+    activeAbs = abs
+    return () => { if (activeAbs === abs) activeAbs = null; void abs.close().catch((error) => warn('[chonkyfish/abs] shutdown failed', error)) }
   }, 'chonkyfish: abs')
+
+  ctx.effect(() => {
+    let closed = false
+    const controlEpoch = randomUUID()
+    const disposeRoute = ctx.webServer.register({ kind: 'exact', path: routes.hello,
+      handler: createHelloHttpHandler({ getService: () => closed ? null : helloService, getFailure: () => helloFailure, maxBodyBytes: limits.helloBodyBytes }) })
+    const unavailable = code => Object.assign(new Error(code), { code, outcome: 'not_applied' })
+    async function inspectPerception() {
+      await activePerception?.ready
+      const service = activePerception?.getService?.()
+      if (!service) {
+        const requested = await createCollectionPreferences(resources.paths.perceptionPreferences, { syncDirectory: platform.syncDirectory,
+          withMigrationRead: resources.withMigrationRead, withMigrationWrite: resources.withMigrationWrite }).read()
+        return { supported: false, requested, controlRevision: null, state: 'unsupported', reason: 'PERCEPTION_UNAVAILABLE' }
+      }
+      const status = service.getStatus()
+      const control = service.getControlState()
+      return { controlRevision: controlEpoch + ':' + control.revision, supported: status.capabilities?.supported === true, requested: status.collectionPreference?.requested === true,
+        state: status.state === 'stale' ? 'running' : status.state, observationState: status.state, reason: status.capabilities?.reason || status.error?.code || null }
+    }
+    const readAbs = () => resources.withMigrationRead(() => {
+      const config = resources.getConfig().abs
+      return { revision: resources.configRevision(), timeScale: config.timeScale, restHours: config.restHours, mode: config.mode }
+    })
+    const initialized = (async () => {
+      await layoutReady
+      if (closed) return
+      const store = createHelloRepository({ path: resources.paths.hello, withMigrationRead: resources.withMigrationRead,
+        withMigrationWrite: resources.withMigrationWrite, syncDirectory: platform.syncDirectory })
+      helloService = createHelloService({ store, isMigrationBusy: resources.isMigrationBusy,
+        panel: { read: readPanel, patchIdentity: ({ expectedGeneration, name, prompt }) => writeState(latest => {
+          if (prompt !== undefined && latest.state.prompt?.trim() && latest.state.prompt !== prompt)
+            throw unavailable('HELLO_PERSONA_EXISTS')
+          return { ...latest, generation: expectedGeneration, state: { ...latest.state, name, ...(prompt === undefined ? {} : { prompt }) } }
+        }, resources.paths.personalProfile) },
+        abs: { readSettings: readAbs, updateSettings: async ({ expectedRevision, timeScale, restHours }) => {
+          await activeAbs?.initialized
+          const service = activeAbs?.getService?.()
+          if (!service) throw unavailable('ABS_UNAVAILABLE')
+          try {
+            validateTimeScale(timeScale)
+            if (typeof restHours?.enabled !== 'boolean' || !validRestTime(restHours.start) || !validRestTime(restHours.end) || restHours.start === restHours.end) throw new Error('ABS_INVALID_REST_HOURS')
+          } catch { throw unavailable('HELLO_INVALID_ABS') }
+          await resources.updateConfig({ abs: { timeScale, restHours } }, { expectedRevision })
+          await resources.withMigrationWrite(() => service.syncClock())
+          return readAbs()
+        } },
+        perception: { inspect: inspectPerception, setRequested: async (requested, { expectedControlRevision, expectedRequested } = {}) => {
+          if (resources.isMigrationBusy()) throw unavailable('MIGRATION_BUSY')
+          const before = await inspectPerception()
+          await resources.withMigrationWrite(() => {
+            const service = activePerception?.getService?.()
+            if (!service && (requested || before.requested)) throw unavailable('PERCEPTION_UNAVAILABLE')
+            if (!service) {
+              if (expectedControlRevision !== null || expectedRequested !== before.requested) throw unavailable('STALE_TARGET')
+              return
+            }
+            // No await between migration admission, this check and the service CAS.
+            const control = service.getControlState()
+            if (expectedControlRevision !== controlEpoch + ':' + control.revision) throw unavailable('STALE_TARGET')
+            return service.setRequested(requested, { expectedRevision: control.revision, expectedRequested })
+          })
+          return inspectPerception()
+        } },
+        social: { inspect: () => resources.withMigrationRead(async () => {
+          let configured = false
+          try { const saved = JSON.parse(await readFile(resources.paths.socialConfig, 'utf8')); configured = (saved.connections?.length || 0) > 0 }
+          catch (error) { if (error.code !== 'ENOENT') throw error }
+          return { ...socialCapabilities(), configured }
+        }) },
+      })
+    })().catch(error => { helloFailure = 'HELLO_STARTUP_FAILED'; warn('[chonkyfish/hello] startup failed', error) })
+    return async () => { closed = true; disposeRoute(); await initialized; await helloService?.close?.(); helloService = null }
+  }, 'chonkyfish: hello onboarding')
 
   // 主动消息：只保留「往面板当前会话主动发一句」的能力，没有任何定时器/自动触发。
   // 同样整段 try/catch：主动消息挂了，聊天照常。

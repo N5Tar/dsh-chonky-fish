@@ -40,6 +40,7 @@ export function installAbs(ctx, { resources, ready, warn = () => {} }) {
   })()
   return {
     initialized,
+    getService: () => service,
     async close() {
       disposed = true
       await initialized

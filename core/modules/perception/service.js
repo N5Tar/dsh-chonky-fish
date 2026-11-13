@@ -169,6 +169,15 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
   }
   const pause = () => userHalt('paused')
   const stop = () => userHalt(capabilities.supported ? 'stopped' : 'unsupported')
+  // Compare and reserve a user control in one synchronous turn. Existing controls
+  // reserve preferenceGeneration before their first await, preventing stale Hello
+  // requests from overwriting a newer settings-page choice.
+  function getControlState() { return { revision: preferenceGeneration, requested: preferenceRequested } }
+  function setRequested(requested, { expectedRevision, expectedRequested } = {}) {
+    if (typeof requested !== 'boolean' || expectedRevision !== preferenceGeneration || expectedRequested !== preferenceRequested)
+      throw Object.assign(fault('STALE_TARGET', '采集选择已变更，请重新确认'), { outcome: 'not_applied' })
+    return requested ? start() : stop()
+  }
   function getCurrent() {
     const time = now()
     expireMemory(time)
@@ -237,5 +246,5 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
     })()
     return closing
   }
-  return { initialize, start, pause, stop, getStatus, getCurrent, getTimeline, getSummaries, analyze, clean, close }
+  return { initialize, start, pause, stop, getControlState, setRequested, getStatus, getCurrent, getTimeline, getSummaries, analyze, clean, close }
 }

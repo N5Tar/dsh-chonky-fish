@@ -131,6 +131,7 @@ ${moduleSurface}
 const runtime = readFileSync(join(ui, 'runtime.js'), 'utf8')
 const absLab = readFileSync(join(ui, 'abs/lab.js'), 'utf8')
 const absEventsPanel = readFileSync(join(ui, 'abs/events-panel.js'), 'utf8')
+const helloPanel = readFileSync(join(ui, 'hello/panel.js'), 'utf8')
 const skillsPanel = readFileSync(join(ui, 'skills/panel.js'), 'utf8')
 const perceptionPanel = readFileSync(join(ui, 'perception/client.js'), 'utf8')
 const settingsPanel = readFileSync(join(ui, 'settings/panel.js'), 'utf8')
@@ -323,6 +324,7 @@ var MODULE_SURFACE = ${JSON.stringify(moduleSurface)}
 ${absEventsPanel}
 ${absLab}
 ${skillsPanel}
+${helloPanel}
 ${perceptionPanel}
 ${settingsPanel}
     var AVATAR_ASSET = ${JSON.stringify(avatarAsset)}
@@ -873,6 +875,7 @@ ${avatarWidget}
      */
     var PANELS = [
       { id: 'chonkyfish', view: 'chat', label: 'nav', icon: ICON_CHAT, order: 20 },
+      { id: 'chonkyfish-hello', view: 'hello', label: 'navHello', icon: ICON_PERSONA, order: 20.5 },
       { id: 'chonkyfish-wallet', view: 'wallet', label: 'navWallet', icon: ICON_WALLET, order: 21 },
       { id: 'chonkyfish-persona', view: 'settings', label: 'navPersona', icon: ICON_PERSONA, order: 22 },
       { id: 'chonkyfish-diary', view: 'diary', label: 'navDiary', icon: ICON_DIARY, order: 24 },
@@ -920,7 +923,7 @@ ${avatarWidget}
             name: 'main',
             key: panel.id,
             locale: NS,
-          }, panel.view === 'abs' ? AbsLabPage : panel.view === 'skills' ? createSafeSkillsPage(t) : panel.view === 'preferences' ? createMigrationSettings(t) : createPanelPage(panel.view))
+          }, panel.view === 'hello' ? createHelloPage() : panel.view === 'chat' ? createHelloChatGate() : panel.view === 'abs' ? AbsLabPage : panel.view === 'skills' ? createSafeSkillsPage(t) : panel.view === 'preferences' ? createMigrationSettings(t) : createPanelPage(panel.view))
         })
       })
 
