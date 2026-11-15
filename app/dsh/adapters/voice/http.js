@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 import { runtimeInfo } from '../../../shared/platform/index.js'
+import { createDshForeground } from './foreground.js'
 
 const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }); res.end(JSON.stringify(body)) }
 const errorCode = code => ({ UNAUTHORIZED: 401, FORBIDDEN: 403, METHOD_NOT_ALLOWED: 405, UNSUPPORTED_MEDIA_TYPE: 415, LIMIT_EXCEEDED: 413, INVALID_ARGUMENT: 400, STALE_LEASE: 409, LEASE_REQUIRED: 409, VOICE_BUSY: 409, UNSUPPORTED: 501, TTS_INVALID_TEXT: 400, TTS_CANCELLED: 409, TTS_TIMEOUT: 504, TTS_SPEECH_FAILED: 502, TTS_INVALID_WAV: 502, TTS_HELPER_FAILED: 502, MIGRATION_BUSY: 409 }[code] || 500)
@@ -28,10 +29,11 @@ function equalRef(a, b) { return Boolean(a && b && a.runtimeId === b.runtimeId &
 function plainId(v) { return typeof v === 'string' && v.length > 0 && v.length <= 128 }
 
 /** Host-only system synthesis, call ownership, capabilities, and fixed asset map. */
-export function registerVoiceRoutes(ctx, { resources, ready, isClosed = () => false, assetRoot, tts }) {
+export function registerVoiceRoutes(ctx, { resources, ready, isClosed = () => false, assetRoot, tts, foreground: suppliedForeground } = {}) {
   const connection = ctx.connection
   if (!connection || typeof connection.requestRejection !== 'function') throw new Error('DSH Connection request authentication is required for voice routes')
   const serviceGeneration = randomUUID()
+  const foreground = suppliedForeground || (ctx.agents && typeof ctx.on === 'function' ? createDshForeground({ ctx, ownerPath: resources.paths?.workspace }) : null)
   let lease = null
   let activeSynthesis = null
   let closed = false
@@ -117,6 +119,24 @@ export function registerVoiceRoutes(ctx, { resources, ready, isClosed = () => fa
     json(res, 200, { ok: true, data: result })
   }))
 
+  registrations.push(register(routes.voiceForeground, async (req, res) => {
+    if (req.method !== 'POST') return json(res, 405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED' } })
+    const data = await readJson(req, resources.limits.voiceControlBodyBytes)
+    const common = ['action', 'callId', 'ownerId', 'conversationRef', 'serviceGeneration', 'leaseGeneration']
+    const extra = data?.action === 'inspect' ? [] : data?.action === 'query' ? ['interruptionId'] : ['interruptionId', 'expected', 'acceptedInputId', 'acceptedSubmissionId']
+    const leaseFields = ['callId', 'ownerId', 'leaseGeneration'].filter(key => data?.[key] !== undefined)
+    const hasLease = leaseFields.length === 3
+    if (!['inspect', 'interrupt', 'query'].includes(data?.action) || Object.keys(data || {}).some(key => ![...common, ...extra].includes(key)) || !validRef(data?.conversationRef) || data.serviceGeneration !== serviceGeneration || !plainId(data.serviceGeneration) || leaseFields.length !== 0 && !hasLease || hasLease && (!plainId(data.callId) || !plainId(data.ownerId) || !plainId(data.leaseGeneration)) || data.action !== 'inspect' && !plainId(data.interruptionId) || data.action === 'interrupt' && (!plainId(data.acceptedInputId) || !plainId(data.acceptedSubmissionId) || !data.expected || Object.keys(data.expected).some(key => !['conversationTurnId', 'responseId', 'stepId'].includes(key)) || !['conversationTurnId', 'responseId', 'stepId'].every(key => plainId(data.expected[key])))) throw Object.assign(new Error(), { code: 'INVALID_ARGUMENT' })
+    if (hasLease && (!liveLease(data.callId, data.ownerId, data.leaseGeneration) || !equalRef(lease.conversationRef, data.conversationRef))) throw Object.assign(new Error(), { code: 'STALE_LEASE' })
+    if (!foreground) return json(res, 200, { ok: true, data: { available: false, valid: true, reason: 'unavailable' } })
+    const result = data.action === 'inspect'
+      ? await foreground.inspect(data.conversationRef)
+      : data.action === 'query'
+        ? await foreground.query({ conversationRef: data.conversationRef, interruptionId: data.interruptionId })
+        : await foreground.interrupt({ conversationRef: data.conversationRef, interruptionId: data.interruptionId, expected: data.expected, acceptedInputId: data.acceptedInputId, acceptedSubmissionId: data.acceptedSubmissionId })
+    json(res, 200, { ok: true, data: result })
+  }))
+
   registrations.push(register(routes.voiceSynthesis, async (req, res) => {
     if (req.method !== 'POST') return json(res, 405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED' } })
     const data = await readJson(req, resources.limits.voiceSynthesisBodyBytes)
@@ -173,7 +193,8 @@ export function registerVoiceRoutes(ctx, { resources, ready, isClosed = () => fa
   }))
 
   return {
-    close() { closed = true; stopSynthesis(); lease = null; tts.close?.(); for (const dispose of registrations) { try { dispose() } catch {} } },
+    isConversationActive(sessionId) { return !unavailable() && Boolean(lease && lease.expiresAt > Date.now() && lease.conversationRef.conversationId === sessionId) },
+    close() { closed = true; stopSynthesis(); lease = null; foreground?.dispose?.(); tts.close?.(); for (const dispose of registrations) { try { dispose() } catch {} } },
     inspect() { return { serviceGeneration, lease: lease && { callId: lease.callId, ownerId: lease.ownerId, expiresAt: lease.expiresAt }, synthesizing: Boolean(activeSynthesis) } },
   }
 }

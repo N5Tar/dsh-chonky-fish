@@ -89,10 +89,53 @@ export function createDshHostVoice({ routes, audioStore, fetcher = globalThis.fe
     release(clipRef) { return audioStore.release(clipRef) },
   }
 
+  const foregroundRequest = async (action, conversationRef, fields = {}, { includeLease = true } = {}) => {
+      if (!hostInfo) { try { await capabilities() } catch { return { status: 'unavailable', reason: 'host-capabilities-unavailable' } } }
+      const leaseFields = includeLease && lease && sameRef(lease.conversationRef, conversationRef)
+        ? (({ conversationRef: ignored, ...current }) => current)(callData({ callId: lease.callId, conversation: conversationRef }))
+        : { serviceGeneration: hostInfo?.ownership?.serviceGeneration }
+      const controller = typeof AbortController === 'function' ? new AbortController() : null
+      let timer
+      try {
+        const run = request(routes.voiceForeground, 'POST', { ...leaseFields, action, conversationRef, ...fields }, controller?.signal)
+        const timeout = new Promise((_, reject) => { timer = setTimeout(() => { controller?.abort(); reject(Object.assign(new Error('foreground request timed out'), { code: 'FOREGROUND_TIMEOUT' })) }, 1200) })
+        return await Promise.race([run, timeout])
+      } catch (error) {
+        if (error.status === 400 && error.code === 'INVALID_ARGUMENT') {
+          try { await capabilities() } catch {}
+        }
+        return { status: error.status === 409 ? 'stale' : 'unavailable', reason: error.code || 'host-unavailable' }
+      } finally { clearTimeout(timer) }
+  }
+  async function reconcileForeground(conversationRef, interruptionId) {
+    let result = { status: 'outcome-unknown', reason: 'receipt-unresolved' }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      result = await foregroundRequest('query', conversationRef, { interruptionId }, { includeLease: false })
+      if (result?.status === 'applied' || result?.status === 'stale') return result
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 40 * (attempt + 1)))
+    }
+    return { status: 'outcome-unknown', reason: result?.reason || 'receipt-unresolved', interruptionId }
+  }
+  const foreground = {
+    async inspect(conversationRef) {
+      const result = await foregroundRequest('inspect', conversationRef)
+      return result?.available === true && result?.expected ? result : { available: false, valid: result?.valid !== false, reason: result?.reason || result?.status || 'unavailable' }
+    },
+    async interrupt({ conversationRef, interruptionId, expected, acceptedInputId, acceptedSubmissionId }) {
+      const result = await foregroundRequest('interrupt', conversationRef, { interruptionId, expected, acceptedInputId, acceptedSubmissionId })
+      if (result?.status === 'applied' || result?.status === 'stale') return result
+      return reconcileForeground(conversationRef, interruptionId)
+    },
+    query({ conversationRef, interruptionId }) {
+      return reconcileForeground(conversationRef, interruptionId)
+    },
+  }
+
   return {
     capabilities,
     ownership,
     synthesis,
+    foreground,
     close() { if (active && lease) { const { conversationRef: ignored, ...cancelLease } = callData({ callId: lease.callId, conversation: lease.conversationRef }); void request(routes.voiceCancel, 'POST', { ...cancelLease, operationId: active.operationId }).catch(() => {}) } closed = true; lease = null; hostInfo = null },
     get state() { return { hostInfo, lease: lease && { callId: lease.callId, serviceGeneration: lease.serviceGeneration } } },
   }

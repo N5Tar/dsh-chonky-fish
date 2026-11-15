@@ -802,7 +802,16 @@ ${avatarWidget}
       }
       async function send(text) {
         var current = await ensure()
-        var submission = current.session.beginSubmission({ text: text, mode: 'queue', attachments: [] })
+        var foregroundTarget = null
+        var foregroundExpected = null
+        try {
+          foregroundTarget = await voiceController?.foregroundTarget?.()
+          if (foregroundTarget && voiceController?.foreground?.inspect) {
+            var observed = await voiceController.foreground.inspect(foregroundTarget)
+            if (observed?.available === true) foregroundExpected = observed.expected
+          }
+        } catch (error) { foregroundExpected = null }
+        var submission = current.session.beginSubmission({ text: text, mode: 'steer', attachments: [] })
         var localInput = { sessionId: bindingSessionId, bindingRevision: String(voiceBindingRevision), requestId: submission.requestId }
         function emitVoiceLocalInput(state) {
           var event = { sessionId: localInput.sessionId, bindingRevision: localInput.bindingRevision, requestId: localInput.requestId, state: state }
@@ -811,7 +820,7 @@ ${avatarWidget}
         var preAdmissionCodes = { 'gateway/bad-request': true, 'session/invalid-time-zone': true, 'session/attachment-invalid': true, 'session/not-found': true, 'session/agent-busy': true, 'session/model-unavailable': true, 'subagent/attachment-invalid': true }
         emitVoiceLocalInput('prepared')
         try {
-          var result = await current.session.prompt([{ type: 'text', text: text }], 'queue', undefined, submission.requestId)
+          var result = await current.session.prompt([{ type: 'text', text: text }], 'steer', undefined, submission.requestId)
           if (!result || result.ok !== true) {
             var failure = result && result.error
             throw Object.assign(new Error(failure && (failure.message || failure.code) ? failure.message || failure.code : '发送失败'), {
@@ -819,7 +828,25 @@ ${avatarWidget}
               outcome: failure && failure.outcome || 'unknown',
             })
           }
-          if (result.value && result.value.accepted === true) emitVoiceLocalInput('accepted')
+          if (result.value && result.value.accepted === true) {
+            emitVoiceLocalInput('accepted')
+            if (foregroundTarget && foregroundExpected && voiceController?.foreground?.interrupt) {
+              var interruptionId = 'typed-interruption:' + submission.requestId
+              var foregroundResult = null
+              try {
+                foregroundResult = await voiceController.foreground.interrupt({ conversationRef: foregroundTarget, interruptionId: interruptionId, expected: foregroundExpected, acceptedInputId: submission.requestId, acceptedSubmissionId: submission.requestId })
+              } catch (error) { console.warn('[chonkyfish] accepted text could not conditionally interrupt foreground generation', error) }
+              if (foregroundResult?.status !== 'applied' && foregroundResult?.status !== 'stale' && voiceController.foreground.query) {
+                for (var queryAttempt = 0; queryAttempt < 2; queryAttempt++) {
+                  try {
+                    foregroundResult = await voiceController.foreground.query({ conversationRef: foregroundTarget, interruptionId: interruptionId })
+                    if (foregroundResult?.status === 'applied' || foregroundResult?.status === 'stale') break
+                  } catch (error) { foregroundResult = { status: 'outcome-unknown', reason: 'receipt-query-failed', interruptionId: interruptionId } }
+                }
+              }
+            }
+            return { accepted: true, foreground: foregroundExpected ? undefined : { status: 'unavailable', reason: 'foreground-generation-unobserved' } }
+          }
         } catch (error) {
           if (preAdmissionCodes[error && error.code] === true) {
             try { submission.abandon && submission.abandon() } catch (ignored) {}

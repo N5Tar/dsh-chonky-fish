@@ -14,10 +14,17 @@ const ctx = {
   logger: { warn() {} },
 }
 const resources = { routes: ROUTES, limits: LIMITS, isMigrationBusy: () => false }
+const foregroundCalls = []
+const foreground = {
+  inspect(ref) { foregroundCalls.push(['inspect', ref]); return { available: true, valid: true, expected: { conversationTurnId: 'dsh:host:session-1:turn:3', responseId: 'response-3', stepId: '3:1' } } },
+  interrupt(request) { foregroundCalls.push(['interrupt', request]); return { status: 'applied', interruptionId: request.interruptionId } },
+  query(request) { foregroundCalls.push(['query', request]); return { status: 'applied', interruptionId: request.interruptionId } },
+}
 const assetRoot = fileURLToPath(new URL('../../../../shared/audio/web/assets/', import.meta.url))
 let synthStarted, resolveSynth, synthSignal
 const voice = registerVoiceRoutes(ctx, {
   resources, ready: Promise.resolve(), assetRoot,
+  foreground,
   tts: {
     inspect: () => ({ supported: true, providerId: 'windows-system-speech', reason: null }),
     listVoices: async () => [{ id: 'Microsoft Huihui Desktop', culture: 'zh-CN' }],
@@ -55,11 +62,25 @@ assert.equal(caps.json.synthesis.voices[0].id, 'Microsoft Huihui Desktop')
 const ref = { runtimeId: 'dsh:host', conversationId: 'session-1', bindingRevision: 'bind-1' }
 const acquired = await call(ROUTES.voiceCalls, { method: 'POST', body: { action: 'acquire', callId: 'call-1', ownerId: 'owner-1', conversationRef: ref } })
 assert.equal(acquired.status, 200)
+assert.equal(voice.isConversationActive('session-1'), true)
+assert.equal(voice.isConversationActive('other-session'), false)
 const lease = acquired.json.data
 const busy = await call(ROUTES.voiceCalls, { method: 'POST', body: { action: 'acquire', callId: 'call-2', ownerId: 'owner-2', conversationRef: ref } })
 assert.equal(busy.status, 409)
 const renewBody = { action: 'renew', callId: 'call-1', ownerId: 'owner-1', conversationRef: ref, serviceGeneration: lease.serviceGeneration, leaseGeneration: lease.leaseGeneration }
 assert.equal((await call(ROUTES.voiceCalls, { method: 'POST', body: renewBody })).status, 200)
+const foregroundLease = { callId: 'call-1', ownerId: 'owner-1', conversationRef: ref, serviceGeneration: lease.serviceGeneration, leaseGeneration: lease.leaseGeneration }
+const foregroundState = await call(ROUTES.voiceForeground, { method: 'POST', body: { ...foregroundLease, action: 'inspect' } })
+assert.equal(foregroundState.status, 200)
+assert.equal(foregroundState.json.data.expected.responseId, 'response-3')
+const unleasedForeground = await call(ROUTES.voiceForeground, { method: 'POST', body: { action: 'inspect', conversationRef: ref, serviceGeneration: lease.serviceGeneration } })
+assert.equal(unleasedForeground.status, 200, 'authenticated composer text can inspect the current fish session without a voice lease')
+assert.equal(unleasedForeground.json.data.available, true)
+const interruptionBody = { ...foregroundLease, action: 'interrupt', interruptionId: 'interrupt-1', expected: foregroundState.json.data.expected, acceptedInputId: 'input-1', acceptedSubmissionId: 'request-1' }
+assert.equal((await call(ROUTES.voiceForeground, { method: 'POST', body: interruptionBody })).json.data.status, 'applied')
+assert.equal((await call(ROUTES.voiceForeground, { method: 'POST', body: { ...foregroundLease, action: 'query', interruptionId: 'interrupt-1' } })).json.data.status, 'applied')
+assert.equal((await call(ROUTES.voiceForeground, { method: 'POST', body: interruptionBody, authorized: false })).status, 401)
+assert.equal(foregroundCalls.map(row => row[0]).join(','), 'inspect,inspect,interrupt,query', 'unauthenticated foreground requests cannot inspect, cancel or query')
 
 const synthBody = { callId: 'call-1', ownerId: 'owner-1', conversationRef: ref, serviceGeneration: lease.serviceGeneration, leaseGeneration: lease.leaseGeneration, operationId: 'op-1', text: '你好。', voiceId: 'Microsoft Huihui Desktop', rate: 0 }
 const synthesized = await call(ROUTES.voiceSynthesis, { method: 'POST', body: synthBody })
@@ -133,6 +154,7 @@ try {
 
 const released = await call(ROUTES.voiceCalls, { method: 'POST', body: { ...renewBody, action: 'release' } })
 assert.equal(released.status, 200)
+assert.equal(voice.isConversationActive('session-1'), false)
 const fenced = await call(ROUTES.voiceCalls, { method: 'POST', body: renewBody })
 assert.equal(fenced.status, 409)
 voice.close()

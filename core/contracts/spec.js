@@ -50,6 +50,7 @@ export const FILES = Object.freeze({
   perceptionDatabase: 'activity.db',
   perceptionPreferences: 'collection-preference.json',
   events: 'events.db',
+  tasks: 'tasks.db',
   migration: 'migration',
 })
 
@@ -82,6 +83,7 @@ export const ROUTES = Object.freeze({
   migrationStatus: '/chonkyfish/migration/status',
   voiceCapabilities: '/chonkyfish/voice/capabilities',
   voiceCalls: '/chonkyfish/voice/calls',
+  voiceForeground: '/chonkyfish/voice/foreground',
   voiceSynthesis: '/chonkyfish/voice/synthesis',
   voiceCancel: '/chonkyfish/voice/cancel',
   voiceAssets: '/chonkyfish/voice/assets/',
@@ -98,6 +100,9 @@ export const LIMITS = Object.freeze({
   voiceSynthesisBodyBytes: 16384,
   voiceTextChars: 120,
   voiceWavBytes: 2 * 1024 * 1024,
+  taskMaxCommandBytes: 64 * 1024,
+  taskMaxResources: 32,
+  taskMaxList: 100,
 })
 
 /** 活动技能库的有界存储与读取限制。 */

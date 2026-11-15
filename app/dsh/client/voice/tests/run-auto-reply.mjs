@@ -92,7 +92,7 @@ try {
   let stoppedTracks = 0
   set('AudioWorkletNode', class { port = { postMessage() {} }; disconnect() {} })
   set('Worker', class { postMessage(data) { if (data.type === 'init') queueMicrotask(() => this.onmessage?.({ data: { type: 'ready' } })) } terminate() {} })
-  set('navigator', { mediaDevices: { async getUserMedia() { micRequests++; const track = { stop() { stoppedTracks++ }, addEventListener() {}, getSettings: () => ({ sampleRate: 48000 }) }; return { getTracks: () => [track], getAudioTracks: () => [track] } } } })
+  set('navigator', { mediaDevices: { async getUserMedia() { micRequests++; const track = { stop() { stoppedTracks++ }, addEventListener() {}, getSettings: () => ({ sampleRate: 48000, echoCancellation: true }) }; return { getTracks: () => [track], getAudioTracks: () => [track] } } } })
   const speechCtx = { inject(_keys, callback) {
     const cleanup = callback({ remote: { speech: { async catalog() { return { ok: true, value: { selection: { providerId: 'local', language: 'zh' }, providers: [{ id: 'local', preparation: { phase: 'ready' } }] } } } } } })
     const ready = Promise.resolve(); ready.dispose = () => cleanup?.(); return ready

@@ -122,4 +122,16 @@ await test('classic VAD Worker loads the pinned ORT UMD without a global lexical
   assert.ok(!messages.some((message) => message.type === 'error'));
 });
 
+await test('speaker duplex requires an actually enabled echo cancellation track and stops rejected tracks', async () => {
+  let stopped = 0;
+  const track = { stop() { stopped++; }, getSettings() { return { echoCancellation: false }; }, addEventListener() {} };
+  const stream = { getTracks: () => [track], getAudioTracks: () => [track] };
+  class FakeContext { sampleRate = 16000; state = 'running'; audioWorklet = { addModule: async () => {} }; createMediaStreamSource() { return { connect() {}, disconnect() {} }; } async close() { this.state = 'closed'; } }
+  globalThis.AudioWorkletNode = class { constructor() { this.port = { postMessage() {} }; } disconnect() {} };
+  const capture = createWebCapture({ audioStore: createMemoryAudioStore(), requireEchoCancellation: true, modelUrl: 'm', ortModuleUrl: 'ort', wasmPaths: {}, workletUrl: 'worklet', vadWorkerUrl: 'worker', mediaDevices: { getUserMedia: async () => stream }, AudioContextCtor: FakeContext, setIntervalFn: () => 1, clearIntervalFn() {}, createVad: () => ({ async start() {}, close() {} }) });
+  await assert.rejects(capture.start(), { code: 'VOICE_DUPLEX_UNAVAILABLE' });
+  assert.equal(stopped, 1, 'a rejected duplex capture must release the microphone');
+  delete globalThis.AudioWorkletNode;
+});
+
 console.log(`shared audio: ${groups} groups passed`);

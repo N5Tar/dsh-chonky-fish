@@ -220,6 +220,7 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     state: join(home, FILES.state),
     proactive: join(home, FILES.proactive),
     events: join(home, FILES.events),
+    tasks: join(home, FILES.tasks),
     abs: join(home, FILES.abs),
     skills: join(home, FILES.skills),
     perception: join(home, FILES.perception),

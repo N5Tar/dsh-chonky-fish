@@ -2,7 +2,7 @@ export const DEFAULT_VOICE_CONFIG = Object.freeze({
   version: 1,
   endSilenceMs: 1200,
   replyAudioEnabled: true,
-  duplexPreference: 'speaker-turn-taking',
+  duplexPreference: 'speaker-duplex',
   tts: Object.freeze({ providerId: 'windows-system-speech', voiceId: null, rate: 0 }),
 });
 
@@ -14,8 +14,9 @@ export function validateVoiceConfig(value) {
   if (![800, 1200, 1800].includes(endSilenceMs)) throw fail('VOICE_CONFIG_INVALID', 'endSilenceMs must be 800, 1200, or 1800');
   if (typeof (value.replyAudioEnabled ?? true) !== 'boolean') throw fail('VOICE_CONFIG_INVALID', 'replyAudioEnabled must be boolean');
   const duplexPreference = value.duplexPreference ?? DEFAULT_VOICE_CONFIG.duplexPreference;
-  if (duplexPreference === 'speaker-duplex') throw fail('VOICE_DUPLEX_UNVERIFIED', 'Speaker full-duplex requires live device calibration and cannot be stored as a preference');
-  if (!['headphones', 'speaker-turn-taking'].includes(duplexPreference)) throw fail('VOICE_CONFIG_INVALID', 'duplexPreference is invalid');
+  // A preference is not a device certification. Speaker duplex capture must
+  // separately require an enabled AEC track before it acquires call readiness.
+  if (!['headphones', 'speaker-turn-taking', 'speaker-duplex'].includes(duplexPreference)) throw fail('VOICE_CONFIG_INVALID', 'duplexPreference is invalid');
   const tts = value.tts ?? {};
   if (!tts || typeof tts !== 'object' || Array.isArray(tts)) throw fail('VOICE_CONFIG_INVALID', 'tts must be an object');
   const providerId = tts.providerId ?? DEFAULT_VOICE_CONFIG.tts.providerId;

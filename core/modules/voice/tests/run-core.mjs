@@ -11,8 +11,8 @@ test('voice config accepts supported defaults and rejects unsupported versions',
   assert.deepEqual(validateVoiceConfig({ version: 1 }), { ...DEFAULT_VOICE_CONFIG, tts: { ...DEFAULT_VOICE_CONFIG.tts } });
   assert.throws(() => validateVoiceConfig({ version: 2 }), { code: 'VOICE_CONFIG_UNSUPPORTED' });
   assert.throws(() => validateVoiceConfig({ version: 1, endSilenceMs: 900 }), { code: 'VOICE_CONFIG_INVALID' });
-  assert.equal(validateVoiceConfig({ version: 1 }).duplexPreference, 'speaker-turn-taking');
-  assert.throws(() => validateVoiceConfig({ version: 1, duplexPreference: 'speaker-duplex' }), { code: 'VOICE_DUPLEX_UNVERIFIED' });
+  assert.equal(validateVoiceConfig({ version: 1 }).duplexPreference, 'speaker-duplex');
+  assert.equal(validateVoiceConfig({ version: 1, duplexPreference: 'speaker-duplex' }).duplexPreference, 'speaker-duplex');
 });
 
 test('turn splitter seals after silence following an earlier 15 second cut', () => {

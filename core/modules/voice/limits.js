@@ -9,6 +9,8 @@ export const VOICE_LIMITS = Object.freeze({
   utteranceSeconds: 90,
   maxClipBytes: 2 * 16000 * 15,
   maxTranscriptSeconds: 30,
+  admissionSeconds: 30,
+  admissionCheckSeconds: 5,
   synthesisSeconds: 15,
   outputClipBytes: 2 * 1024 * 1024,
   outputClipSeconds: 30,

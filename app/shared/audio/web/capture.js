@@ -2,10 +2,10 @@ import { createLinearResampler, floatToPcm16 } from '../resample.js';
 import { createSileroVad } from './vad.js';
 import { VOICE_LIMITS } from '../../../../core/modules/voice/limits.js';
 
-export function createWebCapture({ audioStore, modelUrl, ortBaseUrl, ortModuleUrl, wasmPaths, workletUrl = new URL('./capture.worklet.js', import.meta.url), vadWorkerUrl = new URL('./vad.worker.js', import.meta.url), createVad = createSileroVad, mediaDevices = globalThis.navigator?.mediaDevices, AudioContextCtor = globalThis.AudioContext, monoNow = () => globalThis.performance?.now?.() ?? Date.now(), setIntervalFn = globalThis.setInterval, clearIntervalFn = globalThis.clearInterval, constraints = { audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false }, video: false } } = {}) {
+export function createWebCapture({ audioStore, modelUrl, ortBaseUrl, ortModuleUrl, wasmPaths, workletUrl = new URL('./capture.worklet.js', import.meta.url), vadWorkerUrl = new URL('./vad.worker.js', import.meta.url), createVad = createSileroVad, mediaDevices = globalThis.navigator?.mediaDevices, AudioContextCtor = globalThis.AudioContext, monoNow = () => globalThis.performance?.now?.() ?? Date.now(), setIntervalFn = globalThis.setInterval, clearIntervalFn = globalThis.clearInterval, requireEchoCancellation = false, constraints = { audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false }, video: false } } = {}) {
   if (!audioStore) throw new TypeError('audioStore is required');
   let stream = null, context = null, source = null, worklet = null, vad = null, resampler = null;
-  let chunks = [], nextSample = 0, generation = 0, running = false, gated = false, callback = () => {}, turnActive = false, vadPaused = false, watchdog = null, lastSampleAt = 0;
+  let chunks = [], nextSample = 0, generation = 0, running = false, gated = false, callback = () => {}, turnActive = false, vadPaused = false, watchdog = null, lastSampleAt = 0, removeDeviceListener = null;
   const activeStatus = () => {
     const microphone = Boolean(mediaDevices?.getUserMedia && AudioContextCtor && typeof globalThis.AudioWorkletNode === 'function');
     const model = Boolean(modelUrl && ortModuleUrl && wasmPaths && workletUrl && vadWorkerUrl && typeof globalThis.Worker === 'function');
@@ -31,6 +31,7 @@ export function createWebCapture({ audioStore, modelUrl, ortBaseUrl, ortModuleUr
   async function stop() {
     ++generation; running = false;
     if (watchdog !== null) clearIntervalFn?.(watchdog); watchdog = null;
+    removeDeviceListener?.(); removeDeviceListener = null;
     const oldStream = stream, oldContext = context, oldWorklet = worklet, oldSource = source, oldVad = vad;
     stream = context = worklet = source = vad = null; resampler = null; chunks = []; nextSample = 0; turnActive = false; vadPaused = false;
     try { oldWorklet?.port.postMessage({ type: 'close' }); oldWorklet?.disconnect(); } catch {}
@@ -55,7 +56,16 @@ export function createWebCapture({ audioStore, modelUrl, ortBaseUrl, ortModuleUr
       const trackEnded = () => fail(new Error('Microphone input track ended'), 'VOICE_MIC_DISCONNECTED', mine);
       track?.addEventListener?.('ended', trackEnded, { once: true });
       if (track && !track.addEventListener) track.onended = trackEnded;
+      if (requireEchoCancellation && mediaDevices.addEventListener) {
+        const changed = () => fail(new Error('音频设备已变化，请重新开启通话以检查回声消除。'), 'VOICE_DEVICE_CHANGED', mine);
+        mediaDevices.addEventListener('devicechange', changed);
+        removeDeviceListener = () => mediaDevices.removeEventListener?.('devicechange', changed);
+      }
       try {
+        const actualSettings = track?.getSettings?.() || {};
+        if (requireEchoCancellation && actualSettings.echoCancellation !== true && actualSettings.echoCancellation !== 'all') {
+          throw Object.assign(new Error('当前麦克风未启用回声消除，无法开启扬声器插话通话。'), { code: 'VOICE_DUPLEX_UNAVAILABLE' });
+        }
         context = new AudioContextCtor({ latencyHint: 'interactive' });
         await context.audioWorklet.addModule(workletUrl);
         if (mine !== generation) { acquired.getTracks().forEach((track) => track.stop()); await context.close(); return; }
@@ -79,7 +89,7 @@ export function createWebCapture({ audioStore, modelUrl, ortBaseUrl, ortModuleUr
         };
         source.connect(worklet); running = true;
         watchdog = setIntervalFn?.(() => { if (running && mine === generation && monoNow() - lastSampleAt >= VOICE_LIMITS.samplingStallMs) fail(new Error('No microphone samples arrived for two seconds'), 'VOICE_CAPTURE_STALLED', mine); }, 500) ?? null;
-        return { sampleRate: 16000, sourceSampleRate: context.sampleRate, trackSettings };
+        return { sampleRate: 16000, sourceSampleRate: context.sampleRate, trackSettings, duplex: { nearEndDetection: true, echoCancellationEnabled: trackSettings.echoCancellation === true || trackSettings.echoCancellation === 'all', implementation: 'browser-aec', deviceVerified: false } };
       } catch (e) {
         await stop(); throw Object.assign(e, { code: e?.code || 'VOICE_CAPTURE_START_FAILED', stage: 'capture' });
       }

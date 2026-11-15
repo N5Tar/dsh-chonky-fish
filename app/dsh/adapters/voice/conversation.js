@@ -4,6 +4,32 @@ const plainText = content => Array.isArray(content) ? content.filter(block => bl
 const createId = () => globalThis.crypto?.randomUUID?.() || `dsh-voice-${Date.now()}-${Math.random().toString(16).slice(2)}`
 const isSocialInput = data => /^social-[a-f0-9]{64}$/i.test(data?.id ?? '') || data?.source?.kind === 'chonkyfish-social'
 const isRuntimeContext = source => source?.kind === 'runtime-context' || source?.kind === 'time-context'
+const isOwnedTaskNotice = (data, conversationId) => {
+  const source = data?.source
+  return source?.kind === 'chonkyfish-task-notice'
+    && Object.keys(source).length === 6
+    && ['kind', 'taskId', 'version', 'ownerConversationId', 'eventId', 'sourceInputId'].every(key => Object.hasOwn(source, key))
+    && typeof source.taskId === 'string' && source.taskId.length > 0 && source.taskId.length <= 128
+    && Number.isSafeInteger(source.version) && source.version > 0
+    && source.ownerConversationId === conversationId
+    && typeof source.eventId === 'string' && source.eventId.length > 0 && source.eventId.length <= 128
+    && typeof source.sourceInputId === 'string' && source.sourceInputId.length > 0 && source.sourceInputId.length <= 128
+    && data.id === `chonkyfish-task-notice:${source.eventId}`
+}
+function makeStepWatermark(turn) { return { inputIds: [...(turn.inputIds || [])], submissionIds: [...(turn.submissionIds || [])], origins: new Set(turn.lastOrigins || []), directOrigins: 0 } }
+function addStepOrigin(turn, origin) {
+  const row = Number.isSafeInteger(turn.activeStep) ? turn.inputsByStep?.get(turn.activeStep) : null
+  if (!row) { turn.lastOrigins ||= new Set(); turn.lastOrigins.add(origin); return }
+  if (row.directOrigins === 0) row.origins.clear()
+  row.directOrigins++
+  row.origins.add(origin)
+  turn.lastOrigins = new Set(row.origins)
+}
+function replyOrigin(origins) {
+  if (!origins?.size) return 'unknown'
+  if ([...origins].every(origin => origin === 'local' || origin === 'owned-task')) return origins.has('local') ? 'local' : 'owned-task'
+  return origins.size === 1 ? origins.values().next().value : 'mixed'
+}
 const PRE_ADMISSION_CODES = new Set([
   'gateway/bad-request', 'session/invalid-time-zone', 'session/attachment-invalid',
   'session/not-found', 'session/agent-busy', 'session/model-unavailable',
@@ -95,6 +121,25 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
     if (item.owner?.record && !item.owner.record.closed) emit(item.owner.record, [{ type: 'input.accepted', submissionId: item.requestId, evidence }])
   }
 
+  async function interruptAccepted(item, conversationRef) {
+    if (item.interruption?.status === 'applied' || item.interruption?.status === 'stale') return item.interruption
+    const interruptionId = `voice-interruption:${item.requestId}`
+    if (item.interruptionStarted) {
+      if (typeof foreground?.query === 'function') {
+        try { item.interruption = await foreground.query({ conversationRef, interruptionId }) }
+        catch { item.interruption = { status: 'outcome-unknown', reason: 'foreground-query-failed', interruptionId } }
+      }
+      return item.interruption || { status: 'outcome-unknown', reason: 'receipt-unresolved', interruptionId }
+    }
+    if (!foreground || typeof foreground.interrupt !== 'function') return item.interruption = { status: 'unavailable', reason: item.foregroundState?.reason || 'foreground-control-unavailable' }
+    if (!item.foregroundExpected) return item.interruption = { status: 'unavailable', reason: item.foregroundState?.reason || 'foreground-generation-unobserved' }
+    item.interruptionStarted = true
+    try {
+      item.interruption = await foreground.interrupt({ conversationRef, interruptionId, expected: item.foregroundExpected, acceptedInputId: item.inputId || item.requestId, acceptedSubmissionId: item.requestId })
+    } catch { item.interruption = { status: 'outcome-unknown', reason: 'foreground-control-failed', interruptionId } }
+    return item.interruption
+  }
+
   function foldEvent(record, event) {
     const seq = eventKey(event)
     if (seq === null) return []
@@ -103,22 +148,35 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
     const events = []
     if (type === 'turn/start' && Number.isSafeInteger(data.turn)) {
       const id = turnIdOf(record.ref.runtimeId, record.ref.conversationId, data.turn)
-      const turn = { id, number: data.turn, inputIds: [], originKinds: new Set(), startedSeq: seq }
+      const turn = { id, number: data.turn, inputIds: [], submissionIds: [], lastOrigins: new Set(), originKinds: new Set(), startedSeq: seq }
       record.turns.set(String(data.turn), turn)
       record.currentTurn = turn
       for (const item of record.pendingConsumed.splice(0)) bindConsumed(record, turn, item, events)
-      for (const origin of record.pendingOrigins.splice(0)) turn.originKinds.add(origin)
+      for (const origin of record.pendingOrigins.splice(0)) {
+        turn.originKinds.add(origin)
+        turn.lastOrigins.add(origin === 'external' ? 'social' : origin === 'autonomous' ? 'autonomous' : 'unknown')
+      }
       events.push({ type: 'turn.started', conversationTurnId: id })
     } else if (type === 'user/message') {
       const source = data.source
       if (isSocialInput(data)) {
         const turn = Number.isSafeInteger(data.turn) ? record.turns.get(String(data.turn)) : record.currentTurn
-        if (turn) turn.originKinds.add('external')
+        if (turn) { turn.originKinds.add('external'); addStepOrigin(turn, 'social') }
         else pushBounded(record.pendingOrigins, 'external')
       } else if (source?.kind === 'chonkyfish-nudge') {
         const turn = Number.isSafeInteger(data.turn) ? record.turns.get(String(data.turn)) : record.currentTurn
-        if (turn) turn.originKinds.add('autonomous')
+        if (turn) { turn.originKinds.add('autonomous'); addStepOrigin(turn, 'autonomous') }
         else pushBounded(record.pendingOrigins, 'autonomous')
+      } else if (source?.kind === 'chonkyfish-task-notice') {
+        const turn = Number.isSafeInteger(data.turn) ? record.turns.get(String(data.turn)) : record.currentTurn
+        if (isOwnedTaskNotice(data, record.ref.conversationId) && turn) {
+          const item = { requestId: data.id, inputId: null, origin: 'owned-task', sourceInputId: source.sourceInputId, taskId: source.taskId, taskVersion: source.version, recordKey: record.key }
+          bindConsumed(record, turn, { item, messageId: String(seq) }, events)
+          turn.originKinds.add('local')
+        } else {
+          if (turn) { turn.originKinds.add('unknown'); addStepOrigin(turn, 'unknown') }
+          else pushBounded(record.pendingOrigins, 'unknown')
+        }
       } else if (source?.kind === 'user' && !isRuntimeContext(source)) {
         const item = submissionByRequest(record, source.rpcId)
         if (item) {
@@ -129,7 +187,7 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
           else bindConsumed(record, turn, consumed, events)
         } else if (prepared.has(source.rpcId)) {
           const turn = Number.isSafeInteger(data.turn) ? record.turns.get(String(data.turn)) : record.currentTurn
-          if (turn) turn.originKinds.add('unknown')
+          if (turn) { turn.originKinds.add('unknown'); addStepOrigin(turn, 'unknown') }
           else pushBounded(record.pendingOrigins, 'unknown')
         } else if (record.localRequests.has(source.rpcId) || record.localRejected.has(source.rpcId)) {
           clearLocalRequest(record, source.rpcId)
@@ -149,7 +207,7 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
       applyInboxSplice(record, data, events)
     } else if (type === 'step/start' && Number.isSafeInteger(data.turn) && Number.isSafeInteger(data.step)) {
       const turn = record.turns.get(String(data.turn))
-      if (turn) { turn.activeStep = data.step; turn.inputsByStep ||= new Map(); turn.inputsByStep.set(data.step, { inputIds: [], submissionIds: [] }) }
+      if (turn) { turn.activeStep = data.step; turn.inputsByStep ||= new Map(); turn.inputsByStep.set(data.step, makeStepWatermark(turn)) }
     } else if (type === 'step/end' && Number.isSafeInteger(data.turn) && Number.isSafeInteger(data.step)) {
       const turn = record.turns.get(String(data.turn))
       if (turn?.activeStep === data.step) turn.activeStep = null
@@ -161,8 +219,9 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
         const text = plainText(data.message?.content)
         const step = Number.isSafeInteger(data.step) ? data.step : turn?.activeStep
         const consumed = Number.isSafeInteger(step) ? turn?.inputsByStep?.get(step) : null
-        const segment = turn && !turn.baseline && text && consumed?.submissionIds.length
-          ? { type: 'reply.segment', replyId: `${turn.id}:reply:${seq}`, conversationTurnId: turn.id, responseId: `${turn.id}:response:${step}`, stepId: `${turn.id}:step:${step}`, inputIds: [...consumed.inputIds], submissionIds: [...consumed.submissionIds], origin: turn.originKinds.size === 1 && turn.originKinds.has('local') ? 'local' : 'mixed', text, surfaceRevision: seq }
+        const origin = replyOrigin(consumed?.origins)
+        const segment = turn && !turn.baseline && text && consumed?.submissionIds.length && ['local', 'owned-task', 'mixed'].includes(origin)
+          ? { type: 'reply.segment', replyId: `${turn.id}:reply:${seq}`, conversationTurnId: turn.id, responseId: `${turn.id}:response:${step}`, stepId: `${turn.id}:step:${step}`, inputIds: [...consumed.inputIds], submissionIds: [...consumed.submissionIds], origin, text, surfaceRevision: seq }
           : null
         record.surface.set(seq, { seq, turn: number, text, ...(segment ? { segment } : {}) })
         if (segment) events.push(segment)
@@ -204,19 +263,21 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
     turn.submissionIds ||= []
     if (item.inputId && !turn.inputIds.includes(item.inputId)) turn.inputIds.push(item.inputId)
     if (!turn.submissionIds.includes(item.requestId)) turn.submissionIds.push(item.requestId)
+    const origin = item.origin || 'local'
     const step = turn.activeStep
     if (Number.isSafeInteger(step)) {
       turn.inputsByStep ||= new Map()
-      const row = turn.inputsByStep.get(step) || { inputIds: [], submissionIds: [] }
+      const row = turn.inputsByStep.get(step) || makeStepWatermark(turn)
       if (item.inputId && !row.inputIds.includes(item.inputId)) row.inputIds.push(item.inputId)
       if (!row.submissionIds.includes(item.requestId)) row.submissionIds.push(item.requestId)
       turn.inputsByStep.set(step, row)
     }
     if (!turn.inputItems) turn.inputItems = []
     if (!turn.inputItems.includes(item)) turn.inputItems.push(item)
-    turn.originKinds.add('local')
+    turn.originKinds.add(origin === 'owned-task' ? 'local' : origin)
+    addStepOrigin(turn, origin)
     item.turnId = turn.id
-    events.push({ type: 'input.consumed', inputId: item.inputId ?? null, submissionId: item.requestId, messageId: consumed.messageId, conversationTurnId: turn.id, stepId: Number.isSafeInteger(step) ? `${turn.id}:step:${step}` : null, origin: 'local' })
+    events.push({ type: 'input.consumed', inputId: item.inputId ?? null, submissionId: item.requestId, messageId: consumed.messageId, conversationTurnId: turn.id, stepId: Number.isSafeInteger(step) ? `${turn.id}:step:${step}` : null, origin, ...(item.sourceInputId ? { sourceInputId: item.sourceInputId } : {}), ...(item.taskId ? { taskId: item.taskId, taskVersion: item.taskVersion } : {}) })
   }
 
   async function inspect(ref) {
@@ -306,10 +367,12 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
       const owner = retainedValue?.owners.get(ownerScope)
       if (!owner) throw Object.assign(new Error('Voice Session owner was released before submission'), { code: 'VOICE_TARGET_STALE', outcome: 'not_applied' })
       const item = { inputId, requestId: null, abandon: null, recordKey: refKey(conversationRef), scopeId: ownerScope, owner, accepted: false, retired: false, rejectionCode: null }
-      const foregroundState = typeof foreground?.inspect === 'function' ? await foreground.inspect(conversationRef) : null
+      let foregroundState = null
+      try { if (typeof foreground?.inspect === 'function') foregroundState = await foreground.inspect(conversationRef) } catch { foregroundState = { available: false, reason: 'foreground-inspection-failed' } }
       const submission = binding.session.beginSubmission({ text, mode: 'steer', onAccept: () => markAccepted(item, 'prompt-receipt'), onRetire: () => { item.retired = true } })
       if (!submission || typeof submission.requestId !== 'string' || !submission.requestId || typeof submission.abandon !== 'function') throw Object.assign(new Error('DSH Session did not provide a stable submission identity'), { code: 'VOICE_SUBMISSION_ID_MISSING', outcome: 'unknown' })
       item.requestId = submission.requestId
+      item.foregroundState = foregroundState || { available: false, reason: 'foreground-control-unavailable' }
       item.foregroundExpected = foregroundState?.available === true ? foregroundState.expected : null
       item.abandon = submission.abandon
       prepared.set(item.requestId, item)
@@ -338,7 +401,7 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
       catch (error) {
         if (preAdmissionFailure(error?.code)) {
           const evidence = item.accepted ? 'prompt-accept-callback' : admissionEvidence(item)
-          if (evidence) { markAccepted(item, evidence); return { accepted: true, evidence } }
+          if (evidence) { markAccepted(item, evidence); return { accepted: true, evidence, foreground: await interruptAccepted(item, conversationRef) } }
           item.rejectionCode = error.code
           try { item.abandon() } catch {}
           item.retired = true
@@ -348,15 +411,10 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
       }
       if (result?.ok === true && result.value?.accepted === true) {
         markAccepted(item, 'prompt-receipt')
-        if (typeof foreground?.interrupt === 'function' && item.foregroundExpected) {
-          const interruptionId = `voice-interruption:${item.requestId}`
-          try { item.interruption = await foreground.interrupt({ conversationRef, interruptionId, expected: item.foregroundExpected, acceptedInputId: item.inputId, acceptedSubmissionId: item.requestId }) }
-            catch { item.interruption = { status: 'unavailable' } }
-        }
-        return { accepted: true, evidence: 'prompt-receipt', ...(item.interruption ? { foreground: item.interruption } : {}) }
+        return { accepted: true, evidence: 'prompt-receipt', foreground: await interruptAccepted(item, conversationRef) }
       }
       const evidence = item.accepted ? 'prompt-accept-callback' : admissionEvidence(item)
-      if (evidence) { markAccepted(item, evidence); return { accepted: true, evidence } }
+      if (evidence) { markAccepted(item, evidence); return { accepted: true, evidence, foreground: await interruptAccepted(item, conversationRef) } }
       const code = result?.error?.code
       if (preAdmissionFailure(code)) {
         item.rejectionCode = code
@@ -371,14 +429,14 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
       const value = retained.get(refKey(conversationRef))
       const scope = scopeIdFor(conversationRef, scopeId, value?.owners || new Map())
       if (!item || item.recordKey !== refKey(conversationRef) || item.scopeId !== scope) return { status: 'unknown', outcome: 'unknown' }
-      if (item.accepted) return { status: 'accepted', accepted: true, evidence: 'prompt-accept-callback' }
+      if (item.accepted) return { status: 'accepted', accepted: true, evidence: 'prompt-accept-callback', foreground: await interruptAccepted(item, conversationRef) }
       const binding = getBinding(conversationRef)
       const entries = binding?.eventSource?.getSnapshot?.().entries || []
       const evidence = admissionEvidence(item)
       if (evidence || entries.some(entry => entry?.event?.type === 'user/message' && entry.event.data?.source?.rpcId === item.requestId)) {
         const acceptedEvidence = evidence || 'session-message'
         markAccepted(item, acceptedEvidence)
-        return { status: 'accepted', accepted: true, evidence: acceptedEvidence }
+        return { status: 'accepted', accepted: true, evidence: acceptedEvidence, foreground: await interruptAccepted(item, conversationRef) }
       }
       if (item.rejectionCode && preAdmissionFailure(item.rejectionCode)) return { status: 'rejected', outcome: 'not_applied', code: item.rejectionCode }
       return { status: 'unknown', outcome: 'unknown' }

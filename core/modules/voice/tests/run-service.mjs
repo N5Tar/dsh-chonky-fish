@@ -49,7 +49,7 @@ function fixture({ captureStart, synthesis, config } = {}) {
 }
 
 let groups = 0;
-async function test(name, run) { await run(); groups++; console.log(`ok ${groups} - ${name}`); }
+async function test(name, run) { if (process.env.VOICE_TEST_FILTER && !name.includes(process.env.VOICE_TEST_FILTER)) return; await run(); groups++; console.log(`ok ${groups} - ${name}`); }
 
 await test('startup identifies the unavailable capability before acquiring capture', async () => {
   for (const [port, code, stage] of [
@@ -312,14 +312,15 @@ await test('abandoned unknown metadata is bounded after every thirty-second drai
   assert.ok(f.service.getSnapshot().inputs.length <= 64, 'released abandoned history is trimmed to the bounded metadata window');
 });
 
-await test('audio cut failure holds an incomplete turn and never submits its remaining text', async () => {
+await test('audio cut failure ends the call and never submits an incomplete turn', async () => {
   const f = fixture(); await f.begin();
   f.capture.cut = async () => { throw Object.assign(new Error('clip budget exhausted'), { code: 'VOICE_AUDIO_BUDGET' }); };
   await f.speak(); await settle();
   assert.equal(f.submitted.length, 0);
-  assert.equal(f.service.getSnapshot().inputs[0].status, 'held');
-  assert.equal(f.service.getSnapshot().inputs[0].admission, 'not_attempted');
-  assert.equal(f.service.getSnapshot().capture.status, 'paused-error');
+  assert.equal(f.service.getSnapshot().inputs[0].status, 'discarded');
+  assert.equal(f.service.getSnapshot().inputs[0].admission, 'discarded');
+  assert.equal(f.service.getSnapshot().call.status, 'ended');
+  assert.equal(f.service.getSnapshot().capture.status, 'stopped');
   await f.service.hangup();
 });
 
@@ -616,6 +617,148 @@ await test('failed recognition releases its slot so a single-button call survive
   assert.equal(f.service.getSnapshot().capture.status, 'listening');
   f.recognition.transcribe = async () => ({ text: '现在恢复正常。' }); await f.speak();
   assert.equal(f.submitted.length, 1);
+  await f.service.dispose();
+});
+
+await test('a late segment from an older step in the same turn never uses the newest input epoch', async () => {
+  const f = fixture({ config: { version: 1, duplexPreference: 'headphones' } }); await f.begin(); await f.speak(); await f.speak();
+  const [a, b] = f.service.getSnapshot().inputs, [sa, sb] = f.submitted.map(item => item.submissionId);
+  f.emit([{ type: 'input.consumed', submissionId: sa, conversationTurnId: 'shared-turn', origin: 'local' }, { type: 'input.consumed', submissionId: sb, conversationTurnId: 'shared-turn', origin: 'local' },
+    { type: 'reply.segment', replyId: 'late-a', responseId: 'response-a', surfaceRevision: '1', conversationTurnId: 'shared-turn', inputIds: [a.inputId], submissionIds: [sa], origin: 'local', text: '旧回答。' },
+    { type: 'reply.segment', replyId: 'current-b', responseId: 'response-b', surfaceRevision: '1', conversationTurnId: 'shared-turn', inputIds: [b.inputId], submissionIds: [sb], origin: 'local', text: '当前回答。' }]);
+  await settle(); assert.equal(f.played, 1);
+  assert.equal(f.service.getSnapshot().replies.find(reply => reply.replyId === 'current-b').status, 'played');
+  await f.service.dispose();
+});
+
+await test('ASR timeout settles only its attempt and a late result cannot send or unblock a newer utterance', async () => {
+  const f = fixture(), first = deferred(), second = deferred(); let calls = 0;
+  f.recognition.transcribe = () => ++calls === 1 ? first.promise : second.promise;
+  await f.begin(); await f.speak(); await f.advanceTimer(30000);
+  assert.equal(f.service.getSnapshot().queue.unresolved, 0);
+  await f.speak(); assert.equal(calls, 2, 'a stuck ASR RPC cannot own the run forever');
+  first.resolve({ text: '过期文本不能发送。' }); await settle();
+  assert.equal(f.submitted.length, 0);
+  second.resolve({ text: '新的一句。' }); await settle(); assert.equal(f.submitted.length, 1);
+  await f.service.dispose();
+});
+
+await test('capture device failure ends the call and stops both directions', async () => {
+  const f = fixture(); await f.begin();
+  f.captureEvents({ type: 'error', error: Object.assign(new Error('麦克风已断开'), { code: 'VOICE_MIC_DISCONNECTED' }) });
+  await settle(); assert.equal(f.service.getSnapshot().call.status, 'ended');
+  assert.ok(f.stoppedCaptures > 0); assert.ok(f.playbackStops > 0);
+  await f.service.dispose();
+});
+
+await test('speaker duplex keeps capture running and a near-end utterance stops an active reply', async () => {
+  const f = fixture({ config: { version: 1, duplexPreference: 'speaker-duplex' } }); let finish;
+  f.playback.play = (_ref, options) => { options.onStarted?.(); return new Promise(resolve => { finish = resolve; }); };
+  f.playback.stop = async () => { finish?.({ stopped: true }); };
+  await f.begin(); await f.speak(); const submissionId = f.submitted[0].submissionId;
+  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'duplex-turn', origin: 'local' }, { type: 'reply.segment', replyId: 'duplex-reply', responseId: 'response-duplex', surfaceRevision: '1', conversationTurnId: 'duplex-turn', submissionIds: [submissionId], text: '用户可以随时打断这一句。', origin: 'local' }]);
+  await settle(); assert.equal(f.service.getSnapshot().playback.status, 'playing');
+  assert.notEqual(f.capture.gated, true, 'full duplex must not drop microphone PCM during TTS');
+  f.captureEvents({ type: 'speech-start', sampleIndex: 50000 }); await settle();
+  assert.equal(f.service.getSnapshot().playback.status, 'idle');
+  assert.equal(f.service.getSnapshot().replies.find(reply => reply.replyId === 'duplex-reply').status, 'stopped');
+  await f.service.dispose();
+});
+
+await test('pending ASR holds a newly committed reply and a duplicate segment is only played once', async () => {
+  const f = fixture({ config: { version: 1, duplexPreference: 'headphones' } }), pending = deferred();
+  f.recognition.transcribe = () => pending.promise;
+  await f.begin(); await f.speak();
+  const segment = { type: 'reply.segment', replyId: 'typed-during-asr', responseId: 'typed-response', surfaceRevision: '1', conversationTurnId: 'typed-turn', submissionIds: ['typed'], text: '等你说完再回答。', origin: 'local' };
+  f.emit([{ type: 'input.accepted', submissionId: 'typed', origin: 'local' }, { type: 'input.consumed', submissionId: 'typed', conversationTurnId: 'typed-turn', origin: 'local' }, segment, segment]);
+  await settle(); assert.equal(f.played, 0);
+  pending.resolve({ text: '' }); await settle();
+  assert.equal(f.played, 1, 'gate closure should drain the valid new reply exactly once');
+  f.emit([segment]); await settle(); assert.equal(f.played, 1);
+  await f.service.dispose();
+});
+
+await test('a prepared submission does not grant segment playback until matching consumption is proven', async () => {
+  const f = fixture({ config: { version: 1, duplexPreference: 'headphones' } }); await f.begin(); await f.speak();
+  const submissionId = f.submitted[0].submissionId;
+  f.emit([{ type: 'reply.segment', replyId: 'proof-wait', responseId: 'proof-response', surfaceRevision: '1', conversationTurnId: 'proof-turn', submissionIds: [submissionId], text: '需要先确认输入消费。', origin: 'local' }]);
+  await settle(); assert.equal(f.played, 0, 'prepare/accept alone is not a consumption watermark');
+  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'proof-turn', origin: 'local' }]);
+  await settle(); assert.equal(f.played, 1, 'a delayed proof activates the waiting committed segment');
+  await f.service.dispose();
+});
+
+await test('a hung preparation has a deadline, lets the next input through and abandons its late identity', async () => {
+  const f = fixture(), pending = deferred(); let preparations = 0, abandoned;
+  f.conversation.prepareSubmission = payload => ++preparations === 1 ? pending.promise : Promise.resolve({ submissionId: `next-${payload.inputId}` });
+  f.conversation.abandonSubmission = async payload => { abandoned = payload; return true; };
+  await f.begin(); await f.speak(); await f.advanceTimer(30000); await f.speak();
+  assert.equal(f.submitted.length, 1, 'a preparation stall cannot hold the admission mutex forever');
+  pending.resolve({ submissionId: 'late-expired-preparation' }); await settle();
+  assert.equal(abandoned.submissionId, 'late-expired-preparation');
+  assert.equal(f.submitted.length, 1, 'an expired preparation never resumes automatic sending');
+  await f.service.dispose();
+});
+
+await test('a hung submit becomes unknown without resending, while its late acceptance updates only the original input', async () => {
+  const f = fixture(), pending = deferred();
+  f.conversation.submit = payload => { f.submitted.push(payload); return f.submitted.length === 1 ? pending.promise : Promise.resolve({ accepted: true }); };
+  await f.begin(); await f.speak(); await f.advanceTimer(30000); await f.speak();
+  assert.equal(f.submitted.length, 2);
+  assert.equal(f.service.getSnapshot().inputs[0].admission, 'unknown');
+  pending.resolve({ accepted: true, evidence: 'late-receipt' }); await settle();
+  assert.equal(f.service.getSnapshot().inputs[0].admission, 'accepted');
+  assert.equal(f.submitted.length, 2);
+  await f.service.dispose();
+});
+
+await test('an owned task notice speaks during the call and obeys pending near-end recognition', async () => {
+  const f = fixture({ config: { version: 1, duplexPreference: 'headphones' } }), asr = deferred();
+  f.recognition.transcribe = () => asr.promise;
+  await f.begin(); await f.speak();
+  const submissionId = 'chonkyfish-task-notice:task-1:v2';
+  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'task-notice-turn', taskId: 'task-1', taskVersion: 2, sourceInputId: 'original-task-input', origin: 'owned-task' },
+    { type: 'reply.segment', replyId: 'owned-notice', responseId: 'owned-response', surfaceRevision: '1', conversationTurnId: 'task-notice-turn', submissionIds: [submissionId], text: '后台任务已经完成。', origin: 'owned-task' }]);
+  await settle(); assert.equal(f.played, 0, 'a task completion cannot speak over an unresolved utterance');
+  asr.resolve({ text: '' }); await settle(); assert.equal(f.played, 1);
+  await f.service.hangup();
+  f.emit([{ type: 'reply.segment', replyId: 'after-end', responseId: 'after-end', surfaceRevision: '1', conversationTurnId: 'task-notice-turn', submissionIds: [submissionId], text: '挂断后不能出声。', origin: 'owned-task' }]);
+  await settle(); assert.equal(f.played, 1);
+  await f.service.dispose();
+});
+
+await test('a task notice consumed during ASR cannot resume ahead of the newly accepted user input', async () => {
+  const f = fixture({ config: { version: 1, duplexPreference: 'headphones' } }), asr = deferred(); f.recognition.transcribe = () => asr.promise;
+  await f.begin(); await f.speak();
+  const noticeId = 'chonkyfish-task-notice:task-2:v3';
+  f.emit([{ type: 'input.consumed', submissionId: noticeId, conversationTurnId: 'notice-priority', taskId: 'task-2', taskVersion: 3, sourceInputId: 'original-task-input', origin: 'owned-task' }]);
+  await settle(); asr.resolve({ text: '现在先回答我的新问题。' }); await settle();
+  f.emit([{ type: 'reply.segment', replyId: 'late-notice', responseId: 'late-notice-response', surfaceRevision: '1', conversationTurnId: 'notice-priority', submissionIds: [noticeId], text: '迟到的任务通知。', origin: 'owned-task' }]);
+  await settle(); assert.equal(f.played, 0);
+  await f.service.dispose();
+});
+
+await test('a task notice stays silent after ASR while preparation is still waiting', async () => {
+  const f = fixture({ config: { version: 1, duplexPreference: 'headphones' } }), asr = deferred(), preparation = deferred();
+  f.recognition.transcribe = () => asr.promise; f.conversation.prepareSubmission = () => preparation.promise;
+  await f.begin(); await f.speak();
+  const noticeId = 'chonkyfish-task-notice:task-3:v4';
+  f.emit([{ type: 'input.consumed', submissionId: noticeId, conversationTurnId: 'notice-before-prepare', taskId: 'task-3', taskVersion: 4, sourceInputId: 'old-input', origin: 'owned-task' },
+    { type: 'reply.segment', replyId: 'pending-task-audio', responseId: 'pending-task-response', surfaceRevision: '1', conversationTurnId: 'notice-before-prepare', submissionIds: [noticeId], text: '不能盖过刚说的新问题。', origin: 'owned-task' }]);
+  await settle(); asr.resolve({ text: '这是优先处理的新问题。' }); await settle();
+  assert.equal(f.played, 0, 'queued/submitting user input must retain priority after ASR');
+  preparation.resolve({ submissionId: 'prepared-priority' }); await settle(); assert.equal(f.played, 0);
+  await f.service.dispose();
+});
+
+await test('permanently pending submits do not grow visible abandoned history after proof drains close', async () => {
+  const f = fixture(); f.conversation.submit = payload => { f.submitted.push(payload); return new Promise(() => {}); };
+  for (let n = 0; n < 70; n++) {
+    await f.begin({ ...REF, bindingRevision: `bounded-${n}` }); await f.speak(); await f.advanceTimer(30000);
+    await f.service.hangup({ abandonPending: true }); await f.advanceTimer(30000);
+  }
+  assert.ok(f.service.getSnapshot().inputs.length <= 64, 'expired proof drains bound metadata even if the network promise never settles');
+  assert.equal(f.audio.stats.rawSamples, 0);
   await f.service.dispose();
 });
 

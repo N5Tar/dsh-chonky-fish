@@ -37,6 +37,9 @@ import { installSkills } from '../adapters/skills/index.js'
 import { installPerception } from '../adapters/perception/index.js'
 import { installMigration } from '../adapters/migration/index.js'
 import { registerVoiceRoutes } from '../adapters/voice/http.js'
+import { installManagedTasks } from '../adapters/tasks/host.js'
+import { createTaskNoticeBridge } from '../adapters/voice/task-notices.js'
+import { createPhoneTaskPolicy } from '../adapters/tasks/phone-policy.js'
 import { isSocialHeader } from '../../../core/modules/social/policy.js'
 
 const FULL_ACCESS = 'danger-full-access'
@@ -111,6 +114,7 @@ export function apply(ctx) {
   let activeAbs = null
   let helloService = null
   let helloFailure = null
+  let activeVoiceRoutes = null
   let activePanelSession // Updated synchronously by the existing panel-session route.
   let socialCapabilities = () => ({ dingtalk: { connected: false, ownerBound: false } })
 
@@ -143,12 +147,41 @@ export function apply(ctx) {
         isClosed: () => false,
         assetRoot: fileURLToPath(new URL('../../shared/audio/web/assets/', import.meta.url)),
       })
-      return () => voice.close()
+      activeVoiceRoutes = voice
+      return () => { if (activeVoiceRoutes === voice) activeVoiceRoutes = null; voice.close() }
     } catch (error) {
       warn('[chonkyfish/voice] authenticated Host routes unavailable', error)
       return () => {}
     }
   }, 'chonkyfish: voice host')
+
+  // Generic durable background tasks. The DSH adapter registry supplies only
+  // explicitly admitted tool capabilities; the task model never chooses its
+  // own resource keys or receives a foreground tool signal/toolSet.
+  ctx.effect(() => {
+    let disposed = false
+    let tasks = null
+    const toolCapabilities = service(ctx, 'chonkyfishTaskToolCapabilities') || {}
+    const taskAdapters = service(ctx, 'chonkyfishTaskAdapters') || {}
+    const taskProtocols = service(ctx, 'chonkyfishTaskProtocols')
+    const taskNoticeBridge = createTaskNoticeBridge({ ctx, resources })
+    void installManagedTasks(ctx, {
+      resources,
+      ready: layoutReady,
+      isOwnerAgent: agent => Boolean(agent && isFishAgent(ctx, agent, spec.PRESET) && !isSocialHeader(agent.session?.header)),
+      isPhoneActive: agent => activeVoiceRoutes?.isConversationActive?.(agent?.id) === true,
+      onEvent: taskNoticeBridge,
+      toolCapabilities,
+      adapters: taskAdapters,
+      pollingDescriptors: taskProtocols,
+      warn,
+    }).then(instance => {
+      if (disposed) void instance.close()
+      else tasks = instance
+    }).catch(error => warn('[chonkyfish/tasks] managed task system unavailable', error))
+    const disposeAgentCreated = ctx.on('agent/created', () => { void tasks?.service.deliverPending() }, { global: true })
+    return () => { disposed = true; try { disposeAgentCreated?.() } catch {}; if (tasks) void tasks.close() }
+  }, 'chonkyfish: managed tasks')
 
   // 面板「补充人格设定」→ system prompt 变量：预设里的 persona 模板用
   // {{chonkyfish_supplement}} 引用它，所以人格不再混进用户消息。
@@ -156,9 +189,13 @@ export function apply(ctx) {
     const supplement = createPanelSupplement({ statePath: resources.paths.state, defaultProfileDirectory: resources.paths.personalProfile, logger: ctx.logger, isMigrationBusy: resources.isMigrationBusy })
     const modules = createModulePrompt({ readContext: () => ({ ...supplement.readState(), ...socialCapabilities() }) })
     const disposeSupplement = ctx.systemPrompt.variable(supplement.variableName, supplement.provider)
+    const phoneTaskPolicy = createPhoneTaskPolicy({
+      isOwnerAgent: agent => isFishAgent(ctx, agent, spec.PRESET) && !isSocialHeader(agent.session?.header),
+      isPhoneActive: agent => activeVoiceRoutes?.isConversationActive?.(agent.id) === true,
+    })
     let disposeModules
     try {
-      disposeModules = ctx.systemPrompt.variable(modules.variableName, modules.provider)
+      disposeModules = ctx.systemPrompt.variable(modules.variableName, context => modules.provider(context) + phoneTaskPolicy(context))
     } catch (error) {
       disposeSupplement()
       throw error

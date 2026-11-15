@@ -41,7 +41,7 @@ export function createVoiceService(deps) {
     const input = { inputId: ids.createId('input'), order: ++order, epoch: ++epoch, conversationRef: clone(call.conversationRef), scopeId: activeRun?.scopeId, callGeneration: startGeneration, run: activeRun, status: 'recording', admission: 'not_attempted', startSample: Math.max(0, sampleIndex - 4800), endSample: sampleIndex, clips: [], transcriptParts: [], transcript: null, failure: null };
     currentInput = input; inputs.push(input); suppressReplies(input.epoch); if (playbackState.status === 'playing' || playbackState.status === 'synthesizing') void stopPlayback('interruption'); publish(); return input;
   };
-  function suppressReplies(nextEpoch) { for (const reply of replies.values()) if (reply.epoch < nextEpoch) { reply.suppressed = true; if (!reply.started) reply.status = 'suppressed'; else reply.status = 'interrupted'; } playbackEpoch++; }
+  function suppressReplies(nextEpoch) { for (const reply of replies.values()) if (reply.epoch < nextEpoch) { reply.suppressed = true; reply.interruptedByInput = true; if (!reply.started) reply.status = 'suppressed'; else reply.status = 'interrupted'; } playbackEpoch++; }
   function receiveCapture(event, generation) { void enqueue(() => processCapture(event, generation)); }
   async function processCapture(event, generation) {
     if (generation !== captureGeneration || call.status !== 'connected' || activeRun?.inputEnabled === false || captureState.muted) return;
@@ -80,7 +80,7 @@ export function createVoiceService(deps) {
       input.audioComplete = false; input.sealed = true; input.status = 'held'; input.holdUntilExplicit = true; input.admission = 'not_attempted';
       input.failedRange = { startSample, endSample }; input.failure = errorView(e, 'capture-cut');
       if (currentInput === input) currentInput = null; turn.reset(); accepting = false; captureState.status = 'paused-error';
-      void capture.setTurnActive?.(false); void capture.stop(); publish(); return;
+      closeAttempt(input); void capture.setTurnActive?.(false); endForFailure(Object.assign(e, { message: '采集失败，本句未发送，通话已结束。' }), 'capture-cut'); return;
     }
     input.clips.push({ ref, startSample, endSample, transcript: null });
     if (seal) { input.sealed = true; input.status = 'recognizing'; if (currentInput === input) currentInput = null; turn.reset(); void capture.setTurnActive?.(false); input.attemptTimer = clock.schedule(() => { void enqueue(() => failRecognition(input, Object.assign(new Error('本句识别超时，未发送，请重说。'), { code: 'VOICE_ASR_UTTERANCE_TIMEOUT' }))); }, VOICE_LIMITS.maxTranscriptSeconds * 1000); }
@@ -109,7 +109,21 @@ export function createVoiceService(deps) {
         else if (next.input.sealed && next.input.audioComplete !== false) { closeAttempt(next.input); next.input.status = next.input.holdUntilExplicit ? 'held' : 'queued'; if (!next.input.holdUntilExplicit) void deliverNext(); }
       }
       publish();
-    })).catch((e) => enqueue(() => { if (next.input.localDisposition === 'abandoned' || next.input.admission === 'discarded') return; if (next.input.holdUntilExplicit) { next.input.status = 'held'; next.input.failure = errorView(e, 'recognition'); } else failRecognition(next.input, e); publish(); })).finally(() => { next.input.recognitionInFlight = false; if (activeRecognitionOperation === operation) activeRecognitionOperation = null; if (recognitionRun.recognitionOperation === operation) { recognitionRun.recognitionOperation = null; recognitionBusyRuns.delete(recognitionRun); } trimHistory(); runRecognitionQueue(); drainReplies(); });
+    })).catch((e) => enqueue(() => {
+      if (next.input.localDisposition === 'abandoned' || next.input.admission === 'discarded') return;
+      if (next.input.holdUntilExplicit) { next.input.status = 'held'; next.input.failure = errorView(e, 'recognition'); }
+      else failRecognition(next.input, e);
+      publish();
+    })).finally(() => {
+      next.input.recognitionInFlight = false;
+      if (activeRecognitionOperation === operation) activeRecognitionOperation = null;
+      // A timed-out RPC can settle after another utterance acquired this run.
+      if (recognitionRun.recognitionOperation === operation) {
+        recognitionRun.recognitionOperation = null;
+        recognitionBusyRuns.delete(recognitionRun);
+      }
+      trimHistory(); runRecognitionQueue(); drainReplies();
+    });
   }
   function closeAttempt(input) { input.attemptClosed = true; if (input.attemptTimer) { clock.cancel(input.attemptTimer); input.attemptTimer = null; } }
   function failRecognition(input, cause) {
@@ -124,6 +138,54 @@ export function createVoiceService(deps) {
   }
   function endForFailure(cause, stage) { error = errorView(cause, stage); void hangup({ abandonPending: true }).catch(noop); publish(); }
   async function releaseInputAudio(input) { for (const clip of input.clips) { try { await audio.release(clip.ref); } catch {} } }
+  function boundedWait(promise, { seconds, code, outcome, onTimeout = noop }) {
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = clock.schedule(() => {
+        onTimeout();
+        reject(Object.assign(new Error(code), { code, outcome, localDeadline: true }));
+      }, seconds * 1000);
+    });
+    return Promise.race([promise, deadline]).finally(() => clock.cancel(timer));
+  }
+  async function prepareInput(input, operation) {
+    const payload = { inputId: input.inputId, conversationRef: input.conversationRef, scopeId: input.scopeId, text: input.transcript, operation };
+    let expired = false;
+    const pending = Promise.resolve().then(() => conversation.prepareSubmission(payload));
+    pending.then(prepared => {
+      if (!expired || typeof prepared?.submissionId !== 'string') return;
+      // Preparation may ignore cancellation. Retire its exact late identity;
+      // never install it onto an input that has already reached its deadline.
+      Promise.resolve().then(() => conversation.abandonSubmission?.({ ...payload, submissionId: prepared.submissionId })).catch(noop);
+    }, noop);
+    return boundedWait(pending, { seconds: VOICE_LIMITS.admissionSeconds, code: 'VOICE_PREPARE_TIMEOUT', outcome: 'not_applied', onTimeout: () => { expired = true; operation.cancel('prepare-timeout'); } });
+  }
+  function settleLateSubmission(input, result) {
+    if (!inputs.includes(input) || input.admission === 'accepted' || input.localDisposition === 'discarded') return;
+    if (result?.accepted === true) acceptInput(input, result.evidence || 'late-receipt');
+    else if (result?.rejected === true || result?.outcome === 'not_applied') {
+      if (input.localDisposition === 'abandoned') discardAbandonedInput(input);
+      else { input.admission = 'rejected'; input.status = 'rejected'; input.failure = errorView(result, 'delivery'); }
+    }
+    publish();
+  }
+  function submitInput(input, operation) {
+    input.submissionSettled = false;
+    const pending = Promise.resolve().then(() => conversation.submit({ inputId: input.inputId, submissionId: input.submissionId, conversationRef: input.conversationRef, scopeId: input.scopeId, text: input.transcript, operation }));
+    const observed = pending.then(result => {
+      if (input.deliveryTimedOut) void enqueue(() => settleLateSubmission(input, result));
+      return result;
+    }, cause => {
+      if (input.deliveryTimedOut) void enqueue(() => settleLateSubmission(input, cause));
+      throw cause;
+    }).finally(() => {
+      input.submissionSettled = true; input.submissionInFlight = false;
+      if (input.run) { input.run.submittedInFlight = inputs.some(item => item.run === input.run && item.submissionInFlight); maybeReleaseDrainingRun(input.run); }
+    });
+    // A local wait deadline is not cancellation of a possibly applied prompt.
+    // Keep observing the original promise and its original proof identity.
+    return boundedWait(observed, { seconds: VOICE_LIMITS.admissionSeconds, code: 'VOICE_SUBMIT_TIMEOUT', outcome: 'unknown', onTimeout: () => { input.deliveryTimedOut = true; } });
+  }
   async function deliverNext() {
     const activeSubmissionRun = activeRun;
     if (!activeSubmissionRun || activeSubmissionRun.submissionBusy || !accepting || call.status !== 'connected') return;
@@ -139,7 +201,7 @@ export function createVoiceService(deps) {
     const run = input.run;
     try {
       if (run) run.pendingPrepareOperation = prepareOperation;
-      const prepared = await conversation.prepareSubmission({ inputId: input.inputId, conversationRef: input.conversationRef, scopeId: input.scopeId, text: input.transcript, operation: prepareOperation });
+      const prepared = await prepareInput(input, prepareOperation);
       input.submissionId = prepared?.submissionId;
       if (typeof input.submissionId !== 'string' || !input.submissionId) throw Object.assign(new Error('Conversation did not provide a stable submission identity'), { code: 'VOICE_SUBMISSION_ID_MISSING', outcome: 'unknown' });
       run?.submissionEpochs.set(input.submissionId, input.epoch);
@@ -156,7 +218,7 @@ export function createVoiceService(deps) {
       if (run.pendingPrepareOperation === prepareOperation) run.pendingPrepareOperation = null;
       const operation = op('submit');
       input.submissionInFlight = true; run.submittedInFlight = true;
-      const result = await conversation.submit({ inputId: input.inputId, submissionId: input.submissionId, conversationRef: input.conversationRef, scopeId: input.scopeId, text: input.transcript, operation });
+      const result = await submitInput(input, operation);
       if (input.admission !== 'accepted') {
         if (result?.accepted === true) acceptInput(input, result.evidence || 'receipt');
         else if (result?.rejected === true || result?.outcome === 'not_applied') {
@@ -167,7 +229,7 @@ export function createVoiceService(deps) {
     } catch (e) {
       if (input.localDisposition === 'discarded') return;
       const abandoned = input.localDisposition === 'abandoned';
-      const confirmed = await checkAdmission(input).catch(() => null);
+      const confirmed = e?.localDeadline || input.admission === 'accepted' ? null : await checkAdmission(input).catch(() => null);
       if (input.admission === 'accepted') { /* evidence already won the race */ }
       else if (confirmed?.accepted) acceptInput(input, confirmed.evidence || 'inspection');
       else if (abandoned && input.admission === 'discarded') { /* inspection already finalized not-applied work */ }
@@ -175,9 +237,10 @@ export function createVoiceService(deps) {
       else if (abandoned) { input.status = 'abandoned'; input.admission = 'unknown'; input.failure = errorView(e, 'delivery'); }
       else if (e?.rejected === true || e?.outcome === 'not_applied') { input.status = 'rejected'; input.admission = 'rejected'; input.failure = errorView(e, 'delivery'); }
       else { input.status = 'unknown'; input.admission = 'unknown'; input.failure = errorView(e, 'delivery'); }
+      if (e?.localDeadline) error = { ...input.failure, message: e.outcome === 'not_applied' ? '本句准备超时，未发送，请重说。' : '本句接收结果待核对，请勿重复发送。' };
     } finally {
       if (run?.pendingPrepareOperation === prepareOperation) run.pendingPrepareOperation = null;
-      input.submissionInFlight = false;
+      if (input.submissionSettled !== false) input.submissionInFlight = false;
       if (run) { run.submittedInFlight = inputs.some((x) => x.run === run && x.submissionInFlight); maybeReleaseDrainingRun(run); }
       if (activeSubmissionRun.submissionBusy) activeSubmissionRun.submissionBusy = false;
       publish(); void deliverNext(); drainReplies();
@@ -185,6 +248,7 @@ export function createVoiceService(deps) {
   }
   function acceptInput(input, evidence) {
     input.admission = 'accepted'; input.status = input.localDisposition === 'abandoned' ? 'abandoned' : 'accepted'; input.acceptanceEvidence = evidence;
+    suppressTaskNotices(input.run, input.epoch);
     for (const replacement of inputs.filter((x) => x.supersedes?.inputId === input.inputId)) {
       replacement.duplicateRisk = true;
       replacement.failure = { code: 'VOICE_POSSIBLE_DUPLICATE', stage: 'admission', retryable: false, outcome: 'applied' };
@@ -195,7 +259,8 @@ export function createVoiceService(deps) {
   }
   async function checkAdmission(input) {
     if (!input.submissionId) return null;
-    const result = await conversation.inspectAdmission({ inputId: input.inputId, submissionId: input.submissionId, conversationRef: input.conversationRef, scopeId: input.scopeId });
+    const inspection = Promise.resolve().then(() => conversation.inspectAdmission({ inputId: input.inputId, submissionId: input.submissionId, conversationRef: input.conversationRef, scopeId: input.scopeId }));
+    const result = await boundedWait(inspection, { seconds: VOICE_LIMITS.admissionCheckSeconds, code: 'VOICE_ADMISSION_CHECK_TIMEOUT', outcome: 'unknown' });
     if (result?.accepted === true || result?.status === 'accepted') { acceptInput(input, result.evidence || 'inspection'); return { accepted: true, evidence: result.evidence }; }
     if (result?.status === 'rejected' && result?.outcome === 'not_applied') {
       if (input.localDisposition === 'abandoned') discardAbandonedInput(input);
@@ -217,6 +282,39 @@ export function createVoiceService(deps) {
     playbackStopPromise = stopping;
     return stopping;
   }
+  function consumedSegmentEpoch(segment, run) {
+    const inputIds = segment.inputIds || [], submissionIds = segment.submissionIds || [];
+    if (!inputIds.length && !submissionIds.length) return null;
+    const epochs = [], key = `${run?.generation}:${String(segment.conversationTurnId)}`;
+    for (const id of inputIds) {
+      const input = inputs.find(item => item.run === run && item.inputId === id && item.conversationTurnKey === key && item.consumed);
+      if (!input) return null;
+      epochs.push(input.epoch);
+    }
+    for (const id of submissionIds) {
+      const proof = run?.consumedSubmissions.get(id);
+      if (!proof || proof.turnKey !== key) return null;
+      if (segment.origin === 'owned-task' && proof.invalidatedByInput) return null;
+      epochs.push(proof.epoch);
+    }
+    return Math.max(...epochs);
+  }
+  function suppressTaskNotices(run, inputEpoch) {
+    for (const proof of run?.consumedSubmissions.values() || []) if (proof.origin === 'owned-task' && proof.epoch <= inputEpoch) proof.invalidatedByInput = true;
+    for (const reply of replies.values()) if (reply.run === run && reply.origin === 'owned-task' && reply.epoch <= inputEpoch) { reply.suppressed = true; reply.interruptedByInput = true; }
+    const playing = playbackState.replyId && replies.get(playbackState.replyId);
+    if (playing?.run === run && playing.origin === 'owned-task' && playing.epoch <= inputEpoch && ['playing', 'synthesizing'].includes(playbackState.status)) void stopPlayback('interruption');
+  }
+  function refreshConsumptionProof(run) {
+    for (const reply of replies.values()) {
+      if (reply.run !== run || !reply.awaitingConsumption || reply.interruptedByInput || reply.status === 'revoked') continue;
+      const provenEpoch = consumedSegmentEpoch(reply, run);
+      if (provenEpoch === null) continue;
+      reply.awaitingConsumption = false; reply.epoch = provenEpoch;
+      reply.eligibleTurn = run === activeRun && call.status === 'connected' && ['local', 'owned-task'].includes(reply.origin);
+      reply.suppressed = !reply.eligibleTurn || provenEpoch < epoch;
+    }
+  }
   async function handleBatch(batch, run = activeRun) {
     if (run && activeRun !== run && !run.draining) return;
     if (!batch || !Array.isArray(batch.events)) return;
@@ -227,11 +325,18 @@ export function createVoiceService(deps) {
       if (event.type === 'input.accepted') {
         const input = inputs.find((x) => x.run === run && x.submissionId === event.submissionId);
         if (input && input.admission !== 'accepted') acceptInput(input, event.evidence || 'event');
-        else if (!input && event.origin === 'local' && run === activeRun && !run.submissionEpochs.has(event.submissionId)) { run.submissionEpochs.set(event.submissionId, ++epoch); suppressReplies(epoch); if (playbackState.status === 'playing' || playbackState.status === 'synthesizing') void stopPlayback('interruption'); }
+        else if (!input && event.origin === 'local' && run === activeRun && !run.submissionEpochs.has(event.submissionId)) { run.submissionEpochs.set(event.submissionId, ++epoch); suppressReplies(epoch); suppressTaskNotices(run, epoch); if (playbackState.status === 'playing' || playbackState.status === 'synthesizing') void stopPlayback('interruption'); }
       } else if (event.type === 'input.consumed') {
         const input = inputs.find((x) => x.run === run && x.submissionId === event.submissionId);
-        if (input) { if (input.admission !== 'accepted') acceptInput(input, 'consumption-event'); input.conversationTurnId = event.conversationTurnId; input.conversationTurnKey = turnKey(event.conversationTurnId); input.turnEnded = false; activeTurnIds.set(input.conversationTurnKey, { epoch: input.epoch, origin: event.origin, inputIds: [input.inputId] }); }
-        else if (event.origin === 'local' && run === activeRun) { let inputEpoch = run.submissionEpochs.get(event.submissionId); if (inputEpoch === undefined) { inputEpoch = ++epoch; run.submissionEpochs.set(event.submissionId, inputEpoch); suppressReplies(epoch); } activeTurnIds.set(turnKey(event.conversationTurnId), { epoch: inputEpoch, origin: 'local', inputIds: [], run }); }
+        if (input) { if (input.admission !== 'accepted') acceptInput(input, 'consumption-event'); input.consumed = true; input.conversationTurnId = event.conversationTurnId; input.conversationTurnKey = turnKey(event.conversationTurnId); input.turnEnded = false; run.consumedSubmissions.set(event.submissionId, { epoch: input.epoch, turnKey: input.conversationTurnKey }); activeTurnIds.set(input.conversationTurnKey, { epoch: input.epoch, origin: event.origin, inputIds: [input.inputId] }); }
+        else if (event.origin === 'local' && run === activeRun) { let inputEpoch = run.submissionEpochs.get(event.submissionId); if (inputEpoch === undefined) { inputEpoch = ++epoch; run.submissionEpochs.set(event.submissionId, inputEpoch); suppressReplies(epoch); } const key = turnKey(event.conversationTurnId); run.consumedSubmissions.set(event.submissionId, { epoch: inputEpoch, turnKey: key }); activeTurnIds.set(key, { epoch: inputEpoch, origin: 'local', inputIds: [], run }); }
+        else if (event.origin === 'owned-task' && run === activeRun && typeof event.submissionId === 'string' && event.submissionId.startsWith('chonkyfish-task-notice:') && typeof event.taskId === 'string' && Number.isSafeInteger(event.taskVersion) && event.taskVersion > 0 && typeof event.sourceInputId === 'string') {
+          const key = turnKey(event.conversationTurnId);
+          run.submissionEpochs.set(event.submissionId, epoch);
+          run.consumedSubmissions.set(event.submissionId, { epoch, turnKey: key, origin: 'owned-task' });
+          activeTurnIds.set(key, { epoch, origin: 'owned-task', inputIds: [], run });
+        }
+        refreshConsumptionProof(run);
       } else if (event.type === 'turn.started') {
         if (event.origin === 'autonomous') activeTurnIds.set(turnKey(event.conversationTurnId), { epoch, origin: 'autonomous', inputIds: [], run });
       } else if (event.type === 'reply.revoked') {
@@ -241,11 +346,11 @@ export function createVoiceService(deps) {
         if (typeof event.replyId !== 'string' || typeof event.text !== 'string' || !event.responseId || !event.surfaceRevision) continue;
         const previous = replies.get(event.replyId);
         if (previous && (previous.surfaceRevision === event.surfaceRevision || previous.started)) continue;
-        const knownEpochs = [...(event.inputIds || []).map(id => inputs.find(input => input.run === run && input.inputId === id)?.epoch), ...(event.submissionIds || []).map(id => run?.submissionEpochs.get(id))].filter(Number.isFinite);
-        const segmentEpoch = knownEpochs.length ? Math.max(...knownEpochs) : null;
+        const segmentEpoch = consumedSegmentEpoch(event, run);
         const key = turnKey(event.conversationTurnId);
-        const eligible = run === activeRun && call.status === 'connected' && segmentEpoch !== null && event.origin === 'local';
-        const reply = { ...event, run, conversationRef: run?.ref, conversationTurnKey: key, epoch: segmentEpoch ?? -1, final: true, ended: true, eligibleTurn: eligible, suppressed: !eligible || segmentEpoch < epoch, status: 'available' };
+        const activeReplyRun = run === activeRun && call.status === 'connected' && ['local', 'owned-task'].includes(event.origin);
+        const eligible = activeReplyRun && segmentEpoch !== null;
+        const reply = { ...event, run, conversationRef: run?.ref, conversationTurnKey: key, epoch: segmentEpoch ?? epoch, final: true, ended: true, awaitingConsumption: segmentEpoch === null, eligibleTurn: eligible, suppressed: !activeReplyRun || segmentEpoch !== null && segmentEpoch < epoch, status: 'available' };
         replies.set(event.replyId, reply); run?.segmentTurns.add(key); void queueReply(reply);
       } else if (event.type === 'reply.final') {
         if (run?.segmentTurns.has(turnKey(event.conversationTurnId))) continue;
@@ -275,9 +380,10 @@ export function createVoiceService(deps) {
       }
     }
     if (run?.submissionEpochs) while (run.submissionEpochs.size > 256) run.submissionEpochs.delete(run.submissionEpochs.keys().next().value);
+    if (run?.consumedSubmissions) while (run.consumedSubmissions.size > 256) run.consumedSubmissions.delete(run.consumedSubmissions.keys().next().value);
     drainReplies(); publish();
   }
-  const outputBlocked = () => inputs.some((x) => x.run === activeRun && x.localDisposition !== 'abandoned' && !x.attemptClosed && !x.holdUntilExplicit && ['recording', 'recognizing'].includes(x.status));
+  const outputBlocked = () => inputs.some((x) => x.run === activeRun && x.localDisposition !== 'abandoned' && !x.holdUntilExplicit && ((!x.attemptClosed && ['recording', 'recognizing'].includes(x.status)) || (x.admission !== 'accepted' && ['queued', 'submitting'].includes(x.status))));
   function drainReplies() { for (const reply of replies.values()) if (reply.run === activeRun && reply.ended && reply.eligibleTurn && !reply.suppressed && reply.epoch >= epoch && !['played', 'interrupted', 'revoked', 'failed', 'stopped'].includes(reply.status)) void queueReply(reply); }
   function queueReply(reply, options = {}) {
     if (reply.queued || !options.manual && ['played', 'revoked'].includes(reply.status)) return Promise.resolve(false);
@@ -297,7 +403,7 @@ export function createVoiceService(deps) {
     return task;
   }
   async function queueReplyNow(reply, { manual = false } = {}) {
-    if (!playbackState.enabled || reply.run !== activeRun || (!manual && reply.suppressed) || !reply.eligibleTurn || reply.origin !== 'local' && reply.origin !== 'autonomous' || (!manual && reply.epoch < epoch) || outputBlocked() || call.status !== 'connected' || ['playing', 'synthesizing', 'stopping'].includes(playbackState.status)) return false;
+    if (!playbackState.enabled || reply.run !== activeRun || (!manual && reply.suppressed) || !reply.eligibleTurn || !['local', 'autonomous', 'owned-task'].includes(reply.origin) || (!manual && reply.epoch < epoch) || outputBlocked() || call.status !== 'connected' || ['playing', 'synthesizing', 'stopping'].includes(playbackState.status)) return false;
     const text = speechToText(reply.text);
     const sentences = splitSpeechSentences(text);
     if (!sentences.length) return false;
@@ -353,7 +459,9 @@ export function createVoiceService(deps) {
   }
   function trimHistory() {
     const terminal = inputs.filter((x) => ['accepted', 'discarded'].includes(x.admission) && (x.turnEnded || x.admission === 'discarded'));
-    const settledAbandoned = inputs.filter((x) => x.localDisposition === 'abandoned' && !x.submissionInFlight && !x.recognitionInFlight && (!x.run || x.run.released));
+    // A hung transport cannot extend the proof drain or visible history. Its
+    // late observer still owns the original object, never a new call's input.
+    const settledAbandoned = inputs.filter((x) => x.localDisposition === 'abandoned' && (!x.run || x.run.released));
     const candidates = [...new Set([...terminal, ...settledAbandoned])].sort((a, b) => a.order - b.order);
     for (const row of candidates.slice(0, Math.max(0, candidates.length - 64))) inputs.splice(inputs.indexOf(row), 1);
     const endedReplies = [...replies.values()].filter((x) => x.ended);
@@ -377,7 +485,7 @@ export function createVoiceService(deps) {
     playbackState.status = 'idle'; playbackState.replyId = null;
     const generation = ++startGeneration; accepting = false; error = null;
     const callId = ids.createId('call');
-    const run = { callId, scopeId: callId, generation, inputEnabled, ref: clone(ref), selection: undefined, captureGeneration: ++captureGeneration, retained: false, leaseHeld: false, stopFollow: noop, leaseTimer: null, leaseDeadline: Infinity, draining: false, submittedInFlight: false, released: false, submissionEpochs: new Map(), segmentTurns: new Set() };
+    const run = { callId, scopeId: callId, generation, inputEnabled, ref: clone(ref), selection: undefined, captureGeneration: ++captureGeneration, retained: false, leaseHeld: false, stopFollow: noop, leaseTimer: null, leaseDeadline: Infinity, draining: false, submittedInFlight: false, released: false, submissionEpochs: new Map(), consumedSubmissions: new Map(), segmentTurns: new Set() };
     activeRun = run;
     call = { status: 'preparing', id: run.callId, conversationRef: clone(run.ref), inputEnabled }; publish();
     const current = () => activeRun === run && startGeneration === run.generation && !disposed;
@@ -412,7 +520,8 @@ export function createVoiceService(deps) {
       const initialCaptureGeneration = run.captureGeneration;
       if (inputEnabled) {
         run.captureStartOperation = op('capture-start');
-        await capture.start({ callRef: { callId: run.callId, conversation: clone(run.ref), generation }, selection: run.selection, onEvent: (event) => receiveCapture(event, initialCaptureGeneration), operation: run.captureStartOperation });
+        const captureReady = await capture.start({ callRef: { callId: run.callId, conversation: clone(run.ref), generation }, selection: run.selection, onEvent: (event) => receiveCapture(event, initialCaptureGeneration), operation: run.captureStartOperation });
+        if (current() && captureReady?.duplex) call.duplex = clone(captureReady.duplex);
         run.captureStartOperation = null;
       }
       if (!current() || captureGeneration !== initialCaptureGeneration || call.status !== 'preparing') throw Object.assign(new Error('Call start was cancelled'), { code: 'VOICE_CANCELLED' });
@@ -489,6 +598,7 @@ export function createVoiceService(deps) {
     if (activeRun) { activeRun.captureGeneration = -1; activeRun.captureStartOperation?.cancel('muted'); activeRun.pendingPrepareOperation?.cancel('muted'); }
     for (const input of inputs) {
       if (!['accepted', 'discarded'].includes(input.admission) && !input.submissionInFlight) {
+        closeAttempt(input);
         input.status = 'held'; input.holdUntilExplicit = true; if (input.admission !== 'unknown') input.admission = 'not_attempted';
       }
     }
@@ -520,6 +630,7 @@ export function createVoiceService(deps) {
     ++captureGeneration; turn.reset();
     ++playbackEpoch; activeSynthesisOperation?.cancel('call-ended'); activeSynthesisOperation = null; activeSpeakerGate = null;
     const run = activeRun;
+    for (const input of inputs) if (input.run === run) closeAttempt(input);
     activeRecognitionOperation?.cancel('call-ended');
     run?.captureStartOperation?.cancel('call-ended'); run?.pendingPrepareOperation?.cancel('call-ended');
     if (abandonPending) {

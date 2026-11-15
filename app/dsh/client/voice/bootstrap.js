@@ -133,16 +133,20 @@ export function createDshVoiceController({ ctx, chat, routes }) {
       const configResponse = await requestJson(routes.config)
       if (disposed) throw Object.assign(new Error('语音控制器已关闭'), { code: 'VOICE_CONTROLLER_DISPOSED', outcome: 'not_applied' })
       config = validateVoiceConfig(configResponse?.config?.voice || DEFAULT_VOICE_CONFIG)
+      // Old settings used half duplex. The single phone button always uses the
+      // new capture path; start will reject a missing actual AEC track.
+      if (config.duplexPreference === 'speaker-turn-taking') config = { ...config, duplexPreference: 'speaker-duplex' }
       configRevision = configResponse?.configRevision || null
       capture = createWebCapture({
         audioStore: audio,
+        requireEchoCancellation: config.duplexPreference === 'speaker-duplex',
         modelUrl: assetURLs.modelUrl,
         ortModuleUrl: assetURLs.ortModuleUrl,
         wasmPaths: assetURLs.wasmPaths,
         workletUrl: assetURLs.workletUrl,
         vadWorkerUrl: assetURLs.workerUrl,
       })
-      const conversation = createDshConversation({ chat })
+      const conversation = createDshConversation({ chat, foreground: host.foreground })
       service = createVoiceService({
         capture,
         recognition: speech.recognition,
@@ -331,6 +335,15 @@ export function createDshVoiceController({ ctx, chat, routes }) {
   }
 
   return {
+    foreground: host.foreground,
+    async foregroundTarget() {
+      if (disposed || resetInProgress || chat.isVoiceResetting?.()) return null
+      try {
+        const caps = hostStatus || await host.capabilities()
+        const generation = caps?.ownership?.serviceGeneration
+        return typeof generation === 'string' ? chat.getVoiceTarget(`dsh:${generation}`) : null
+      } catch { return null }
+    },
     subscribe(fn) { listeners.add(fn); fn(snapshot || { call: { status: 'idle' }, capture: { status: 'stopped' }, inputs: [], playback: { enabled: true }, queue: { unresolved: 0, waiting: 0 }, error: localFailure, startupPending }); return () => listeners.delete(fn) },
     getSnapshot() { const current = service?.getSnapshot(); return current ? { ...current, error: current.error || localFailure, startupPending } : snapshot },
     starting() { return startupPending },

@@ -98,6 +98,7 @@ await test('paths: 所有文件都在 home 下，工作区在 home/小鱼塘', (
     state: join(home, FILES.state),
     proactive: join(home, FILES.proactive),
     events: join(home, FILES.events),
+    tasks: join(home, FILES.tasks),
     abs: join(home, FILES.abs),
     skills: join(home, FILES.skills),
     perception: join(home, FILES.perception),
