@@ -40,6 +40,7 @@ import { registerVoiceRoutes } from '../adapters/voice/http.js'
 import { installManagedTasks } from '../adapters/tasks/host.js'
 import { createTaskNoticeBridge } from '../adapters/voice/task-notices.js'
 import { createPhoneTaskPolicy } from '../adapters/tasks/phone-policy.js'
+import { createNativeCompanionPolicy } from '../adapters/tasks/companion-policy.js'
 import { isSocialHeader } from '../../../core/modules/social/policy.js'
 
 const FULL_ACCESS = 'danger-full-access'
@@ -104,7 +105,10 @@ function readJsonBody(request, limit) {
   })
 }
 
-export function apply(ctx) {
+export function apply(ctx, config = {}) {
+  if (Object.hasOwn(config, 'protectNativeCompanion') && typeof config.protectNativeCompanion !== 'boolean') {
+    throw new TypeError('protectNativeCompanion must be a boolean')
+  }
   const resources = createResources({ env: process.env })
   const { routes, limits, spec } = resources
   let writeChain = Promise.resolve()
@@ -125,6 +129,26 @@ export function apply(ctx) {
       /* logging is best effort */
     }
   }
+
+  const nativeCompanionPolicy = createNativeCompanionPolicy({
+    protectNativeCompanion: config.protectNativeCompanion === true,
+    agents: ctx.agents,
+    isOwnerAgent: agent => Boolean(agent && !isSocialHeader(agent.session?.header)
+      && (agent.session?.header?.agentPreset === spec.PRESET || agent.ctx && isFishAgent(ctx, agent, spec.PRESET))),
+    definitionsFor: agent => ctx.tools.definitions(agent),
+    getSessionHeader: async id => (await service(ctx, 'sessionPersistence')?.stat(id))?.header,
+  })
+  // Install synchronously, independently of phone state and managed-task startup.
+  // Recovery and trusted task signals must pass the same capability boundary.
+  ctx.effect(() => {
+    const disposeGuard = ctx.tools.guard(nativeCompanionPolicy.guard)
+    let disposeCreated
+    try {
+      disposeCreated = ctx.on('agent/created', ({ agent }) => nativeCompanionPolicy.observeAgent(agent), { global: true })
+      for (const agent of ctx.agents.list?.() ?? []) nativeCompanionPolicy.observeAgent(agent)
+    } catch (error) { disposeGuard(); throw error }
+    return () => { disposeCreated?.(); disposeGuard() }
+  }, 'chonkyfish: native companion input isolation')
 
   // home 布局（目录 + 默认 config）；所有异步启动器都会 await 它。
   const layoutReady = resources.ensureLayout({ logger: ctx.logger }).then(async (layout) => {
@@ -195,7 +219,7 @@ export function apply(ctx) {
     })
     let disposeModules
     try {
-      disposeModules = ctx.systemPrompt.variable(modules.variableName, context => modules.provider(context) + phoneTaskPolicy(context))
+      disposeModules = ctx.systemPrompt.variable(modules.variableName, context => modules.provider(context) + phoneTaskPolicy(context) + nativeCompanionPolicy.prompt(context))
     } catch (error) {
       disposeSupplement()
       throw error
