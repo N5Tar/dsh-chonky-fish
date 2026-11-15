@@ -1,5 +1,7 @@
 const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
+const COMPLETION_SCOPES = new Set(['tool-invocation', 'external-task'])
 const stable = value => Array.isArray(value) ? `[${value.map(stable).join(',')}]` : value && typeof value === 'object' ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}` : JSON.stringify(value)
+const jsonShape = value => { const encoded = JSON.stringify(value); return encoded === undefined ? null : JSON.parse(encoded) }
 const equalOwner = (a, b) => a?.namespaceId === b?.namespaceId && a?.conversationId === b?.conversationId
 const error = code => Object.assign(new Error(code), { code })
 
@@ -8,6 +10,8 @@ export function createTaskService({ repository, adapters = {}, onEvent = () => {
   if (!repository) throw new TypeError('task repository required')
   let closed = false
   const controllers = new Map()
+  const observers = new Set()
+  const dispatching = new Set()
   const cancelControllers = new Map()
   const workers = new Set()
   const cancelReceipts = new Map()
@@ -63,9 +67,14 @@ export function createTaskService({ repository, adapters = {}, onEvent = () => {
     return changed
   }
   async function observeExternal(task, adapter, handle, controller) {
+    if (observers.has(task.id)) return
+    observers.add(task.id)
     const progress = detail => {
       const latest = repository.getTask(task.id)
-      if (['running', 'stopping'].includes(latest?.status)) transition(latest, latest.status, { progress: detail, summary: typeof detail === 'string' ? detail : 'external task progress' }, 'task.progress')
+      if (!['running', 'stopping'].includes(latest?.status)) return
+      let normalized
+      try { normalized = jsonShape(detail) } catch { return }
+      if (stable(latest.progress) !== stable(normalized)) transition(latest, latest.status, { progress: normalized, summary: typeof normalized === 'string' ? normalized : 'external task progress' }, 'task.progress')
     }
     try {
       if (typeof adapter.watch !== 'function') {
@@ -84,6 +93,7 @@ export function createTaskService({ repository, adapters = {}, onEvent = () => {
       const latest = repository.getTask(task.id)
       if (['running', 'stopping'].includes(latest?.status)) transition(latest, 'outcome-unknown', { error: String(cause?.message ?? cause), summary: 'external task observation failed; resource remains isolated' }, 'task.outcome-unknown')
     } finally {
+      observers.delete(task.id)
       if (controllers.get(task.id) === controller) controllers.delete(task.id)
     }
   }
@@ -95,14 +105,20 @@ export function createTaskService({ repository, adapters = {}, onEvent = () => {
     if (!current || current.status !== 'accepted') { controllers.delete(task.id); return }
     current = transition(current, 'running', { startedAt: now() }, 'task.started')
     try {
-      const result = await adapter.execute({ taskId: task.id, operationId: task.operationId, owner: task.owner, sourceInputId: task.sourceInputId, command: task.command, resources: task.resources, signal: controller.signal, version: current.version })
+      let result
+      dispatching.add(task.id)
+      try { result = await adapter.execute({ taskId: task.id, operationId: task.operationId, owner: task.owner, sourceInputId: task.sourceInputId, command: task.command, resources: task.resources, signal: controller.signal, version: current.version }) }
+      finally { dispatching.delete(task.id) }
       if (closed) return
       const latest = repository.getTask(task.id)
       if (!latest || !['running', 'stopping'].includes(latest.status)) return
-      const completionScope = adapter.completionScope ?? result?.completionScope ?? 'tool-invocation'
+      const completionScope = latest.completionScope ?? adapter.completionScope ?? 'tool-invocation'
       if (completionScope === 'external-task') {
         current = transition(latest, latest.status, { externalHandle: result?.externalHandle ?? null, completionScope: 'external-task', summary: 'external task accepted; observing its actual status' }, 'task.external-accepted')
-        await observeExternal(current, adapter, result?.externalHandle, controller)
+        const observer = observeExternal(current, adapter, result?.externalHandle, controller)
+        workers.add(observer); void observer.finally(() => workers.delete(observer))
+        const afterObserve = repository.getTask(task.id)
+        if (afterObserve?.status === 'stopping' && afterObserve.cancelOperationId) void requestStop(afterObserve, adapter, afterObserve.cancelOperationId)
         return
       }
       current = { ...latest, completionScope }
@@ -126,9 +142,11 @@ export function createTaskService({ repository, adapters = {}, onEvent = () => {
             : status === 'cancelled' ? 'adapter reported an authoritative terminal cancellation'
               : controller.signal.aborted ? 'cancellation outcome unknown' : 'dispatch outcome unknown; resource remains isolated'
       transition(latest, status, { error: String(cause?.message ?? cause), finishedAt: TERMINAL.has(status) ? now() : null, summary }, status === 'outcome-unknown' ? 'task.outcome-unknown' : `task.${status}`)
-    } finally { controllers.delete(task.id) }
+      if (status === 'outcome-unknown' && latest.cancelOperationId && (latest.completionScope ?? adapter.completionScope) === 'external-task') void requestStop(repository.getTask(task.id), adapter, latest.cancelOperationId)
+    } finally { if (!observers.has(task.id)) controllers.delete(task.id) }
   }
   async function requestStop(task, adapter, operationId) {
+    if (closed) return
     const controller = new AbortController()
     cancelControllers.set(task.id, controller)
     try {
@@ -137,12 +155,48 @@ export function createTaskService({ repository, adapters = {}, onEvent = () => {
         if (latest?.status === 'stopping') transition(latest, 'cancelled', { finishedAt: now(), summary: 'cancelled before dispatch' }, 'task.cancelled')
         return
       }
+      if (task.status === 'outcome-unknown' && task.cancelOperationId === operationId) {
+        const latest = repository.getTask(task.id)
+        if (latest?.status === 'outcome-unknown') transition(latest, 'stopping', { summary: 'resuming persisted cancellation after uncertain dispatch' }, 'task.cancel-resumed')
+      }
       if (typeof adapter.cancel !== 'function') {
         return
       }
-      const result = await adapter.cancel({ taskId: task.id, operationId, owner: task.owner, command: task.command, externalHandle: task.externalHandle, signal: controller.signal })
-      const latest = repository.getTask(task.id)
+      let latest = repository.getTask(task.id)
       if (!latest || latest.status !== 'stopping') return
+      const externalTask = latest.completionScope === 'external-task' || adapter.completionScope === 'external-task'
+      if (externalTask && !latest.externalHandle) {
+        if (dispatching.has(task.id)) return
+        let evidence
+        try { evidence = await adapter.recover?.({ task: latest, owner: latest.owner, operationId: latest.operationId }) } catch {}
+        if (closed) return
+        latest = repository.getTask(task.id)
+        if (!latest || latest.status !== 'stopping') return
+        if (['completed', 'failed', 'cancelled'].includes(evidence?.status)) {
+          transition(latest, evidence.status, { externalHandle: evidence.externalHandle ?? null, result: evidence.result ?? null, finishedAt: now(), summary: evidence.summary ?? `external task ${evidence.status} after cancellation recovery` }, 'task.recovered-terminal')
+          return
+        }
+        if (evidence?.status !== 'running' || !evidence.externalHandle) {
+          transition(latest, 'outcome-unknown', { summary: 'cancellation could not recover an authoritative external handle' }, 'task.outcome-unknown')
+          return
+        }
+        latest = transition(latest, 'stopping', { externalHandle: evidence.externalHandle, completionScope: 'external-task', summary: 'recovered external handle while cancellation is pending' }, 'task.cancel-recovered')
+        if (!controllers.has(task.id)) {
+          const observerController = new AbortController()
+          controllers.set(task.id, observerController)
+          const worker = observeExternal(latest, adapter, evidence.externalHandle, observerController)
+          workers.add(worker); void worker.finally(() => workers.delete(worker))
+        }
+      } else if (externalTask && !observers.has(task.id) && latest.externalHandle) {
+        const observerController = new AbortController()
+        controllers.set(task.id, observerController)
+        const worker = observeExternal(latest, adapter, latest.externalHandle, observerController)
+        workers.add(worker); void worker.finally(() => workers.delete(worker))
+      }
+      const result = await adapter.cancel({ taskId: task.id, operationId, owner: latest.owner, command: latest.command, externalHandle: latest.externalHandle, signal: controller.signal })
+      latest = repository.getTask(task.id)
+      const sameUnknownIntent = latest?.status === 'outcome-unknown' && latest.cancelOperationId === operationId
+      if (!latest || (latest.status !== 'stopping' && !sameUnknownIntent)) return
       if (result?.stopped === true) {
         controllers.get(task.id)?.abort('adapter confirmed external stop')
         transition(latest, 'cancelled', { finishedAt: now(), summary: 'stopped' }, 'task.cancelled')
@@ -170,10 +224,13 @@ export function createTaskService({ repository, adapters = {}, onEvent = () => {
         if (!equalOwner(existing.task.owner, owner) || existing.commandDigest !== commandDigest || existing.task.sourceInputId !== sourceInputId) throw error('OPERATION_CONFLICT')
         return { taskId: existing.task.id, version: existing.task.version, status: existing.task.status, duplicate: true }
       }
-      const resources = [...new Set(adapter.deriveResources(command.name, command.args ?? {}, { owner, command, operationId }))].sort()
+      const scopeContext = { owner, command, operationId }
+      const completionScope = adapter.resolveCompletionScope?.(scopeContext) ?? adapter.completionScope ?? 'tool-invocation'
+      if (!COMPLETION_SCOPES.has(completionScope)) throw error('TASK_SCOPE_UNDECLARED')
+      const resources = [...new Set(adapter.deriveResources(command.name, command.args ?? {}, scopeContext))].sort()
       if (resources.length > maxResources) throw error('TOO_MANY_RESOURCES')
       if (resources.some(resource => typeof resource !== 'string' || !resource || resource.length > 512)) throw error('INVALID_RESOURCE')
-      const task = { id: uuid(), operationId, owner: { namespaceId: owner.namespaceId, conversationId: owner.conversationId }, sourceInputId, adapter: adapterName, command, commandDigest, resources, status: 'accepted', version: 1, createdAt: now(), updatedAt: now(), summary: 'accepted' }
+      const task = { id: uuid(), operationId, owner: { namespaceId: owner.namespaceId, conversationId: owner.conversationId }, sourceInputId, adapter: adapterName, command, commandDigest, resources, completionScope, status: 'accepted', version: 1, createdAt: now(), updatedAt: now(), summary: 'accepted' }
       const op = { id: operationId, taskId: task.id, commandDigest, owner: task.owner, createdAt: task.createdAt, kind: 'start' }
       const created = repository.createTask(task, op)
       if (created.busy) throw error('RESOURCE_BUSY')
@@ -201,9 +258,10 @@ export function createTaskService({ repository, adapters = {}, onEvent = () => {
       if (existing.commandDigest !== commandDigest || existing.task.sourceInputId !== sourceInputId) throw error('OPERATION_CONFLICT')
       return { taskId: existing.task.id, version: existing.task.version, status: existing.task.status, duplicate: true }
     },
-    observe({ owner, taskId, afterVersion = 0 }) {
+    observe({ owner, taskId, afterVersion = 0, limit = 50 }) {
       if (!owned(owner, taskId)) return []
-      return repository.readEvents(taskId, afterVersion)
+      const pageSize = Number.isSafeInteger(limit) ? Math.max(1, Math.min(100, limit)) : 50
+      return repository.readEvents(taskId, afterVersion, pageSize).slice(0, pageSize)
     },
     async cancel({ owner, taskId, operationId, expectedVersion }) {
       const key = `${owner?.namespaceId}\u0000${owner?.conversationId}\u0000${taskId}\u0000${expectedVersion}\u0000${operationId}`
@@ -220,9 +278,21 @@ export function createTaskService({ repository, adapters = {}, onEvent = () => {
         return existing.task
       }
       if (task.version !== expectedVersion) throw error('STALE_VERSION')
-      repository.recordOperation?.({ id: operationId, taskId, kind: 'cancel', owner, commandDigest: cancelDigest, createdAt: now() })
       const adapter = adapters[task.adapter]
-      const next = transition(task, 'stopping', { cancelOperationId: operationId, summary: 'stop requested' }, 'task.stopping')
+      if (typeof repository.recordCancelIntent !== 'function') throw error('ATOMIC_CANCEL_UNAVAILABLE')
+      const operation = { id: operationId, taskId, kind: 'cancel', owner, commandDigest: cancelDigest, createdAt: now() }
+      const committed = repository.recordCancelIntent({ operation, expectedVersion })
+      if (committed?.stale) throw error('STALE_VERSION')
+      if (committed?.terminal) return committed.task
+      if (committed?.duplicate) {
+        const prior = committed.operation
+        if (prior?.kind !== 'cancel' || prior.taskId !== taskId || !equalOwner(prior.owner, owner) || prior.commandDigest !== cancelDigest) throw error('OPERATION_CONFLICT')
+        cancelReceipts.set(key, committed.task)
+        return committed.task
+      }
+      const next = committed?.task
+      if (!next || next.status !== 'stopping' || next.cancelOperationId !== operationId) throw error('ATOMIC_CANCEL_FAILED')
+      publish(next, 'task.stopping', { summary: next.summary })
       cancelReceipts.set(key, next)
       queueMicrotask(() => { void requestStop(task, adapter, operationId) })
       return next
@@ -234,18 +304,21 @@ export function createTaskService({ repository, adapters = {}, onEvent = () => {
         const adapter = adapters[task.adapter]
         let evidence
         try { evidence = await adapter?.recover?.({ task, owner: task.owner, operationId: task.operationId }) } catch {}
-        if (evidence?.status === 'running' && evidence.externalHandle && (evidence.completionScope ?? adapter?.completionScope) === 'external-task') {
-          const current = transition(task, 'running', { externalHandle: evidence.externalHandle, completionScope: 'external-task', summary: 'reconnected to existing external task after host restart' }, 'task.recovered')
+        const completionScope = task.completionScope ?? adapter?.completionScope ?? 'tool-invocation'
+        if (evidence?.status === 'running' && evidence.externalHandle && completionScope === 'external-task') {
+          const resumedStatus = task.cancelOperationId ? 'stopping' : 'running'
+          const current = transition(task, resumedStatus, { externalHandle: evidence.externalHandle, completionScope: 'external-task', summary: task.cancelOperationId ? 'reconnected to existing external task; resuming persisted cancellation' : 'reconnected to existing external task after host restart' }, 'task.recovered')
           const controller = new AbortController(); controllers.set(task.id, controller)
           const worker = observeExternal(current, adapter, evidence.externalHandle, controller)
           workers.add(worker); void worker.finally(() => workers.delete(worker))
+          if (task.cancelOperationId) void requestStop(current, adapter, task.cancelOperationId)
         } else if (['completed', 'failed', 'cancelled'].includes(evidence?.status)) {
           transition(task, evidence.status, { externalHandle: evidence.externalHandle ?? task.externalHandle, result: evidence.result ?? null, finishedAt: now(), summary: evidence.summary ?? `external task ${evidence.status} after restart` }, 'task.recovered-terminal')
-        } else if (task.status === 'outcome-unknown') {
+        } else if (task.status === 'outcome-unknown' && !task.cancelOperationId) {
           continue
         } else if (task.status === 'accepted') {
           transition(task, 'failed', { summary: 'host restarted before external dispatch; operation was not replayed', finishedAt: now() }, 'task.not-dispatched')
-        } else transition(task, 'outcome-unknown', { summary: 'host restarted; no authoritative external operation was found' }, 'task.recovery-unknown')
+        } else if (task.status !== 'outcome-unknown') transition(task, 'outcome-unknown', { summary: task.cancelOperationId ? 'host restarted; cancellation intent remains but no authoritative external operation was found' : 'host restarted; no authoritative external operation was found' }, 'task.recovery-unknown')
       }
       return repository.listAllTasks?.() ?? []
     },

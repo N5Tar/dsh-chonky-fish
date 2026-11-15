@@ -12,10 +12,11 @@ export function createTaskNoticeBridge({ ctx, resources }) {
     if (source?.kind !== 'chonkyfish-task-notice' || !text(source.taskId) || !text(source.eventId) || !text(source.sourceInputId) || !Number.isSafeInteger(source.version) || source.version < 1 || !text(owner?.namespaceId) || !text(owner?.conversationId) || source.ownerConversationId !== owner.conversationId) return { acknowledged: false }
     if (!terminal.has(event.status)) return { acknowledged: true }
     let sessions
-    try { sessions = ctx.sessions || ctx.get?.('sessions') } catch {}
+    try { sessions = ctx.get?.('sessions') } catch {}
+    if (!sessions) { try { sessions = ctx.sessions } catch {} }
     if (typeof sessions?.flush !== 'function') return { acknowledged: false }
     const agent = ctx.agents?.get(owner.conversationId)
-    if (!agent || agent.id !== owner.conversationId || agent.session?.id !== owner.conversationId || !isFishHeader(agent.session.header, { workspaceRoot: resources.paths.workspace, pathSemantics: platform })) return { acknowledged: false }
+    if (!agent || agent.id !== owner.conversationId || (agent.session?.sessionId ?? agent.session?.id) !== owner.conversationId || !isFishHeader(agent.session.header, { workspaceRoot: resources.paths.workspace, pathSemantics: platform })) return { acknowledged: false }
     if (typeof agent.session.snapshotEvents !== 'function' || typeof agent.followup !== 'function') return { acknowledged: false }
     const messageId = `chonkyfish-task-notice:${source.eventId}`
     const matches = message => message?.id === messageId && message.source?.kind === source.kind && message.source?.taskId === source.taskId && message.source?.version === source.version && message.source?.ownerConversationId === owner.conversationId

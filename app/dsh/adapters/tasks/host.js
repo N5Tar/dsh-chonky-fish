@@ -11,6 +11,12 @@ export function createDshToolAdapter({ tools, allowedTools = {}, getCapability, 
   let callSequence = 0
   const capability = (name, context = {}) => (allowedTools instanceof Map ? allowedTools.get(name) : allowedTools[name]) ?? getCapability?.(name, context)
   return {
+    resolveCompletionScope(name, context = {}) {
+      const entry = capability(name, context)
+      if (!entry) return undefined
+      if (!['tool-invocation', 'external-task'].includes(entry.completionScope)) throw notApplied(Object.assign(new Error('Task completion scope must be declared by the Host adapter'), { code: 'TASK_SCOPE_UNDECLARED' }))
+      return entry.completionScope
+    },
     deriveResources(name, args, context) {
       const entry = capability(name, context)
       if (!entry) throw notApplied(Object.assign(new Error('Tool is not registered for managed execution'), { code: 'TOOL_NOT_ALLOWED' }))
@@ -28,9 +34,13 @@ export function createDshToolAdapter({ tools, allowedTools = {}, getCapability, 
       try {
         try { signal.throwIfAborted?.() } catch (cause) { throw notApplied(cause) }
         const callId = `${taskId}:call:${++callSequence}`
-        const args = entry.prepareArguments ? entry.prepareArguments(command.args ?? {}, { taskId, operationId, owner }) : command.args ?? {}
+        let encodedArguments
+        try {
+          const args = entry.prepareArguments ? entry.prepareArguments(command.args ?? {}, { taskId, operationId, owner }) : command.args ?? {}
+          encodedArguments = JSON.stringify(args)
+        } catch (cause) { throw notApplied(cause) }
         const result = await tools.execute({
-          calls: [{ id: callId, name: command.name, arguments: JSON.stringify(args) }],
+          calls: [{ id: callId, name: command.name, arguments: encodedArguments }],
           agent,
           signal,
           toolSet,
@@ -94,12 +104,13 @@ export function resolveSourceInputId(agent, exec) {
   }
   if (callIndex < 0) return null
   for (let index = callIndex - 1; index >= 0; index--) {
-    const data = events[index]?.data ?? events[index]
+    const event = events[index]
+    const data = event?.data ?? event
+    if (event?.type !== 'user/message' && data?.type !== 'user/message') continue
     const source = data?.source
-    if (!source || typeof source.kind !== 'string') continue
-    if (source.kind === 'user') return typeof source.rpcId === 'string' && source.rpcId || typeof data.id === 'string' && data.id || null
-    if (source.kind === 'chonkyfish-task-notice' && source.ownerConversationId === agent.id) return typeof source.sourceInputId === 'string' ? source.sourceInputId : null
-    if (source.kind === 'runtime-context' || source.kind === 'time-context') continue
+    if (source?.kind === 'user') return typeof source.rpcId === 'string' && source.rpcId || typeof data.id === 'string' && data.id || null
+    if (source?.kind === 'chonkyfish-task-notice' && source.ownerConversationId === agent.id) return typeof source.sourceInputId === 'string' ? source.sourceInputId : null
+    if (source?.kind === 'runtime-context' || source?.kind === 'time-context') continue
     // Never cross an intervening social, system, or other unowned message to borrow an old user input.
     return null
   }
@@ -169,9 +180,9 @@ export function createTaskTools(service, { getOwner, getSourceInputId, operation
     },
     {
       name: 'fish_task_inspect',
-      description: '检查当前会话拥有的任务状态与版本；可读取新增的任务事件。',
-      parameters: { type: 'object', additionalProperties: false, properties: { taskId: { type: 'string' }, afterVersion: { type: 'integer' } }, required: ['taskId'] }, output,
-      execute: execute(async (args, exec) => ({ task: service.inspect({ owner: ownerFor(exec), taskId: args.taskId }), events: service.observe({ owner: ownerFor(exec), taskId: args.taskId, afterVersion: args.afterVersion ?? 0 }) })),
+      description: '检查当前会话拥有的任务状态与版本；事件按版本分页，默认返回50条、最多100条。继续读取时把最后一条事件的version作为afterVersion。',
+      parameters: { type: 'object', additionalProperties: false, properties: { taskId: { type: 'string' }, afterVersion: { type: 'integer' }, limit: { type: 'integer' } }, required: ['taskId'] }, output,
+      execute: execute(async (args, exec) => ({ task: service.inspect({ owner: ownerFor(exec), taskId: args.taskId }), events: service.observe({ owner: ownerFor(exec), taskId: args.taskId, afterVersion: args.afterVersion ?? 0, limit: args.limit }) })),
     },
     {
       name: 'fish_task_cancel',
@@ -204,10 +215,13 @@ export async function installManagedTasks(ctx, {
   const repository = createTaskRepository({ dbPath: resources.paths.tasks, DatabaseSync })
   const trustedSignals = new WeakSet()
   const service = createTaskService({ repository, onEvent, maxCommandBytes: resources.limits?.taskMaxCommandBytes, maxResources: resources.limits?.taskMaxResources, maxList: resources.limits?.taskMaxList })
-  const jobs = ctx.jobs ?? (() => { try { return ctx.get?.('jobs') } catch { return null } })()
+  let jobs = null
+  try { jobs = ctx.get?.('jobs') ?? null } catch {}
+  if (!jobs) try { jobs = ctx.jobs ?? null } catch {}
   const dshAdapter = createDshToolAdapter({ tools: ctx.tools, allowedTools: toolCapabilities, trustedSignals })
   const bindAdapter = adapter => ({
     completionScope: adapter.completionScope,
+    resolveCompletionScope: input => adapter.resolveCompletionScope?.({ ...input, agent: ctx.agents.get(input.owner.conversationId) }),
     deriveResources: (name, args, context) => adapter.deriveResources(name, args, { ...context, agent: ctx.agents.get(context.owner.conversationId) }),
     execute: input => adapter.execute({ ...input, agent: ctx.agents.get(input.owner.conversationId) }),
     watch: input => adapter.watch?.({ ...input, agent: ctx.agents.get(input.owner.conversationId) }),
@@ -215,7 +229,7 @@ export async function installManagedTasks(ctx, {
     recover: input => adapter.recover?.({ ...input, agent: ctx.agents.get(input.owner.conversationId) }),
   })
   service.registerAdapter('dsh-tool', {
-    completionScope: 'tool-invocation',
+    resolveCompletionScope: ({ owner, command }) => dshAdapter.resolveCompletionScope(command?.name, { owner, command, agent: ctx.agents.get(owner.conversationId) }),
     deriveResources: (name, args, context) => dshAdapter.deriveResources(name, args, { ...context, agent: ctx.agents.get(context.owner.conversationId) }),
     execute: input => dshAdapter.execute({ ...input, agent: ctx.agents.get(input.owner.conversationId) }),
     watch: input => dshAdapter.watch({ ...input, agent: ctx.agents.get(input.owner.conversationId) }),

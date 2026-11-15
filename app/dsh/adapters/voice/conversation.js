@@ -49,9 +49,10 @@ function clearLocalRequest(record, requestId) {
   if (timer) clearTimeout(timer)
   record.localRequests.delete(requestId)
 }
-function removeOwnerSubmissions(prepared, owner) {
+function removeOwnerSubmissions(prepared, owner, rejections, recordKey) {
   if (!owner) return
   for (const [submissionId, item] of prepared) if (item.owner === owner) prepared.delete(submissionId)
+  for (const [submissionId, item] of rejections) if (item.recordKey === recordKey && item.scopeId === owner.scopeId) rejections.delete(submissionId)
 }
 function scopeIdFor(ref, supplied, owners, { createLegacy = false } = {}) {
   if (typeof supplied === 'string' && supplied.trim()) return supplied
@@ -76,7 +77,7 @@ function rememberBounded(set, value, limit = MAX_LOCAL_REQUESTS) {
 /** Maps this plugin's current DSH Session to the voice core's opaque conversation contract. */
 export function createDshConversation({ ctx, chat, foreground } = {}) {
   if (!chat?.getVoiceBinding || !chat?.getVoiceTarget || !chat?.retainVoiceBinding) throw new TypeError('Strict chat voice accessors and independent retain are required')
-  const retained = new Map(), prepared = new Map(), listeners = new Set()
+  const retained = new Map(), prepared = new Map(), rejections = new Map(), listeners = new Set()
   let disposed = false
 
   function currentBinding(ref) {
@@ -119,6 +120,14 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
     if (item.accepted) return
     item.accepted = true
     if (item.owner?.record && !item.owner.record.closed) emit(item.owner.record, [{ type: 'input.accepted', submissionId: item.requestId, evidence }])
+  }
+  function retireRejected(item, code) {
+    item.rejectionCode = code
+    try { item.abandon() } catch {}
+    item.retired = true
+    prepared.delete(item.requestId)
+    rejections.set(item.requestId, { recordKey: item.recordKey, scopeId: item.scopeId, code })
+    while (rejections.size > MAX_PREPARED_SUBMISSIONS) rejections.delete(rejections.keys().next().value)
   }
 
   async function interruptAccepted(item, conversationRef) {
@@ -347,13 +356,14 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
         const owner = value.owners.get(scope)
         if (!owner) throw Object.assign(new Error('Voice call scope is not retained'), { code: 'VOICE_SCOPE_STALE', outcome: 'not_applied' })
         value.owners.delete(scope)
-        removeOwnerSubmissions(prepared, owner)
+        removeOwnerSubmissions(prepared, owner, rejections, key)
         if (value.retainCount > 1) value.retainCount--
         else {
           value.retainCount = 0
           if (retained.get(key) === value) retained.delete(key)
           try { await value.ready; value.reference.release() } catch {}
           for (const [submissionId, item] of prepared) if (item.recordKey === key) prepared.delete(submissionId)
+          for (const [submissionId, item] of rejections) if (item.recordKey === key) rejections.delete(submissionId)
         }
       }
     },
@@ -372,6 +382,7 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
       const submission = binding.session.beginSubmission({ text, mode: 'steer', onAccept: () => markAccepted(item, 'prompt-receipt'), onRetire: () => { item.retired = true } })
       if (!submission || typeof submission.requestId !== 'string' || !submission.requestId || typeof submission.abandon !== 'function') throw Object.assign(new Error('DSH Session did not provide a stable submission identity'), { code: 'VOICE_SUBMISSION_ID_MISSING', outcome: 'unknown' })
       item.requestId = submission.requestId
+      rejections.delete(item.requestId)
       item.foregroundState = foregroundState || { available: false, reason: 'foreground-control-unavailable' }
       item.foregroundExpected = foregroundState?.available === true ? foregroundState.expected : null
       item.abandon = submission.abandon
@@ -402,9 +413,7 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
         if (preAdmissionFailure(error?.code)) {
           const evidence = item.accepted ? 'prompt-accept-callback' : admissionEvidence(item)
           if (evidence) { markAccepted(item, evidence); return { accepted: true, evidence, foreground: await interruptAccepted(item, conversationRef) } }
-          item.rejectionCode = error.code
-          try { item.abandon() } catch {}
-          item.retired = true
+          retireRejected(item, error.code)
           return { accepted: false, rejected: true, outcome: 'not_applied', code: error.code }
         }
         throw Object.assign(error, { code: error?.code || 'VOICE_SUBMISSION_UNKNOWN', outcome: 'unknown' })
@@ -417,9 +426,7 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
       if (evidence) { markAccepted(item, evidence); return { accepted: true, evidence, foreground: await interruptAccepted(item, conversationRef) } }
       const code = result?.error?.code
       if (preAdmissionFailure(code)) {
-        item.rejectionCode = code
-        try { item.abandon() } catch {}
-        item.retired = true
+        retireRejected(item, code)
         return { accepted: false, rejected: true, outcome: 'not_applied', code }
       }
       return { accepted: false, rejected: false, outcome: 'unknown', code: typeof code === 'string' ? code : 'DSH_PROMPT_OUTCOME_UNKNOWN' }
@@ -428,7 +435,13 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
       const item = prepared.get(submissionId)
       const value = retained.get(refKey(conversationRef))
       const scope = scopeIdFor(conversationRef, scopeId, value?.owners || new Map())
-      if (!item || item.recordKey !== refKey(conversationRef) || item.scopeId !== scope) return { status: 'unknown', outcome: 'unknown' }
+      if (!item) {
+        const rejected = rejections.get(submissionId)
+        return rejected?.recordKey === refKey(conversationRef) && rejected.scopeId === scope
+          ? { status: 'rejected', outcome: 'not_applied', code: rejected.code }
+          : { status: 'unknown', outcome: 'unknown' }
+      }
+      if (item.recordKey !== refKey(conversationRef) || item.scopeId !== scope) return { status: 'unknown', outcome: 'unknown' }
       if (item.accepted) return { status: 'accepted', accepted: true, evidence: 'prompt-accept-callback', foreground: await interruptAccepted(item, conversationRef) }
       const binding = getBinding(conversationRef)
       const entries = binding?.eventSource?.getSnapshot?.().entries || []
@@ -538,10 +551,12 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
       const dispose = () => {
         if (record.closed) return
         record.closed = true; listeners.delete(record)
+        if (owner.record === record) owner.record = null
         for (const requestId of record.localRequests.keys()) clearLocalRequest(record, requestId)
         try { record.unsubscribe?.() } catch {}
         try { record.unsubscribeLocal?.() } catch {}
         signal?.removeEventListener('abort', stopSignal)
+        record.callbacks.clear()
       }
       signal?.addEventListener('abort', stopSignal, { once: true })
       if (signal?.aborted) { aborting = true; dispose() }
@@ -551,16 +566,19 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
       disposed = true
       for (const listener of listeners) {
         listener.closed = true
+        if (listener.owner.record === listener) listener.owner.record = null
         for (const requestId of listener.localRequests.keys()) clearLocalRequest(listener, requestId)
         listener.localAccepted.clear()
         listener.localRejected.clear()
         listener.localCompleted.clear()
+        listener.callbacks.clear()
         try { listener.unsubscribe?.() } catch {}
         try { listener.unsubscribeLocal?.() } catch {}
       }
       listeners.clear()
       for (const item of prepared.values()) { if (!item.accepted && !admissionEvidence(item)) { try { item.abandon?.() } catch {} } }
       prepared.clear()
+      rejections.clear()
       for (const [key, value] of retained) {
         retained.delete(key)
         try { await value.ready; value.reference.release() } catch {}

@@ -54,7 +54,7 @@ try {
   assert.equal(grants.length, 0, 'social preset never inherits automatic full access')
   for (const listener of listeners.get('agent/created') ?? []) listener({ agent: owner })
   assert.equal(grants.length, 1, 'owner behavior remains compatible')
-  assert.equal(guards.length, 0, 'social module never installs a channel-based tool guard')
+  for (const guard of guards) assert.equal(guard({ agent: social, name: 'pwsh', arguments: { wait: true }, signal: new AbortController().signal }), undefined, 'phone task guard never restricts an inactive social session')
   const events = [{ type: 'turn/start', data: { turn: 1 } }, { type: 'user/message', data: { id: 'social-' + 'a'.repeat(64), content: [{ type: 'text', text: '喂' }], source: { kind: 'user' } } }]
   const external = { status: 'running', session: { id: 'main', header: { agentPreset: 'chonkyfish', cwd: join(home, 'chonkyfish', '小鱼塘') }, snapshotEvents: () => events } }
   assert.equal(ownerSend.options.when({ agent: external }), true, 'channel-origin main turns retain owner messaging')

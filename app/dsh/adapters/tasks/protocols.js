@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 
 const TERMINAL = new Map([['completed', 'completed'], ['failed', 'failed'], ['cancelled', 'cancelled']])
 const PUBLIC_PREFIX = /^mcp__(.+)__([^_].+)$/
+const PHONE_READ_MCP_SERVERS = new Set(['stardew', 'stardew2'])
 const PHONE_READ_MCP_TOOLS = new Set([
   'stardew_get_state', 'stardew_get_surroundings', 'stardew_get_inventory', 'stardew_get_companion_state',
   'stardew_self_state', 'stardew_interaction_status', 'stardew_menu_state', 'stardew_social_state',
@@ -23,7 +24,7 @@ function parseToolName(name) {
 }
 export function isKnownPhoneReadTool(name) {
   const identity = parseToolName(name)
-  return Boolean(identity && PHONE_READ_MCP_TOOLS.has(identity.rawName))
+  return Boolean(identity && PHONE_READ_MCP_SERVERS.has(identity.serverName) && PHONE_READ_MCP_TOOLS.has(identity.rawName))
 }
 function hasRequestId(definition) {
   const property = definition?.parameters?.properties?.requestId
@@ -60,7 +61,9 @@ async function invokeTool({ tools, agent, signal, trustedSignals, name, args, ca
   catch (cause) { throw notApplied(cause) }
   try {
     try { signal.throwIfAborted?.() } catch (cause) { throw notApplied(cause) }
-    const batch = await tools.execute({ calls: [{ id: callId, name, arguments: JSON.stringify(args) }], agent, signal, toolSet })
+    let encodedArguments
+    try { encodedArguments = JSON.stringify(args) } catch (cause) { throw notApplied(cause) }
+    const batch = await tools.execute({ calls: [{ id: callId, name, arguments: encodedArguments }], agent, signal, toolSet })
     return resultValue(batch, callId)
   } finally { toolSet?.dispose?.() }
 }
@@ -104,10 +107,13 @@ export function createPollingRequestAdapter({ tools, definitionsFor, trustedSign
     completionScope: 'external-task',
     deriveResources(name, args, context) { return [keyFor({ ...context, command: { name, args } }, name).resourceKey] },
     async execute(input) {
-      const descriptor = keyFor(input, input.command?.name)
-      const requestId = idFor(input.operationId)
-      if (input.command.args?.[descriptor.requestIdProperty] && input.command.args[descriptor.requestIdProperty] !== requestId) throw Object.assign(new Error('External request identity is Host managed'), { code: 'REQUEST_ID_CONFLICT' })
-      const args = { ...input.command.args, [descriptor.requestIdProperty]: requestId }
+      let descriptor, requestId, args
+      try {
+        descriptor = keyFor(input, input.command?.name)
+        requestId = idFor(input.operationId)
+        if (input.command.args?.[descriptor.requestIdProperty] && input.command.args[descriptor.requestIdProperty] !== requestId) throw Object.assign(new Error('External request identity is Host managed'), { code: 'REQUEST_ID_CONFLICT' })
+        args = { ...input.command.args, [descriptor.requestIdProperty]: requestId }
+      } catch (cause) { throw notApplied(cause) }
       const value = await invokeTool({ tools, agent: input.agent, signal: input.signal, trustedSignals, name: descriptor.startName, args, callId: input.operationId })
       const receipt = decodeValue(value)
       if (receipt?.[descriptor.requestIdProperty] !== requestId) throw Object.assign(new Error('MCP start receipt did not confirm the Host request id'), { code: 'REQUEST_ID_NOT_CONFIRMED' })

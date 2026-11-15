@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createPollingRequestAdapter, discoverPollingRequestProtocols, createPwshJobsAdapter } from '../protocols.js'
+import { createPollingRequestAdapter, discoverPollingRequestProtocols, createPwshJobsAdapter, isKnownPhoneReadTool } from '../protocols.js'
 
 const schema = properties => ({ type: 'object', properties })
 const definitions = [
@@ -13,6 +13,9 @@ const definitions = [
 const protocols = discoverPollingRequestProtocols(definitions)
 assert.equal(protocols.length, 2, 'only complete same-namespace start/status/cancel tool sets are admitted')
 assert.equal(protocols[0].resourceKey, protocols[1].resourceKey, 'potential aliases share one conservative actor lock')
+assert.equal(isKnownPhoneReadTool('mcp__stardew__stardew_get_state'), true)
+assert.equal(isKnownPhoneReadTool('mcp__stardew2__stardew_get_state'), true, 'the explicitly supported second Stardew alias remains foreground safe')
+assert.equal(isKnownPhoneReadTool('mcp__untrusted__stardew_get_state'), false, 'another MCP server cannot borrow a safe raw tool name')
 
 const signals = new WeakSet()
 const seen = []
@@ -70,4 +73,18 @@ const preflightPwsh = createPwshJobsAdapter({
 })
 const preflightFailure = await preflightPwsh.execute({ operationId: 'op-preflight', owner: { conversationId: 'session-a' }, command: { name: 'pwsh', args: {} }, agent, signal: new AbortController().signal }).catch(error => error)
 assert.equal(preflightFailure.taskOutcome?.notApplied, true, 'protocol adapter proves a resolve failure happened before dispatch')
+let protocolDispatches = 0
+const protocolPreflight = createPollingRequestAdapter({
+  tools: { async resolve() { return { dispose() {} } }, async execute() { protocolDispatches++; throw new Error('must not dispatch') } },
+  definitionsFor: () => definitions,
+})
+const requestIdConflict = await protocolPreflight.execute({ operationId: 'op-conflict', command: { name: 'mcp__stardew__stardew_farm_task', args: { requestId: 'caller-chosen' } }, agent, signal: new AbortController().signal }).catch(error => error)
+assert.equal(requestIdConflict.taskOutcome?.notApplied, true, 'request identity conflict is rejected before dispatch')
+const cyclicProtocolArgs = {}; cyclicProtocolArgs.self = cyclicProtocolArgs
+const protocolSerializationFailure = await protocolPreflight.execute({ operationId: 'op-cyclic', command: { name: 'mcp__stardew__stardew_farm_task', args: cyclicProtocolArgs }, agent, signal: new AbortController().signal }).catch(error => error)
+assert.equal(protocolSerializationFailure.taskOutcome?.notApplied, true, 'MCP argument serialization failure is rejected before dispatch')
+const protocolLookupFailure = createPollingRequestAdapter({ tools: protocolPreflight.tools, definitionsFor: () => [] })
+const lookupFailure = await protocolLookupFailure.execute({ operationId: 'op-no-protocol', command: { name: 'mcp__missing__stardew_farm_task', args: {} }, agent, signal: new AbortController().signal }).catch(error => error)
+assert.equal(lookupFailure.taskOutcome?.notApplied, true, 'missing protocol lookup is rejected before dispatch')
+assert.equal(protocolDispatches, 0, 'all protocol preflight failures occur before tools.execute starts')
 console.log('task protocols ok')

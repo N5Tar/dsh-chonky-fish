@@ -31,6 +31,19 @@ const preflightAdapter = createDshToolAdapter({
 })
 const preflightFailure = await preflightAdapter.execute({ taskId: 'preflight', operationId: 'preflight-op', command: { name: 'fixture_write', args: {} }, agent, signal }).catch(error => error)
 assert.equal(preflightFailure.taskOutcome?.notApplied, true, 'failure before pipeline dispatch is classified as definitely not applied')
+const prepareFailureAdapter = createDshToolAdapter({
+  tools: { async resolve() { return { dispose() {} } }, async execute() { throw new Error('must not dispatch') } },
+  allowedTools: { fixture_write: { ...capability, prepareArguments() { throw new Error('argument preparation failed') } } },
+})
+const prepareFailure = await prepareFailureAdapter.execute({ taskId: 'prepare-failure', operationId: 'prepare-failure-op', command: { name: 'fixture_write', args: {} }, agent, signal }).catch(error => error)
+assert.equal(prepareFailure.taskOutcome?.notApplied, true, 'prepareArguments failure is known to happen before pipeline dispatch')
+const serializationFailureAdapter = createDshToolAdapter({
+  tools: { async resolve() { return { dispose() {} } }, async execute() { throw new Error('must not dispatch') } },
+  allowedTools: { fixture_write: capability },
+})
+const cyclicArguments = {}; cyclicArguments.self = cyclicArguments
+const serializationFailure = await serializationFailureAdapter.execute({ taskId: 'serialization-failure', operationId: 'serialization-failure-op', command: { name: 'fixture_write', args: cyclicArguments }, agent, signal }).catch(error => error)
+assert.equal(serializationFailure.taskOutcome?.notApplied, true, 'JSON serialization failure is known to happen before pipeline dispatch')
 const dispatchAdapter = createDshToolAdapter({
   tools: { async resolve() { return { dispose() {} } }, async execute() { throw new Error('transport closed after possible dispatch') } },
   allowedTools: { fixture_write: capability },
@@ -70,4 +83,24 @@ sourceAgent.session.snapshotEvents = () => [
   { type: 'assistant/message', data: { message: { content: [{ type: 'tool-call', id: 'call-7' }] } } },
 ]
 assert.equal(resolveSourceInputId(sourceAgent, { callId: 'call-7' }), null, 'cannot borrow an older owner input across a nearer external message')
+sourceAgent.session.snapshotEvents = () => [
+  { type: 'user/message', data: { id: 'user-current', source: { kind: 'user', rpcId: 'input-current' } } },
+  { type: 'user/message', data: { source: { kind: 'runtime-context' } } },
+  { type: 'request/header', data: { header: {} } },
+  { type: 'session/title', data: { source: { kind: 'fallback' } } },
+  { type: 'session/title-llm-request', data: {} },
+  { type: 'session/title', data: { source: { kind: 'provider' } } },
+  { type: 'assistant/message', data: { message: { content: [{ type: 'tool-call', id: 'call-7' }] } } },
+]
+assert.equal(resolveSourceInputId(sourceAgent, { callId: 'call-7' }), 'input-current', 'session title metadata before the first-turn tool call cannot mask the actual user input')
+sourceAgent.session.snapshotEvents = () => [
+  { type: 'user/message', data: { id: 'task-notice', source: { kind: 'chonkyfish-task-notice', ownerConversationId: 'conversation-a', sourceInputId: 'input-notice' } } },
+  { type: 'assistant/message', data: { message: { content: [{ type: 'tool-call', id: 'call-7' }] } } },
+]
+assert.equal(resolveSourceInputId(sourceAgent, { callId: 'call-7' }), 'input-notice', 'an owned task notice is a valid input source')
+sourceAgent.session.snapshotEvents = () => [
+  { type: 'user/message', data: { id: 'task-notice', source: { kind: 'chonkyfish-task-notice', ownerConversationId: 'other-conversation', sourceInputId: 'input-notice' } } },
+  { type: 'assistant/message', data: { message: { content: [{ type: 'tool-call', id: 'call-7' }] } } },
+]
+assert.equal(resolveSourceInputId(sourceAgent, { callId: 'call-7' }), null, 'a task notice owned by another conversation cannot supply this task input')
 console.log('task host adapter ok')

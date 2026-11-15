@@ -26,7 +26,10 @@ selection })`. `start` never delays or fabricates this gesture result.
   the core), optional `setTurnActive(boolean)`, `gate(boolean)`,
   `stop()`, `release()`. Events: `{type:'speech-start'|'speech-end'|'samples'
   |'error', sampleIndex, level?, error?}`; `samples` carries the newest absolute
-  16 kHz sample index. Speech transitions use the same sample clock.
+  16 kHz sample index. Speech transitions use the same sample clock. A duplex
+  capture returns `{duplex:{nearEndDetection,echoCancellationEnabled,
+  implementation,deviceVerified}}` from `start`. Device qualification is
+  separate from the requested constraint and from `getSettings()`.
 - `recognition`: `inspect()`, `transcribe(clipRef,{selection,operation}) ->
   {text}`. Selection is pinned at call start from capability inspection.
 - `audio`: `retain(clipRef)`, `release(clipRef)`, `read(clipRef)`; optional
@@ -41,7 +44,7 @@ selection })`. `start` never delays or fabricates this gesture result.
   unsubscribe`. `submit` resolves to `{accepted:true,evidence}` or
   `{accepted:false, outcome:'not_applied'|'unknown', rejected?:true, code?}`.
   `follow` batches use `{streamGeneration,cursor,reset,events}`. Event fields
-  follow the normalized DTOs in `voice-call-technical-v2.md` §5.1.
+  follow the normalized DTOs below and `docs/voice-call-technical-v3.md`.
 - `synthesis`: `inspect()`, `synthesize(text,voice,{operation}) -> clipRef`,
   `release(clipRef)`.
 - `ownership`: `acquire({callRef,conversationRef})`, `renew()`, `release()`;
@@ -78,7 +81,7 @@ drains retain their per-call follow and ConversationRef for up to 30 seconds
 for late acceptance proof. The same service may start a new ConversationRef;
 old drain events update only their original input and cannot speak or replay
 output into the new call. Abandoned metadata is bounded to 64 rows once its
-ASR and drain work has ended. `dispose()` uses the default behavior and is
+  drain has ended, even if an external submit never settles. `dispose()` uses the default behavior and is
 reserved for plugin unload.
 
 Snapshots are serializable UI data only:
@@ -92,8 +95,11 @@ Snapshots are serializable UI data only:
 
 Audio refs and operation signals do not appear in snapshots. Budgets and held
 inputs belong to the injected audio repository, so creating a new service does
-not reset the repository's totals. `unknown` blocks automatic delivery and is
-never resubmitted by a retry/check action.
+not reset the repository's totals. An `unknown` input is never resubmitted by
+a retry/check action and does not block later independent utterances. Accepted
+inputs do not wait for their agent turn or background task to finish before
+the next input is admitted. Preparation/submission are serialized only while
+admitting an individual input.
 
 Each service call creates a stable `scopeId` and passes it with cloned
 ConversationRefs to every conversation port call. Adapters should key retained
@@ -106,3 +112,67 @@ checked by the original stable submission identity. Preparation receives its
 own cancellable operation. If it resolves after mute, hangup, or a stale call
 fence, the core skips submission and calls `abandonSubmission`; the adapter
 returns `true` only when it confirms the prepared request was abandoned.
+
+## Continuous input and output eligibility
+
+Final silence defaults to 1200 ms. Recognition has a 30-second utterance
+finish deadline from speech-end, including final silence and queued recognition. Known unsent
+recognition failures release the attempt and audio so another utterance can
+proceed. Preparation and submission waits are each bounded to 30 seconds;
+admission checks to 5 seconds. A submit timeout retains its original identity
+as unknown, observes its late result, and never repeats the submit.
+
+Capture faults, lost ownership and exhausted real budgets end the call and
+stop both audio directions. Renewal waits are bounded; a late renewal cannot
+reopen the call. Hanging up does not cancel durable business tasks.
+
+`speaker-duplex` keeps sampling, AEC and VAD active while TTS plays. Near-end
+speech invalidates old reply eligibility and stops the active output. The
+Web composition requires an actually enabled echo-cancellation track; it
+does not certify acoustic performance. Legacy `speaker-turn-taking` is an
+explicit compatibility mode; the DSH composition migrates that stored default
+to `speaker-duplex`.
+
+Committed events use the following payloads (in addition to stream identity):
+
+```js
+{ type: 'input.accepted', inputId, submissionId, evidence }
+{ type: 'input.consumed', inputId, submissionId, messageId,
+  conversationTurnId, stepId, origin }
+{ type: 'reply.segment', replyId, conversationTurnId, responseId, stepId,
+  inputIds, submissionIds, origin, text, surfaceRevision }
+{ type: 'reply.revoked', replyId, conversationTurnId, responseId, stepId,
+  surfaceRevision }
+```
+
+A segment may play before `turn.ended`, but only after its declared inputs
+have matching `input.consumed` proof in the same call. Preparation or acceptance
+alone is insufficient. A step inherits the consumed watermark of its prior
+step, then incorporates new consumption. Newest received input and whole-turn
+origin are not substitutes for step provenance. Historical, external, mixed,
+revoked and interrupted outputs cannot become current local audio. Repeated
+segments/final aggregation do not replay already delivered audio.
+
+An `owned-task` consumed event additionally contains `taskId`, `taskVersion`
+and `sourceInputId`. Its stable submission identity is
+`chonkyfish-task-notice:${eventId}`. It is eligible only for the original task
+owner while a call is active. User speech, recognition, preparation and
+submission take priority; a newly accepted user input suppresses conflicting
+task audio. A call reset never retargets an old task or notice.
+
+## Host scheduling and task boundaries
+
+DSH-specific `steer`, conditional interruption and idle driver wake live in
+`app/dsh/adapters/voice/`; the core knows none of the DSH SDK. The Host first
+proves that the original accepted input remains unclaimed at the observed
+generation. An interruption is issued once; uncertain receipts are queried
+using the original interruption ID. A wake contains no message body. Host
+recreation may recover only proven local owned pending input; it must not
+replay submissions or wake social/unowned messages.
+
+`core/modules/tasks/service.js` is a separate portable lifecycle coordinator.
+Its injected repository owns durable namespace/conversation identity,
+operation receipts, versions, resource locks and event outbox. External
+adapters explicitly define execution scope, status, cancellation and recovery.
+Task ownership never depends on the current voice lease, call generation or
+page binding. See `docs/voice-call-implementation-guide.md` for adapter usage.

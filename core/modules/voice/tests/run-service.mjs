@@ -359,9 +359,57 @@ await test('ownership renews at five seconds and revocation stops both local dir
 await test('lease loss during renewal stops the microphone and reply playback', async () => {
   const f = fixture(); await f.begin(); f.ownership.renew = async () => ({ valid: false });
   await f.advanceTimer(5000);
-  assert.equal(f.service.getSnapshot().capture.status, 'paused-ownership');
+  assert.equal(f.service.getSnapshot().call.status, 'ended');
+  assert.equal(f.service.getSnapshot().capture.status, 'stopped');
   assert.ok(f.stoppedCaptures > 0); assert.ok(f.playbackStops > 0);
   await f.service.hangup();
+});
+
+await test('ownership revocation and a hung renewal end the single-button call', async () => {
+  const f = fixture(); await f.begin();
+  f.captureEvents({ type: 'error', error: { code: 'OWNERSHIP_LOST' } });
+  await settle();
+  assert.equal(f.service.getSnapshot().call.status, 'ended');
+  assert.equal(f.service.getSnapshot().capture.status, 'stopped');
+  const next = fixture(), pending = deferred(); await next.begin();
+  next.ownership.renew = () => pending.promise;
+  const timer = [...next.timers.values()].find(item => !item.cancelled && item.ms === 5000);
+  next.timers.delete(timer);
+  const renewing = timer.fn(); await settle();
+  await next.advanceTimer(5000); await renewing;
+  assert.equal(next.service.getSnapshot().call.status, 'ended');
+  assert.ok(next.stoppedCaptures > 0);
+  pending.resolve({ valid: true, leaseMs: 15000 }); await settle();
+  assert.equal(next.service.getSnapshot().call.status, 'ended', 'late renewal cannot reopen the call');
+});
+
+await test('utterance recognition deadline includes the final silence before sealing', async () => {
+  const f = fixture(); await f.begin();
+  f.recognition.transcribe = () => new Promise(() => {});
+  f.captureEvents({ type: 'speech-start', sampleIndex: 10000 }); await settle();
+  f.captureEvents({ type: 'speech-end', sampleIndex: 12000 }); await settle();
+  await f.advanceTimer(1200);
+  f.captureEvents({ type: 'samples', sampleIndex: 32000 }); await settle();
+  assert.ok([...f.timers.values()].some(timer => !timer.cancelled && timer.ms === 28800), 'speech-end starts the thirty-second finish budget');
+  await f.service.hangup({ abandonPending: true });
+  const late = fixture(); await late.begin();
+  late.captureEvents({ type: 'speech-start', sampleIndex: 10000 }); await settle();
+  late.captureEvents({ type: 'speech-end', sampleIndex: 12000 }); await settle();
+  await late.advanceTimer(30001);
+  late.captureEvents({ type: 'samples', sampleIndex: 32000 }); await settle();
+  assert.equal(late.submitted.length, 0, 'an already expired attempt cannot race an immediate transcription');
+  assert.equal(late.service.getSnapshot().inputs[0].error.code, 'VOICE_ASR_UTTERANCE_TIMEOUT');
+  await late.service.hangup({ abandonPending: true });
+});
+
+await test('short ownership leases renew before their validity deadline', async () => {
+  const f = fixture();
+  f.ownership.acquire = async () => ({ valid: true, leaseMs: 5000 });
+  f.ownership.renew = async () => ({ valid: false });
+  await f.begin();
+  assert.ok([...f.timers.values()].some(timer => !timer.cancelled && timer.ms === 2000));
+  await f.advanceTimer(2000);
+  assert.equal(f.service.getSnapshot().call.status, 'ended');
 });
 
 await test('accepted proof is monotonic when submit reports a later transport failure', async () => {

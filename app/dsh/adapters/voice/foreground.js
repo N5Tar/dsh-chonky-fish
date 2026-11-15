@@ -8,6 +8,7 @@ export function createDshForeground({ ctx, supervisionTimeoutMs = 10000, ownerPa
   if (!ctx?.agents || typeof ctx.on !== 'function') throw new TypeError('Host agent access and event observation are required')
   const activity = new Map(), targets = new Map(), receipts = new Map(), recovered = new WeakSet(), watchedSettlements = new WeakSet()
   let closed = false
+  const lookupAgent = id => typeof ctx.agents.get === 'function' ? ctx.agents.get(id) : null
   const listen = (type, handler, options) => ctx.on(type, handler, options)
   const offClaimed = listen('agent/inbox/claimed', ({ agent, message, turn } = {}) => {
     const rpcId = message?.source?.rpcId
@@ -26,7 +27,7 @@ export function createDshForeground({ ctx, supervisionTimeoutMs = 10000, ownerPa
   }, { global: true })
   const offSessionEvent = listen('session/event', (session, event) => {
     const sessionId = session?.sessionId ?? session?.id
-    const agent = typeof sessionId === 'string' ? ctx.agents.get(sessionId) : null
+    const agent = typeof sessionId === 'string' ? lookupAgent(sessionId) : null
     if (!agent || agent.session !== session || !event) return
     if (event.type === 'step/start' && Number.isSafeInteger(event.data?.turn)) {
       for (const target of targets.values()) if (target.agent === agent && target.claimed && target.turn === event.data.turn) { target.supervised = true; notifyTarget(target) }
@@ -37,7 +38,7 @@ export function createDshForeground({ ctx, supervisionTimeoutMs = 10000, ownerPa
   }, { global: true })
 
   function recoverAgent(agent) {
-    if (closed || !ownerPath || !agent || recovered.has(agent) || ctx.agents.get(agent.id) !== agent) return false
+    if (closed || !ownerPath || !agent || recovered.has(agent) || lookupAgent(agent.id) !== agent) return false
     if (agent.status !== 'idle' || agent.phase?.kind !== 'idle' || !Array.isArray(agent.inbox?.nextStep) || !Array.isArray(agent.inbox?.nextTurn)) return false
     const roots = typeof ctx.agents.roots === 'function' ? ctx.agents.roots() : []
     if (!roots.includes(agent)) return false
@@ -64,7 +65,7 @@ export function createDshForeground({ ctx, supervisionTimeoutMs = 10000, ownerPa
 
   function getAgent(ref) {
     if (closed || !ref || typeof ref.runtimeId !== 'string' || typeof ref.bindingRevision !== 'string' || typeof ref.conversationId !== 'string') return null
-    const agent = ctx.agents.get(ref.conversationId)
+    const agent = lookupAgent(ref.conversationId)
     if (!agent || agent.id !== ref.conversationId || (agent.session?.sessionId ?? agent.session?.id) !== ref.conversationId) return null
     try { if (ctx.agentPresets?.composedPreset(agent.ctx) !== PRESET && agent.session?.header?.agentPreset !== PRESET) return null } catch { return null }
     return agent
@@ -111,7 +112,7 @@ export function createDshForeground({ ctx, supervisionTimeoutMs = 10000, ownerPa
     agent.cancel({ kind: 'user' }, { keepInbox: true })
     try {
       await oldActivity
-      if (closed || ctx.agents.get(agent.id) !== agent) return { status: 'outcome-unknown', reason: 'agent-replaced' }
+      if (closed || lookupAgent(agent.id) !== agent) return { status: 'outcome-unknown', reason: 'agent-replaced' }
       let observedTarget = targets.get(key)
       if (observedTarget?.consumed || observedTarget?.supervised) return { status: 'applied', interruptionId }
       if (hasPending(agent, acceptedSubmissionId)) {

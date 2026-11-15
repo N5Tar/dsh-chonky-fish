@@ -29,6 +29,11 @@ export function createTaskRepository({ dbPath, DatabaseSync, now = Date.now }) {
   }
   function namespaceId() { assertOpen(); return db.prepare("SELECT value FROM task_meta WHERE key='namespace_id'").get().value }
   function getTask(id) { assertOpen(); return decode(db.prepare('SELECT payload_json FROM tasks WHERE id=?').get(id)) }
+  function getOperation(id) {
+    assertOpen()
+    const row = db.prepare('SELECT id,task_id,kind,owner_namespace,owner_conversation,command_digest,created_at FROM task_operations WHERE id=?').get(id)
+    return row ? { id: row.id, taskId: row.task_id, kind: row.kind, owner: { namespaceId: row.owner_namespace, conversationId: row.owner_conversation }, commandDigest: row.command_digest, createdAt: row.created_at, task: getTask(row.task_id) } : null
+  }
   return {
     namespaceId,
     createTask(task, operation) {
@@ -46,11 +51,7 @@ export function createTaskRepository({ dbPath, DatabaseSync, now = Date.now }) {
       } catch (error) { try { db.exec('ROLLBACK') } catch {} throw error }
     },
     getTask,
-    getOperation(id) {
-      assertOpen()
-      const row = db.prepare('SELECT id,task_id,kind,owner_namespace,owner_conversation,command_digest,created_at FROM task_operations WHERE id=?').get(id)
-      return row ? { id: row.id, taskId: row.task_id, kind: row.kind, owner: { namespaceId: row.owner_namespace, conversationId: row.owner_conversation }, commandDigest: row.command_digest, createdAt: row.created_at, task: getTask(row.task_id) } : null
-    },
+    getOperation,
     recordOperation(operation) {
       assertOpen(); db.exec('BEGIN IMMEDIATE')
       try {
@@ -58,6 +59,27 @@ export function createTaskRepository({ dbPath, DatabaseSync, now = Date.now }) {
         if (prior) { db.exec('ROLLBACK'); return false }
         db.prepare('INSERT INTO task_operations(id,task_id,kind,owner_namespace,owner_conversation,command_digest,created_at) VALUES(?,?,?,?,?,?,?)').run(operation.id, operation.taskId, operation.kind, operation.owner.namespaceId, operation.owner.conversationId, operation.commandDigest, operation.createdAt ?? now())
         db.exec('COMMIT'); return true
+      } catch (error) { try { db.exec('ROLLBACK') } catch {} throw error }
+    },
+    recordCancelIntent({ operation, expectedVersion }) {
+      assertOpen(); db.exec('BEGIN IMMEDIATE')
+      try {
+        const task = getTask(operation.taskId)
+        if (!task) { db.exec('ROLLBACK'); return { stale: true, task: null } }
+        const prior = db.prepare('SELECT id FROM task_operations WHERE id=?').get(operation.id)
+        if (prior) {
+          const existing = getOperation(operation.id)
+          db.exec('ROLLBACK')
+          return { duplicate: true, operation: existing, task }
+        }
+        if (TERMINAL.has(task.status)) { db.exec('ROLLBACK'); return { terminal: true, task } }
+        if (task.version !== expectedVersion) { db.exec('ROLLBACK'); return { stale: true, task } }
+        db.prepare('INSERT INTO task_operations(id,task_id,kind,owner_namespace,owner_conversation,command_digest,created_at) VALUES(?,?,?,?,?,?,?)').run(operation.id, operation.taskId, operation.kind, operation.owner.namespaceId, operation.owner.conversationId, operation.commandDigest, operation.createdAt ?? now())
+        const next = { ...task, status: 'stopping', cancelOperationId: operation.id, summary: 'stop requested', version: task.version + 1, updatedAt: now() }
+        db.prepare('UPDATE tasks SET status=?,version=?,updated_at=?,payload_json=? WHERE id=? AND version=?').run(next.status, next.version, next.updatedAt, json(next), next.id, task.version)
+        insertEvent(next, 'task.stopping')
+        db.exec('COMMIT')
+        return { duplicate: false, operation, task: next }
       } catch (error) { try { db.exec('ROLLBACK') } catch {} throw error }
     },
     updateTask(id, version, patch, type) {
@@ -76,9 +98,10 @@ export function createTaskRepository({ dbPath, DatabaseSync, now = Date.now }) {
       return db.prepare('SELECT payload_json FROM tasks WHERE owner_namespace=? AND owner_conversation=? ORDER BY created_at DESC LIMIT 100').all(owner.namespaceId, owner.conversationId).map(decode)
     },
     listAllTasks() { assertOpen(); return db.prepare('SELECT payload_json FROM tasks ORDER BY created_at').all().map(decode) },
-    readEvents(taskId, afterVersion = 0) {
+    readEvents(taskId, afterVersion = 0, limit = 50) {
       assertOpen()
-      return db.prepare('SELECT payload_json FROM task_events WHERE task_id=? AND version>? ORDER BY version').all(taskId, afterVersion).map(row => JSON.parse(row.payload_json))
+      const pageSize = Number.isSafeInteger(limit) ? Math.max(1, Math.min(100, limit)) : 50
+      return db.prepare('SELECT payload_json FROM task_events WHERE task_id=? AND version>? ORDER BY version LIMIT ?').all(taskId, afterVersion, pageSize).map(row => JSON.parse(row.payload_json))
     },
     getPendingEvents() { assertOpen(); return db.prepare('SELECT payload_json FROM task_events WHERE delivered=0 ORDER BY seq').all().map(row => JSON.parse(row.payload_json)) },
     markEventDelivered(eventId) { assertOpen(); return Number(db.prepare("UPDATE task_events SET delivered=1 WHERE task_id || ':v' || version=? AND delivered=0").run(eventId).changes) > 0 },

@@ -47,16 +47,14 @@ export function createVoiceService(deps) {
     if (generation !== captureGeneration || call.status !== 'connected' || activeRun?.inputEnabled === false || captureState.muted) return;
     if (!event || typeof event !== 'object') return;
     if (event.type === 'error') {
-      error = errorView(event.error, 'capture');
-      if (event.error?.code === 'OWNERSHIP_LOST') { captureState.status = 'paused-ownership'; accepting = false; void capture.stop(); void stopPlayback('ownership-lost'); }
-      else { endForFailure(event.error, 'capture'); } publish(); return;
+      endForFailure(event.error, 'capture'); return;
     }
     if (event.type === 'speech-start') {
       const input = openInput(event.sampleIndex);
-      if (input) { void capture.setTurnActive?.(true); turn.start(event.sampleIndex, input.startSample); input.endSample = event.sampleIndex; }
+      if (input) { input.speechEndedAt = null; void capture.setTurnActive?.(true); turn.start(event.sampleIndex, input.startSample); input.endSample = event.sampleIndex; }
       return;
     }
-    if (event.type === 'speech-end') { turn.end(event.sampleIndex); return; }
+    if (event.type === 'speech-end') { if (currentInput) currentInput.speechEndedAt = clock.monoNow(); turn.end(event.sampleIndex); return; }
     if (event.type === 'samples') {
       const actions = turn.advance(event.sampleIndex);
       for (const action of actions) {
@@ -83,7 +81,14 @@ export function createVoiceService(deps) {
       closeAttempt(input); void capture.setTurnActive?.(false); endForFailure(Object.assign(e, { message: '采集失败，本句未发送，通话已结束。' }), 'capture-cut'); return;
     }
     input.clips.push({ ref, startSample, endSample, transcript: null });
-    if (seal) { input.sealed = true; input.status = 'recognizing'; if (currentInput === input) currentInput = null; turn.reset(); void capture.setTurnActive?.(false); input.attemptTimer = clock.schedule(() => { void enqueue(() => failRecognition(input, Object.assign(new Error('本句识别超时，未发送，请重说。'), { code: 'VOICE_ASR_UTTERANCE_TIMEOUT' }))); }, VOICE_LIMITS.maxTranscriptSeconds * 1000); }
+    if (seal) {
+      input.sealed = true; input.status = 'recognizing'; if (currentInput === input) currentInput = null;
+      turn.reset(); void capture.setTurnActive?.(false);
+      const finishMs = Math.max(0, VOICE_LIMITS.maxTranscriptSeconds * 1000 - (clock.monoNow() - (input.speechEndedAt ?? clock.monoNow())));
+      const timeout = () => failRecognition(input, Object.assign(new Error('本句识别超时，未发送，请重说。'), { code: 'VOICE_ASR_UTTERANCE_TIMEOUT' }));
+      if (finishMs === 0) { timeout(); return; }
+      input.attemptTimer = clock.schedule(() => { void enqueue(timeout); }, finishMs);
+    }
     else input.status = 'recognizing';
     recognitionQueue.push({ input, clip: input.clips.at(-1), selection: input.run?.selection ?? call.selection });
     runRecognitionQueue(); publish();
@@ -539,15 +544,15 @@ export function createVoiceService(deps) {
       if (activeRun !== run || !['connected', 'preparing'].includes(call.status) || !run.leaseHeld) return;
       const requestedAt = clock.monoNow();
       try {
-        const lease = await ownership.renew({ callRef: { callId: run.callId, conversation: clone(run.ref), generation: run.generation } });
+        const lease = await boundedWait(Promise.resolve().then(() => ownership.renew({ callRef: { callId: run.callId, conversation: clone(run.ref), generation: run.generation } })), { seconds: Math.max(0, Math.min(5, (run.leaseDeadline - requestedAt) / 1000)), code: 'VOICE_OWNERSHIP_LOST', outcome: 'unknown' });
         if (activeRun !== run || !['connected', 'preparing'].includes(call.status)) return;
         if (lease?.valid === false) throw Object.assign(new Error('Voice ownership lease expired'), { code: 'VOICE_OWNERSHIP_LOST' });
         run.leaseDeadline = requestedAt + Math.max(0, (lease?.leaseMs ?? 15000) - 1000);
         scheduleRenew(run);
       } catch (e) {
-        if (activeRun === run) { accepting = false; captureState.status = 'paused-ownership'; if (call.status === 'preparing') call.status = 'failed'; error = errorView(e, 'ownership-renew'); ++captureGeneration; void capture.stop(); void stopPlayback('ownership-lost'); publish(); }
+        if (activeRun === run && ['connected', 'preparing'].includes(call.status)) endForFailure(e, 'ownership-renew');
       }
-    }, 5000);
+    }, Math.min(5000, Math.max(0, (run.leaseDeadline - clock.monoNow()) / 2)));
   }
   function hasAbandonedUnknownAdmission(run) { return inputs.some((input) => input.run === run && input.localDisposition === 'abandoned' && input.admission === 'unknown'); }
   function maybeReleaseDrainingRun(run) {

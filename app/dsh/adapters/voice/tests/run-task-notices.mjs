@@ -31,4 +31,11 @@ assert.equal(sent.length, 2)
 ctx.sessions.flush = async () => true
 assert.deepEqual(await notify(second), { acknowledged: true })
 assert.equal(sent.length, 2, 'retrying a failed flush only flushes the existing inbox entry')
+const sessions = ctx.sessions
+delete ctx.sessions
+Object.defineProperty(ctx, 'sessions', { get() { throw new Error('cannot get property sessions without inject') } })
+ctx.get = name => name === 'sessions' ? sessions : undefined
+agent.session.sessionId = agent.session.id
+delete agent.session.id
+assert.deepEqual(await notify(event), { acknowledged: true }, 'optional Sessions service and SDK sessionId do not block durable notices')
 console.log('task notice bridge: owner isolation, stable message dedup and durable acknowledgement passed')

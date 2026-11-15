@@ -301,21 +301,13 @@ var ChonkyFishVoiceBundle = (() => {
       if (generation !== captureGeneration || call.status !== "connected" || activeRun?.inputEnabled === false || captureState.muted) return;
       if (!event || typeof event !== "object") return;
       if (event.type === "error") {
-        error = errorView(event.error, "capture");
-        if (event.error?.code === "OWNERSHIP_LOST") {
-          captureState.status = "paused-ownership";
-          accepting = false;
-          void capture.stop();
-          void stopPlayback("ownership-lost");
-        } else {
-          endForFailure(event.error, "capture");
-        }
-        publish();
+        endForFailure(event.error, "capture");
         return;
       }
       if (event.type === "speech-start") {
         const input = openInput(event.sampleIndex);
         if (input) {
+          input.speechEndedAt = null;
           void capture.setTurnActive?.(true);
           turn.start(event.sampleIndex, input.startSample);
           input.endSample = event.sampleIndex;
@@ -323,6 +315,7 @@ var ChonkyFishVoiceBundle = (() => {
         return;
       }
       if (event.type === "speech-end") {
+        if (currentInput) currentInput.speechEndedAt = clock2.monoNow();
         turn.end(event.sampleIndex);
         return;
       }
@@ -376,9 +369,15 @@ var ChonkyFishVoiceBundle = (() => {
         if (currentInput === input) currentInput = null;
         turn.reset();
         void capture.setTurnActive?.(false);
+        const finishMs = Math.max(0, VOICE_LIMITS.maxTranscriptSeconds * 1e3 - (clock2.monoNow() - (input.speechEndedAt ?? clock2.monoNow())));
+        const timeout = () => failRecognition(input, Object.assign(new Error("\u672C\u53E5\u8BC6\u522B\u8D85\u65F6\uFF0C\u672A\u53D1\u9001\uFF0C\u8BF7\u91CD\u8BF4\u3002"), { code: "VOICE_ASR_UTTERANCE_TIMEOUT" }));
+        if (finishMs === 0) {
+          timeout();
+          return;
+        }
         input.attemptTimer = clock2.schedule(() => {
-          void enqueue(() => failRecognition(input, Object.assign(new Error("\u672C\u53E5\u8BC6\u522B\u8D85\u65F6\uFF0C\u672A\u53D1\u9001\uFF0C\u8BF7\u91CD\u8BF4\u3002"), { code: "VOICE_ASR_UTTERANCE_TIMEOUT" })));
-        }, VOICE_LIMITS.maxTranscriptSeconds * 1e3);
+          void enqueue(timeout);
+        }, finishMs);
       } else input.status = "recognizing";
       recognitionQueue.push({ input, clip: input.clips.at(-1), selection: input.run?.selection ?? call.selection });
       runRecognitionQueue();
@@ -1081,24 +1080,15 @@ var ChonkyFishVoiceBundle = (() => {
         if (activeRun !== run || !["connected", "preparing"].includes(call.status) || !run.leaseHeld) return;
         const requestedAt = clock2.monoNow();
         try {
-          const lease = await ownership.renew({ callRef: { callId: run.callId, conversation: clone(run.ref), generation: run.generation } });
+          const lease = await boundedWait(Promise.resolve().then(() => ownership.renew({ callRef: { callId: run.callId, conversation: clone(run.ref), generation: run.generation } })), { seconds: Math.max(0, Math.min(5, (run.leaseDeadline - requestedAt) / 1e3)), code: "VOICE_OWNERSHIP_LOST", outcome: "unknown" });
           if (activeRun !== run || !["connected", "preparing"].includes(call.status)) return;
           if (lease?.valid === false) throw Object.assign(new Error("Voice ownership lease expired"), { code: "VOICE_OWNERSHIP_LOST" });
           run.leaseDeadline = requestedAt + Math.max(0, (lease?.leaseMs ?? 15e3) - 1e3);
           scheduleRenew(run);
         } catch (e) {
-          if (activeRun === run) {
-            accepting = false;
-            captureState.status = "paused-ownership";
-            if (call.status === "preparing") call.status = "failed";
-            error = errorView(e, "ownership-renew");
-            ++captureGeneration;
-            void capture.stop();
-            void stopPlayback("ownership-lost");
-            publish();
-          }
+          if (activeRun === run && ["connected", "preparing"].includes(call.status)) endForFailure(e, "ownership-renew");
         }
-      }, 5e3);
+      }, Math.min(5e3, Math.max(0, (run.leaseDeadline - clock2.monoNow()) / 2)));
     }
     function hasAbandonedUnknownAdmission(run) {
       return inputs.some((input) => input.run === run && input.localDisposition === "abandoned" && input.admission === "unknown");
@@ -2297,9 +2287,10 @@ var ChonkyFishVoiceBundle = (() => {
     if (timer) clearTimeout(timer);
     record.localRequests.delete(requestId);
   }
-  function removeOwnerSubmissions(prepared, owner) {
+  function removeOwnerSubmissions(prepared, owner, rejections, recordKey) {
     if (!owner) return;
     for (const [submissionId, item] of prepared) if (item.owner === owner) prepared.delete(submissionId);
+    for (const [submissionId, item] of rejections) if (item.recordKey === recordKey && item.scopeId === owner.scopeId) rejections.delete(submissionId);
   }
   function scopeIdFor(ref, supplied, owners, { createLegacy = false } = {}) {
     if (typeof supplied === "string" && supplied.trim()) return supplied;
@@ -2322,7 +2313,7 @@ var ChonkyFishVoiceBundle = (() => {
   }
   function createDshConversation({ ctx, chat, foreground } = {}) {
     if (!chat?.getVoiceBinding || !chat?.getVoiceTarget || !chat?.retainVoiceBinding) throw new TypeError("Strict chat voice accessors and independent retain are required");
-    const retained = /* @__PURE__ */ new Map(), prepared = /* @__PURE__ */ new Map(), listeners = /* @__PURE__ */ new Set();
+    const retained = /* @__PURE__ */ new Map(), prepared = /* @__PURE__ */ new Map(), rejections = /* @__PURE__ */ new Map(), listeners = /* @__PURE__ */ new Set();
     let disposed = false;
     function currentBinding(ref) {
       if (disposed || typeof chat.getVoiceTarget !== "function") return null;
@@ -2371,6 +2362,17 @@ var ChonkyFishVoiceBundle = (() => {
       if (item.accepted) return;
       item.accepted = true;
       if (item.owner?.record && !item.owner.record.closed) emit(item.owner.record, [{ type: "input.accepted", submissionId: item.requestId, evidence }]);
+    }
+    function retireRejected(item, code) {
+      item.rejectionCode = code;
+      try {
+        item.abandon();
+      } catch {
+      }
+      item.retired = true;
+      prepared.delete(item.requestId);
+      rejections.set(item.requestId, { recordKey: item.recordKey, scopeId: item.scopeId, code });
+      while (rejections.size > MAX_PREPARED_SUBMISSIONS) rejections.delete(rejections.keys().next().value);
     }
     async function interruptAccepted(item, conversationRef) {
       if (item.interruption?.status === "applied" || item.interruption?.status === "stale") return item.interruption;
@@ -2619,7 +2621,7 @@ var ChonkyFishVoiceBundle = (() => {
           const owner = value.owners.get(scope);
           if (!owner) throw Object.assign(new Error("Voice call scope is not retained"), { code: "VOICE_SCOPE_STALE", outcome: "not_applied" });
           value.owners.delete(scope);
-          removeOwnerSubmissions(prepared, owner);
+          removeOwnerSubmissions(prepared, owner, rejections, key);
           if (value.retainCount > 1) value.retainCount--;
           else {
             value.retainCount = 0;
@@ -2630,6 +2632,7 @@ var ChonkyFishVoiceBundle = (() => {
             } catch {
             }
             for (const [submissionId, item] of prepared) if (item.recordKey === key) prepared.delete(submissionId);
+            for (const [submissionId, item] of rejections) if (item.recordKey === key) rejections.delete(submissionId);
           }
         }
       },
@@ -2654,6 +2657,7 @@ var ChonkyFishVoiceBundle = (() => {
         } });
         if (!submission || typeof submission.requestId !== "string" || !submission.requestId || typeof submission.abandon !== "function") throw Object.assign(new Error("DSH Session did not provide a stable submission identity"), { code: "VOICE_SUBMISSION_ID_MISSING", outcome: "unknown" });
         item.requestId = submission.requestId;
+        rejections.delete(item.requestId);
         item.foregroundState = foregroundState || { available: false, reason: "foreground-control-unavailable" };
         item.foregroundExpected = foregroundState?.available === true ? foregroundState.expected : null;
         item.abandon = submission.abandon;
@@ -2690,12 +2694,7 @@ var ChonkyFishVoiceBundle = (() => {
               markAccepted(item, evidence2);
               return { accepted: true, evidence: evidence2, foreground: await interruptAccepted(item, conversationRef) };
             }
-            item.rejectionCode = error.code;
-            try {
-              item.abandon();
-            } catch {
-            }
-            item.retired = true;
+            retireRejected(item, error.code);
             return { accepted: false, rejected: true, outcome: "not_applied", code: error.code };
           }
           throw Object.assign(error, { code: error?.code || "VOICE_SUBMISSION_UNKNOWN", outcome: "unknown" });
@@ -2711,12 +2710,7 @@ var ChonkyFishVoiceBundle = (() => {
         }
         const code = result?.error?.code;
         if (preAdmissionFailure(code)) {
-          item.rejectionCode = code;
-          try {
-            item.abandon();
-          } catch {
-          }
-          item.retired = true;
+          retireRejected(item, code);
           return { accepted: false, rejected: true, outcome: "not_applied", code };
         }
         return { accepted: false, rejected: false, outcome: "unknown", code: typeof code === "string" ? code : "DSH_PROMPT_OUTCOME_UNKNOWN" };
@@ -2725,7 +2719,11 @@ var ChonkyFishVoiceBundle = (() => {
         const item = prepared.get(submissionId);
         const value = retained.get(refKey(conversationRef));
         const scope = scopeIdFor(conversationRef, scopeId, value?.owners || /* @__PURE__ */ new Map());
-        if (!item || item.recordKey !== refKey(conversationRef) || item.scopeId !== scope) return { status: "unknown", outcome: "unknown" };
+        if (!item) {
+          const rejected = rejections.get(submissionId);
+          return rejected?.recordKey === refKey(conversationRef) && rejected.scopeId === scope ? { status: "rejected", outcome: "not_applied", code: rejected.code } : { status: "unknown", outcome: "unknown" };
+        }
+        if (item.recordKey !== refKey(conversationRef) || item.scopeId !== scope) return { status: "unknown", outcome: "unknown" };
         if (item.accepted) return { status: "accepted", accepted: true, evidence: "prompt-accept-callback", foreground: await interruptAccepted(item, conversationRef) };
         const binding = getBinding(conversationRef);
         const entries = binding?.eventSource?.getSnapshot?.().entries || [];
@@ -2848,6 +2846,7 @@ var ChonkyFishVoiceBundle = (() => {
           if (record.closed) return;
           record.closed = true;
           listeners.delete(record);
+          if (owner.record === record) owner.record = null;
           for (const requestId of record.localRequests.keys()) clearLocalRequest(record, requestId);
           try {
             record.unsubscribe?.();
@@ -2858,6 +2857,7 @@ var ChonkyFishVoiceBundle = (() => {
           } catch {
           }
           signal?.removeEventListener("abort", stopSignal);
+          record.callbacks.clear();
         };
         signal?.addEventListener("abort", stopSignal, { once: true });
         if (signal?.aborted) {
@@ -2870,10 +2870,12 @@ var ChonkyFishVoiceBundle = (() => {
         disposed = true;
         for (const listener of listeners) {
           listener.closed = true;
+          if (listener.owner.record === listener) listener.owner.record = null;
           for (const requestId of listener.localRequests.keys()) clearLocalRequest(listener, requestId);
           listener.localAccepted.clear();
           listener.localRejected.clear();
           listener.localCompleted.clear();
+          listener.callbacks.clear();
           try {
             listener.unsubscribe?.();
           } catch {
@@ -2893,6 +2895,7 @@ var ChonkyFishVoiceBundle = (() => {
           }
         }
         prepared.clear();
+        rejections.clear();
         for (const [key, value] of retained) {
           retained.delete(key);
           try {
@@ -2924,6 +2927,14 @@ var ChonkyFishVoiceBundle = (() => {
       VOICE_AUDIO_BUDGET: "\u672C\u6B21\u901A\u8BDD\u97F3\u9891\u7F13\u5B58\u5DF2\u8FBE\u4E0A\u9650\u3002\u8BF7\u7ED3\u675F\u901A\u8BDD\u540E\u91CD\u65B0\u5F00\u59CB\u3002",
       VOICE_CAPTURE_STALLED: "\u9EA6\u514B\u98CE\u5DF2\u505C\u6B62\u63D0\u4F9B\u97F3\u9891\u3002\u8BF7\u68C0\u67E5\u8F93\u5165\u8BBE\u5907\uFF0C\u518D\u7ED3\u675F\u5E76\u91CD\u65B0\u5F00\u59CB\u901A\u8BDD\u3002",
       VOICE_VAD_BACKLOG: "\u8BED\u97F3\u5904\u7406\u843D\u540E\u8FC7\u591A\u3002\u8BF7\u7ED3\u675F\u901A\u8BDD\u540E\u91CD\u65B0\u5F00\u59CB\u3002",
+      VOICE_ASR_UTTERANCE_TIMEOUT: "\u672C\u53E5\u8BC6\u522B\u8D85\u65F6\uFF0C\u672A\u53D1\u9001\uFF0C\u8BF7\u91CD\u65B0\u8BF4\u4E00\u53E5\u3002",
+      VOICE_PREPARE_TIMEOUT: "\u672C\u53E5\u5C1A\u672A\u53D1\u9001\uFF0C\u51C6\u5907\u6D88\u606F\u8D85\u65F6\u3002\u8BF7\u91CD\u65B0\u8BF4\u4E00\u53E5\u3002",
+      VOICE_SUBMIT_TIMEOUT: "\u672C\u53E5\u53D1\u9001\u7ED3\u679C\u6B63\u5728\u6838\u5BF9\uFF0C\u8BF7\u52FF\u91CD\u590D\u53D1\u9001\u3002\u4F60\u53EF\u4EE5\u7EE7\u7EED\u8BF4\u4E0B\u4E00\u53E5\u3002",
+      VOICE_ADMISSION_CHECK_TIMEOUT: "\u6682\u65F6\u65E0\u6CD5\u786E\u8BA4\u672C\u53E5\u662F\u5426\u5DF2\u63A5\u6536\uFF0C\u8BF7\u52FF\u91CD\u590D\u53D1\u9001\u3002\u4F60\u53EF\u4EE5\u7EE7\u7EED\u8BF4\u4E0B\u4E00\u53E5\u3002",
+      VOICE_DUPLEX_UNAVAILABLE: "\u5F53\u524D\u9EA6\u514B\u98CE\u672A\u542F\u7528\u56DE\u58F0\u6D88\u9664\uFF0C\u65E0\u6CD5\u5F00\u59CB\u626C\u58F0\u5668\u901A\u8BDD\u3002\u8BF7\u68C0\u67E5\u8BBE\u5907\u8BBE\u7F6E\u540E\u91CD\u8BD5\u3002",
+      VOICE_DEVICE_CHANGED: "\u97F3\u9891\u8BBE\u5907\u5DF2\u53D8\u5316\uFF0C\u901A\u8BDD\u5DF2\u7ED3\u675F\u3002\u8BF7\u91CD\u65B0\u5F00\u542F\u901A\u8BDD\u3002",
+      VOICE_OWNERSHIP_LOST: "\u901A\u8BDD\u8FDE\u63A5\u5DF2\u5931\u6548\uFF0C\u901A\u8BDD\u5DF2\u7ED3\u675F\u3002\u8BF7\u91CD\u65B0\u5F00\u542F\u901A\u8BDD\u3002",
+      OWNERSHIP_LOST: "\u901A\u8BDD\u8FDE\u63A5\u5DF2\u5931\u6548\uFF0C\u901A\u8BDD\u5DF2\u7ED3\u675F\u3002\u8BF7\u91CD\u65B0\u5F00\u542F\u901A\u8BDD\u3002",
       VOICE_MIC_PERMISSION: "\u9EA6\u514B\u98CE\u672A\u83B7\u6388\u6743\u3002\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u6388\u6743\u540E\u91CD\u65B0\u5F00\u59CB\u901A\u8BDD\u3002",
       MIC_PERMISSION: "\u9EA6\u514B\u98CE\u672A\u83B7\u6388\u6743\u3002\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u6388\u6743\u540E\u91CD\u65B0\u5F00\u59CB\u901A\u8BDD\u3002",
       VOICE_MIC_DISCONNECTED: "\u9EA6\u514B\u98CE\u5DF2\u65AD\u5F00\u3002\u8BF7\u91CD\u65B0\u8FDE\u63A5\u8BBE\u5907\uFF0C\u518D\u7ED3\u675F\u5E76\u91CD\u65B0\u5F00\u59CB\u901A\u8BDD\u3002",

@@ -394,7 +394,7 @@ evaluate('renderSocial()')
 await new Promise(resolve => setImmediate(resolve))
 assert.equal(intervalCallbacks.size, 1, 'standalone social page polls without an open modal')
 context.timers = new Set()
-for (const name of ['toastTimer', 'poseTimer', 'fileSaveTimer', 'realUnsubscribe', 'confirmResolve']) context[name] = null
+for (const name of ['toastTimer', 'poseTimer', 'fileSaveTimer', 'realUnsubscribe', 'confirmResolve', 'voiceControl']) context[name] = null
 context.onConfirmKeydown = () => {}
 context.onModalKeydown = () => {}
 vm.runInContext('var disposeTest = ' + runtime.slice(runtime.indexOf('  return function dispose() {') + '  return '.length, runtime.lastIndexOf('\n}')), context)

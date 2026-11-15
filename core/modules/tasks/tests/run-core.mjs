@@ -19,6 +19,15 @@ function repository() {
     },
     getTask(id) { return structuredClone(rows.get(id) ?? null) },
     getOperation(id) { const op = operations.get(id); return op && { ...structuredClone(op), task: structuredClone(rows.get(op.taskId)) } },
+    recordCancelIntent({ operation, expectedVersion }) {
+      const previous = operations.get(operation.id)
+      if (previous) return { duplicate: true, operation: structuredClone(previous), task: structuredClone(rows.get(previous.taskId)) }
+      const row = rows.get(operation.taskId)
+      if (!row || row.version !== expectedVersion) return { stale: true, task: structuredClone(row ?? null) }
+      const next = { ...row, status: 'stopping', cancelOperationId: operation.id, summary: 'stop requested', version: row.version + 1, updatedAt: Date.now() }
+      operations.set(operation.id, structuredClone(operation)); rows.set(next.id, next); events.push({ taskId: next.id, version: next.version, type: 'task.stopping' })
+      return { duplicate: false, operation: structuredClone(operation), task: structuredClone(next) }
+    },
     updateTask(id, version, patch, event) {
       const row = rows.get(id); if (!row || row.version !== version) return null
       const next = { ...row, ...patch, version: row.version + 1, updatedAt: Date.now() }
@@ -89,6 +98,136 @@ assert.equal(pendingWatchAborted, false, 'a queued cancellation continues observ
 settlePendingWatch({ status: 'cancelled' })
 for (let attempt = 0; attempt < 10 && service.inspect({ owner, taskId: pending.taskId }).status !== 'cancelled'; attempt++) await new Promise(resolve => setImmediate(resolve))
 assert.equal(service.inspect({ owner, taskId: pending.taskId }).status, 'cancelled')
+
+let releaseRecoverWatch, recoveredCancelInput, recoveredWatchCount = 0
+const recoveringRepo = repository()
+const recoveringService = createTaskService({ repository: recoveringRepo, adapters: { recoverable: {
+  completionScope: 'external-task', deriveResources: () => ['native:recoverable'], async execute() { return { externalHandle: 'recoverable-handle' } },
+  async watch({ signal }) { recoveredWatchCount++; return new Promise(resolve => { releaseRecoverWatch = resolve; signal.addEventListener('abort', () => resolve({ status: 'outcome-unknown' }), { once: true }) }) },
+  async cancel(input) { recoveredCancelInput = input; return { pending: true } },
+  async recover({ operationId }) { assert.equal(operationId, 'op-recover-cancel'); return { status: 'running', completionScope: 'external-task', externalHandle: 'recoverable-handle' } },
+} } })
+const recoveringTask = await recoveringService.start({ owner, operationId: 'op-recover-cancel', adapter: 'recoverable', command: { name: 'start', args: {} }, sourceInputId: 'input-recover-cancel' })
+for (let attempt = 0; attempt < 10 && !releaseRecoverWatch; attempt++) await new Promise(resolve => setImmediate(resolve))
+const beforeRecoveryCancel = recoveringService.inspect({ owner, taskId: recoveringTask.taskId })
+await recoveringService.cancel({ owner, taskId: recoveringTask.taskId, operationId: 'cancel-recover-same-id', expectedVersion: beforeRecoveryCancel.version })
+await recoveringService.close()
+assert.equal(recoveringRepo.getTask(recoveringTask.taskId).status, 'outcome-unknown', 'close preserves uncertainty rather than claiming an external stop')
+let recoveredCancelCalls = 0
+const recoveringAfterRestart = createTaskService({ repository: recoveringRepo, adapters: { recoverable: {
+  completionScope: 'external-task', deriveResources: () => ['native:recoverable'], async execute() { throw new Error('must not replay start') },
+  async watch() { recoveredWatchCount++; return new Promise(resolve => { releaseRecoverWatch = resolve }) },
+  async cancel(input) { recoveredCancelCalls++; recoveredCancelInput = input; return { pending: true } },
+  async recover({ operationId }) { assert.equal(operationId, 'op-recover-cancel'); return { status: 'running', completionScope: 'external-task', externalHandle: 'recoverable-handle' } },
+} } })
+await recoveringAfterRestart.recover()
+for (let attempt = 0; attempt < 10 && recoveredCancelCalls === 0; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(recoveringAfterRestart.inspect({ owner, taskId: recoveringTask.taskId }).status, 'stopping', 'recovery retains the durable cancellation intent')
+assert.equal(recoveredCancelCalls, 1, 'recovery resumes cancellation once the original external handle is confirmed')
+assert.equal(recoveredCancelInput.operationId, 'cancel-recover-same-id', 'recovery uses the original idempotency identity')
+assert.equal(recoveredCancelInput.externalHandle, 'recoverable-handle')
+assert.ok(recoveredWatchCount >= 2, 'recovery creates a fresh observer')
+releaseRecoverWatch({ status: 'cancelled' })
+for (let attempt = 0; attempt < 10 && recoveringAfterRestart.inspect({ owner, taskId: recoveringTask.taskId }).status !== 'cancelled'; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(recoveringAfterRestart.inspect({ owner, taskId: recoveringTask.taskId }).status, 'cancelled')
+await recoveringAfterRestart.close()
+
+let firstWatch = true, secondWatchResolve, watchRecoverCalls = 0, watchCancelCalls = 0
+const watchFailureRepo = repository()
+const watchFailureService = createTaskService({ repository: watchFailureRepo, adapters: { watchFailure: {
+  completionScope: 'external-task', deriveResources: () => ['native:watch-failure'], async execute() { return { externalHandle: 'watch-failure-handle' } },
+  async watch() { watchRecoverCalls++; if (firstWatch) { firstWatch = false; throw new Error('temporary status RPC failure') } return new Promise(resolve => { secondWatchResolve = resolve }) },
+  async recover() { return { status: 'running', completionScope: 'external-task', externalHandle: 'watch-failure-handle' } },
+  async cancel() { watchCancelCalls++; return { pending: true } },
+} } })
+const watchFailureTask = await watchFailureService.start({ owner, operationId: 'op-watch-failure', adapter: 'watchFailure', command: { name: 'start', args: {} }, sourceInputId: 'input-watch-failure' })
+for (let attempt = 0; attempt < 10 && watchFailureService.inspect({ owner, taskId: watchFailureTask.taskId }).status !== 'outcome-unknown'; attempt++) await new Promise(resolve => setImmediate(resolve))
+const unknownWatchTask = watchFailureService.inspect({ owner, taskId: watchFailureTask.taskId })
+await watchFailureService.cancel({ owner, taskId: watchFailureTask.taskId, operationId: 'cancel-after-watch-failure', expectedVersion: unknownWatchTask.version })
+for (let attempt = 0; attempt < 10 && watchCancelCalls === 0; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(watchCancelCalls, 1, 'cancel after watch failure performs one cancellation RPC')
+assert.equal(watchRecoverCalls, 2, 'cancel after watch failure reattaches the observer from the existing operation')
+assert.ok(secondWatchResolve, 'watch is recreated instead of leaving the resource indefinitely stopping')
+secondWatchResolve({ status: 'cancelled' })
+for (let attempt = 0; attempt < 10 && watchFailureService.inspect({ owner, taskId: watchFailureTask.taskId }).status !== 'cancelled'; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(watchFailureService.inspect({ owner, taskId: watchFailureTask.taskId }).status, 'cancelled')
+await watchFailureService.close()
+
+let rejectDuringCancelWatch, settleDuringCancelRpc
+const cancelConfirmationRepo = repository()
+const cancelConfirmationService = createTaskService({ repository: cancelConfirmationRepo, adapters: { cancelConfirmation: {
+  completionScope: 'external-task', deriveResources: () => ['native:cancel-confirmation'], async execute() { return { externalHandle: 'cancel-confirmation-handle' } },
+  async watch() { return new Promise((_, reject) => { rejectDuringCancelWatch = reject }) },
+  async cancel() { return new Promise(resolve => { settleDuringCancelRpc = resolve }) },
+} } })
+const cancelConfirmationTask = await cancelConfirmationService.start({ owner, operationId: 'op-cancel-confirmation', adapter: 'cancelConfirmation', command: { name: 'start', args: {} }, sourceInputId: 'input-cancel-confirmation' })
+for (let attempt = 0; attempt < 10 && !rejectDuringCancelWatch; attempt++) await new Promise(resolve => setImmediate(resolve))
+const cancelConfirmationSnapshot = cancelConfirmationService.inspect({ owner, taskId: cancelConfirmationTask.taskId })
+await cancelConfirmationService.cancel({ owner, taskId: cancelConfirmationTask.taskId, operationId: 'cancel-confirmation-same-id', expectedVersion: cancelConfirmationSnapshot.version })
+for (let attempt = 0; attempt < 10 && !settleDuringCancelRpc; attempt++) await new Promise(resolve => setImmediate(resolve))
+rejectDuringCancelWatch(new Error('observer failed during cancellation'))
+for (let attempt = 0; attempt < 10 && cancelConfirmationService.inspect({ owner, taskId: cancelConfirmationTask.taskId }).status !== 'outcome-unknown'; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(cancelConfirmationService.inspect({ owner, taskId: cancelConfirmationTask.taskId }).status, 'outcome-unknown')
+settleDuringCancelRpc({ stopped: true })
+for (let attempt = 0; attempt < 10 && cancelConfirmationService.inspect({ owner, taskId: cancelConfirmationTask.taskId }).status !== 'cancelled'; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(cancelConfirmationService.inspect({ owner, taskId: cancelConfirmationTask.taskId }).status, 'cancelled', 'authoritative stop confirmation settles outcome-unknown for the same cancellation intent')
+await cancelConfirmationService.close()
+
+let releaseStartReceipt, startWatchResolve, deferredCancelInput, deferredCancelCalls = 0
+const deferredHandleService = createTaskService({ repository: repository(), adapters: { deferredHandle: {
+  completionScope: 'external-task', deriveResources: () => ['native:deferred-handle'],
+  async execute() { return new Promise(resolve => { releaseStartReceipt = () => resolve({ externalHandle: 'late-start-handle' }) }) },
+  async recover() { return null },
+  async watch() { return new Promise(resolve => { startWatchResolve = resolve }) },
+  async cancel(input) { deferredCancelCalls++; deferredCancelInput = input; return { pending: true } },
+} } })
+const deferredHandleTask = await deferredHandleService.start({ owner, operationId: 'op-deferred-handle', adapter: 'deferredHandle', command: { name: 'start', args: {} }, sourceInputId: 'input-deferred-handle' })
+await new Promise(resolve => setImmediate(resolve))
+const deferredSnapshot = deferredHandleService.inspect({ owner, taskId: deferredHandleTask.taskId })
+await deferredHandleService.cancel({ owner, taskId: deferredHandleTask.taskId, operationId: 'cancel-deferred-handle', expectedVersion: deferredSnapshot.version })
+await new Promise(resolve => setImmediate(resolve))
+assert.equal(deferredCancelCalls, 0, 'cancellation waits while start is still dispatching and has no external handle')
+releaseStartReceipt()
+for (let attempt = 0; attempt < 10 && !deferredCancelInput; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(deferredCancelInput.externalHandle, 'late-start-handle', 'cancellation uses the handle returned by the original start operation')
+assert.equal(deferredCancelCalls, 1, 'cancellation is issued once after the original dispatch returns its handle')
+assert.ok(startWatchResolve, 'the late start receipt still attaches its observer while stopping')
+startWatchResolve({ status: 'cancelled' })
+for (let attempt = 0; attempt < 10 && deferredHandleService.inspect({ owner, taskId: deferredHandleTask.taskId }).status !== 'cancelled'; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(deferredHandleService.inspect({ owner, taskId: deferredHandleTask.taskId }).status, 'cancelled')
+await deferredHandleService.close()
+
+let lostReceiptCancelInput, lostReceiptWatchResolve
+const lostReceiptService = createTaskService({ repository: repository(), adapters: { lostReceipt: {
+  completionScope: 'external-task', deriveResources: () => ['native:lost-receipt'], async execute() { throw new Error('start receipt was lost after dispatch') },
+  async recover({ operationId }) { assert.equal(operationId, 'op-lost-receipt'); return { status: 'running', completionScope: 'external-task', externalHandle: 'recovered-after-lost-receipt' } },
+  async watch() { return new Promise(resolve => { lostReceiptWatchResolve = resolve }) },
+  async cancel(input) { lostReceiptCancelInput = input; return { pending: true } },
+} } })
+const lostReceiptTask = await lostReceiptService.start({ owner, operationId: 'op-lost-receipt', adapter: 'lostReceipt', command: { name: 'start', args: {} }, sourceInputId: 'input-lost-receipt' })
+for (let attempt = 0; attempt < 10 && lostReceiptService.inspect({ owner, taskId: lostReceiptTask.taskId }).status !== 'outcome-unknown'; attempt++) await new Promise(resolve => setImmediate(resolve))
+const lostReceiptSnapshot = lostReceiptService.inspect({ owner, taskId: lostReceiptTask.taskId })
+await lostReceiptService.cancel({ owner, taskId: lostReceiptTask.taskId, operationId: 'cancel-lost-receipt', expectedVersion: lostReceiptSnapshot.version })
+for (let attempt = 0; attempt < 10 && !lostReceiptCancelInput; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(lostReceiptCancelInput.externalHandle, 'recovered-after-lost-receipt', 'cancel resolves a lost start receipt by recovering the original operation handle')
+assert.ok(lostReceiptWatchResolve, 'lost start receipt recovery reattaches the external observer')
+lostReceiptWatchResolve({ status: 'cancelled' })
+for (let attempt = 0; attempt < 10 && lostReceiptService.inspect({ owner, taskId: lostReceiptTask.taskId }).status !== 'cancelled'; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(lostReceiptService.inspect({ owner, taskId: lostReceiptTask.taskId }).status, 'cancelled')
+await lostReceiptService.close()
+
+let finishDuplicateProgressWatch
+const duplicateProgressService = createTaskService({ repository: repository(), adapters: { duplicateProgress: {
+  completionScope: 'external-task', deriveResources: () => [], async execute() { return { externalHandle: 'progress-handle' } },
+  async watch({ onProgress }) { onProgress({ status: 'running', progress: 4 }); const once = duplicateProgressService.inspect({ owner, taskId: progressTask.taskId }).version; onProgress({ status: 'running', progress: 4 }); const twice = duplicateProgressService.inspect({ owner, taskId: progressTask.taskId }).version; finishDuplicateProgressWatch = { once, twice }; return new Promise(resolve => { finishDuplicateProgressWatch.resolve = resolve }) },
+} } })
+const progressTask = await duplicateProgressService.start({ owner, operationId: 'op-duplicate-progress', adapter: 'duplicateProgress', command: { name: 'start', args: {} }, sourceInputId: 'input-duplicate-progress' })
+for (let attempt = 0; attempt < 10 && !finishDuplicateProgressWatch; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(finishDuplicateProgressWatch.twice, finishDuplicateProgressWatch.once, 'repeated identical polling progress does not churn task versions')
+assert.ok(finishDuplicateProgressWatch.once > 1, 'a real progress change still advances the task version')
+finishDuplicateProgressWatch.resolve({ status: 'completed' })
+for (let attempt = 0; attempt < 10 && duplicateProgressService.inspect({ owner, taskId: progressTask.taskId }).status !== 'completed'; attempt++) await new Promise(resolve => setImmediate(resolve))
+await duplicateProgressService.close()
 release()
 for (let attempt = 0; attempt < 10 && service.inspect({ owner, taskId: started.taskId }).status !== 'completed'; attempt++) await new Promise(resolve => setImmediate(resolve))
 assert.equal(service.inspect({ owner, taskId: started.taskId }).status, 'completed', 'a tool invocation that finishes during stopping wins with its authoritative result')
@@ -165,4 +304,93 @@ for (let index = 0; index < 5; index++) await new Promise(resolve => setImmediat
 assert.ok(retryAttempts.some(event => event.eventId === retryAttempts[0].eventId && retryAttempts.filter(item => item.eventId === event.eventId).length > 1), 'retry preserves the same event id')
 assert.equal(retryRepo.getPendingEvents().length, 0, 'acknowledged retry clears the outbox')
 await retryService.close()
+
+const pageRepo = repository()
+const pageService = createTaskService({ repository: pageRepo, adapters: { page: { deriveResources: () => [], async execute() { return {} } } } })
+const pagedTask = await pageService.start({ owner, operationId: 'op-paged-events', adapter: 'page', command: { name: 'sync', args: {} }, sourceInputId: 'input-paged-events' })
+for (let attempt = 0; attempt < 10 && pageService.inspect({ owner, taskId: pagedTask.taskId }).status !== 'completed'; attempt++) await new Promise(resolve => setImmediate(resolve))
+let pageVersion = pageService.inspect({ owner, taskId: pagedTask.taskId }).version
+for (let index = 0; index < 130; index++) pageVersion = pageRepo.updateTask(pagedTask.taskId, pageVersion, { summary: `event ${index}` }, 'task.progress').version
+const firstPage = pageService.observe({ owner, taskId: pagedTask.taskId })
+assert.equal(firstPage.length, 50, 'task event reads default to a finite 50 event page')
+const cappedPage = pageService.observe({ owner, taskId: pagedTask.taskId, limit: 1000 })
+assert.equal(cappedPage.length, 100, 'task event reads cap caller supplied page sizes at 100')
+const nextPage = pageService.observe({ owner, taskId: pagedTask.taskId, afterVersion: firstPage.at(-1).version })
+assert.equal(nextPage[0].version, firstPage.at(-1).version + 1, 'the last returned version is a compatible continuation cursor')
+assert.equal(nextPage.length, 50, 'continuation pages remain bounded')
+assert.deepEqual(pageService.observe({ owner: { ...owner, conversationId: 'not-owner' }, taskId: pagedTask.taskId }), [], 'event paging preserves owner isolation')
+await pageService.close()
+
+const rawJsonProgressRepo = repository()
+const jsonProgressRepo = {
+  ...rawJsonProgressRepo,
+  getTask(id) { const task = rawJsonProgressRepo.getTask(id); return task && JSON.parse(JSON.stringify(task)) },
+  updateTask(id, version, patch, type) { return rawJsonProgressRepo.updateTask(id, version, JSON.parse(JSON.stringify(patch)), type) },
+}
+let jsonProgressVersions
+const jsonProgressService = createTaskService({ repository: jsonProgressRepo, adapters: { jsonProgress: {
+  completionScope: 'external-task', deriveResources: () => [], async execute() { return { externalHandle: 'json-progress-handle' } },
+  async watch({ onProgress }) {
+    onProgress({ status: 'running', progress: undefined })
+    const once = jsonProgressService.inspect({ owner, taskId: jsonProgressTask.taskId }).version
+    onProgress({ status: 'running', progress: undefined })
+    const twice = jsonProgressService.inspect({ owner, taskId: jsonProgressTask.taskId }).version
+    jsonProgressVersions = { once, twice }
+    return { status: 'completed' }
+  },
+} } })
+const jsonProgressTask = await jsonProgressService.start({ owner, operationId: 'op-json-progress', adapter: 'jsonProgress', command: { name: 'start', args: {} }, sourceInputId: 'input-json-progress' })
+for (let attempt = 0; attempt < 10 && !jsonProgressVersions; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(jsonProgressVersions.twice, jsonProgressVersions.once, 'progress with undefined fields compares equal after JSON persistence drops those fields')
+await jsonProgressService.close()
+
+const nonAtomicRepo = repository()
+delete nonAtomicRepo.recordCancelIntent
+let releaseNonAtomic
+const nonAtomicService = createTaskService({ repository: nonAtomicRepo, adapters: { nonAtomic: {
+  deriveResources: () => [], async execute() { return new Promise(resolve => { releaseNonAtomic = resolve }) },
+} } })
+const nonAtomicTask = await nonAtomicService.start({ owner, operationId: 'op-non-atomic', adapter: 'nonAtomic', command: { name: 'write', args: {} }, sourceInputId: 'input-non-atomic' })
+for (let attempt = 0; attempt < 10 && !releaseNonAtomic; attempt++) await new Promise(resolve => setImmediate(resolve))
+const nonAtomicSnapshot = nonAtomicService.inspect({ owner, taskId: nonAtomicTask.taskId })
+await assert.rejects(nonAtomicService.cancel({ owner, taskId: nonAtomicTask.taskId, operationId: 'cancel-non-atomic', expectedVersion: nonAtomicSnapshot.version }), { code: 'ATOMIC_CANCEL_UNAVAILABLE' })
+assert.equal(nonAtomicRepo.getOperation('cancel-non-atomic') ?? null, null, 'a repository without atomic cancel support does not persist a partial cancellation promise')
+assert.equal(nonAtomicService.inspect({ owner, taskId: nonAtomicTask.taskId }).status, 'running')
+releaseNonAtomic({ ok: true })
+await nonAtomicService.close()
+
+let spoofWatchCalled = false
+const scopeAuthorityService = createTaskService({ repository: repository(), adapters: { declaredSync: {
+  completionScope: 'tool-invocation', deriveResources: () => [], async execute() { return { completionScope: 'external-task', externalHandle: 'untrusted-handle' } },
+  async watch() { spoofWatchCalled = true; return new Promise(() => {}) },
+} } })
+const declaredSyncTask = await scopeAuthorityService.start({ owner, operationId: 'op-declared-sync', adapter: 'declaredSync', command: { name: 'sync', args: {} }, sourceInputId: 'input-declared-sync' })
+for (let attempt = 0; attempt < 10 && scopeAuthorityService.inspect({ owner, taskId: declaredSyncTask.taskId }).status !== 'completed'; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(scopeAuthorityService.inspect({ owner, taskId: declaredSyncTask.taskId }).status, 'completed')
+assert.equal(spoofWatchCalled, false, 'an adapter result cannot override the completion scope declared by Host')
+await scopeAuthorityService.close()
+
+let rejectDynamicStart, dynamicWatchResolve, dynamicCancelInput, dynamicStartCalls = 0
+const dynamicScopeService = createTaskService({ repository: repository(), adapters: { dynamicExternal: {
+  resolveCompletionScope: () => 'external-task', deriveResources: () => ['dynamic:external'],
+  async execute() { dynamicStartCalls++; return new Promise((_, reject) => { rejectDynamicStart = reject }) },
+  async recover({ operationId }) { assert.equal(operationId, 'op-dynamic-external'); return { status: 'running', externalHandle: 'dynamic-recovered-handle' } },
+  async watch() { return new Promise(resolve => { dynamicWatchResolve = resolve }) },
+  async cancel(input) { dynamicCancelInput = input; return { pending: true } },
+} } })
+const dynamicExternalTask = await dynamicScopeService.start({ owner, operationId: 'op-dynamic-external', adapter: 'dynamicExternal', command: { name: 'start', args: {} }, sourceInputId: 'input-dynamic-external' })
+for (let attempt = 0; attempt < 10 && !rejectDynamicStart; attempt++) await new Promise(resolve => setImmediate(resolve))
+const dynamicBeforeCancel = dynamicScopeService.inspect({ owner, taskId: dynamicExternalTask.taskId })
+assert.equal(dynamicBeforeCancel.completionScope, 'external-task', 'dynamic Host scope is persisted before dispatch starts')
+await dynamicScopeService.cancel({ owner, taskId: dynamicExternalTask.taskId, operationId: 'cancel-dynamic-external', expectedVersion: dynamicBeforeCancel.version })
+rejectDynamicStart(new Error('external start receipt was lost'))
+for (let attempt = 0; attempt < 10 && !dynamicCancelInput; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(dynamicCancelInput?.operationId, 'cancel-dynamic-external', 'uncertain dispatch recovery resumes the original cancellation identity')
+assert.equal(dynamicCancelInput?.externalHandle, 'dynamic-recovered-handle', 'uncertain dispatch recovery resolves the external handle before cancel')
+assert.equal(dynamicStartCalls, 1, 'recovery does not replay the external start operation')
+assert.ok(dynamicWatchResolve, 'uncertain dispatch recovery reattaches an observer')
+dynamicWatchResolve({ status: 'cancelled' })
+for (let attempt = 0; attempt < 10 && dynamicScopeService.inspect({ owner, taskId: dynamicExternalTask.taskId }).status !== 'cancelled'; attempt++) await new Promise(resolve => setImmediate(resolve))
+assert.equal(dynamicScopeService.inspect({ owner, taskId: dynamicExternalTask.taskId }).status, 'cancelled')
+await dynamicScopeService.close()
 console.log('task core ok')

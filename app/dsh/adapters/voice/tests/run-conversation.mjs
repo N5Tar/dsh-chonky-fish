@@ -5,11 +5,13 @@ import { DEFAULT_VOICE_CONFIG } from '../../../../../core/modules/voice/config.j
 import { createMemoryAudioStore } from '../../../../shared/audio/clips.js'
 
 const ref = { runtimeId: 'dsh:host-1', conversationId: 'session-1', bindingRevision: 'attach-1' }
-let source, session, activeRef, submits, submissionModes, emitLocalInput, submissionCounter, abandoned, nextPromptResult, acceptByRequest, retireByRequest, retainedReleaseCount, retainCalls
+let source, session, activeRef, submits, submissionModes, emitLocalInput, localListenerSet, submissionCounter, abandoned, nextPromptResult, acceptByRequest, retireByRequest, retainedReleaseCount, retainCalls
 function fixture({ foreground } = {}) {
   const entries = [], callbacks = new Set(), localListeners = new Set()
+  localListenerSet = localListeners
   source = {
     getSnapshot: () => ({ entries: [...entries], revision: entries.length }),
+    listenerCount: () => callbacks.size,
     subscribe(fn) { callbacks.add(fn); return () => callbacks.delete(fn) },
     append(event) { entries.push({ event }); for (const fn of callbacks) fn() },
   }
@@ -172,7 +174,13 @@ try {
   globalThis.setTimeout = originalSetTimeout
   globalThis.clearTimeout = originalClearTimeout
 }
-stop()
+assert.equal(batches[0].reset, true, 'follow drains its baseline before returning the stop function')
+const originalSetClear = Set.prototype.clear
+let clearedSets = 0
+Set.prototype.clear = function () { clearedSets++; return originalSetClear.call(this) }
+try { stop() } finally { Set.prototype.clear = originalSetClear }
+assert.equal(source.listenerCount(), 0, 'stopping follow removes the DSH event subscription')
+assert.equal(localListenerSet.size, 0, 'stopping follow removes the local input subscription')
 await conversation.release(ref)
 
 let foregroundInterrupt
@@ -424,4 +432,17 @@ await integratedService.hangup({ abandonPending: true })
 await integratedService.dispose()
 await integratedConversation.dispose()
 assert.equal(integratedRetainCount, 0, 'the real scoped owner releases its Session reference after hangup')
+
+const rejectionBoundedConversation = fixture()
+await rejectionBoundedConversation.retain(ref)
+nextPromptResult = { ok: false, error: { code: 'session/agent-busy', message: 'known pre-admission rejection' } }
+for (let index = 0; index < 520; index++) {
+  const requestId = `input-rejected-${index}`
+  const preparedRejection = await rejectionBoundedConversation.prepareSubmission({ inputId: requestId, conversationRef: ref, text: 'rejected before admission' })
+  const rejected = await rejectionBoundedConversation.submit({ inputId: requestId, submissionId: preparedRejection.submissionId, conversationRef: ref, text: 'rejected before admission' })
+  assert.equal(rejected.outcome, 'not_applied')
+}
+nextPromptResult = null
+await rejectionBoundedConversation.dispose()
+assert.ok(clearedSets > 0, 'stopping follow clears retained callbacks')
 console.log('voice DSH conversation adapter: 1 passed')

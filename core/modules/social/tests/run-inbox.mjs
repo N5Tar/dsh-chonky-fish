@@ -200,7 +200,7 @@ await test('private snapshot, bounded disk size, failed capacity leaves state un
   const before = await readFile(file, 'utf8');
   await rejects(() => append(store, 2, { text: 'x'.repeat(1400) }), 'INBOX_CAPACITY');
   assert.equal(await readFile(file, 'utf8'), before);
-  assert.equal((await stat(file)).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal((await stat(file)).mode & 0o777, 0o600);
   assert.equal((await store.listNotices())[0].unreadCount, 1);
   await store.close();
 });
