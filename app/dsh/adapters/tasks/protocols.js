@@ -8,6 +8,7 @@ const PHONE_READ_MCP_TOOLS = new Set([
   'stardew_self_state', 'stardew_interaction_status', 'stardew_menu_state', 'stardew_social_state',
   'stardew_fishing_state', 'stardew_shop_state', 'stardew_travel_state', 'stardew_self_surroundings', 'stardew_self_inventory',
   'stardew_task_status', 'stardew_fishing_status', 'stardew_social_status', 'stardew_shop_status', 'stardew_travel_status',
+  'stardew_session_state', 'stardew_session_status', 'stardew_tool_task_status',
 ])
 function notApplied(cause) {
   const failure = cause instanceof Error ? cause : new Error(String(cause?.message ?? cause))
@@ -16,6 +17,12 @@ function notApplied(cause) {
 }
 export const DEFAULT_MCP_TASK_PROTOCOLS = Object.freeze([Object.freeze({
   id: 'stardew-request-task-v1', startRawName: 'stardew_farm_task', statusRawName: 'stardew_task_status', cancelRawName: 'stardew_cancel_task', requestIdProperty: 'requestId', resourceKey: 'mcp:stardew-world:task',
+}), Object.freeze({
+  id: 'stardew-native-session-v1', startRawName: 'stardew_session_start', statusRawName: 'stardew_session_status', cancelRawName: 'stardew_session_cancel', requestIdProperty: 'requestId', resourceKey: 'mcp:stardew-world:session', serverNames: ['stardew', 'stardew2'], statusPath: 'result.status', acceptNotAppliedReceipt: true, rejectedStatus: 'failed',
+}), Object.freeze({
+  id: 'stardew-native-tool-v1', startRawName: 'stardew_tool_task', statusRawName: 'stardew_tool_task_status', cancelRawName: 'stardew_cancel_tool_task', requestIdProperty: 'requestId', resourceKey: 'mcp:stardew-world:task', serverNames: ['stardew', 'stardew2'], statusPath: 'status', acceptNotAppliedReceipt: true, completionRequiresEffectVerified: true, effectVerifiedPath: 'receipt.effectVerified', unknownStatus: 'outcome-unknown', rejectedStatus: 'failed',
+}), Object.freeze({
+  id: 'stardew-native-travel-v1', startRawName: 'stardew_travel_task', statusRawName: 'stardew_travel_status', cancelRawName: 'stardew_travel_cancel', requestIdProperty: 'requestId', resourceKey: 'mcp:stardew-world:task', serverNames: ['stardew', 'stardew2'], statusPath: 'state', acceptNotAppliedReceipt: true, rejectedStatus: 'failed', terminalStateMap: { interrupted: 'failed' }, activeStates: ['queued', 'walking', 'walking_to_exit', 'settling_staging', 'crossing_exit', 'waiting_for_transition', 'settling_movement', 'cancelling', 'stopping'],
 })])
 
 function parseToolName(name) {
@@ -38,6 +45,7 @@ function decodeValue(value) {
   }
   return value
 }
+function pathValue(value, path) { return path?.split('.').reduce((current, key) => current?.[key], value) }
 function resultValue(batch, callId) {
   const outcome = batch?.results?.find(item => item.callId === callId)?.result
   if (!outcome) throw Object.assign(new Error('DSH pipeline returned no task tool outcome'), { code: 'TASK_TOOL_RESULT_MISSING' })
@@ -76,6 +84,7 @@ export function discoverPollingRequestProtocols(definitions, { resourceKey = 'mc
     for (const definition of definitions ?? []) {
       const identity = parseToolName(definition.name)
       if (!identity || identity.rawName !== descriptor.startRawName) continue
+      if (descriptor.serverNames && !descriptor.serverNames.includes(identity.serverName)) continue
       const prefix = `mcp__${identity.serverName}__`
       const startName = `${prefix}${descriptor.startRawName}`
       const statusName = `${prefix}${descriptor.statusRawName}`
@@ -99,8 +108,17 @@ export function createPollingRequestAdapter({ tools, definitionsFor, trustedSign
     const value = await invokeTool({ tools, agent: input.agent, signal: input.signal, trustedSignals, name: descriptor.statusName, args: { [descriptor.requestIdProperty]: requestId }, callId: `${requestId}:${suffix}` })
     return decodeValue(value)
   }
-  function mapTerminal(data) {
-    const state = data?.state ?? data?.status
+  function lifecycleState(descriptor, data) {
+    const pathStatus = pathValue(data, descriptor.statusPath)
+    if (typeof pathStatus === 'string') return pathStatus
+    return data?.state ?? data?.status
+  }
+  function mapTerminal(descriptor, data) {
+    const state = lifecycleState(descriptor, data)
+    if (descriptor.terminalStateMap?.[state]) return descriptor.terminalStateMap[state]
+    if (descriptor.unknownStatus && state === 'unknown') return descriptor.unknownStatus
+    if (descriptor.rejectedStatus && state === 'rejected') return descriptor.rejectedStatus
+    if (descriptor.completionRequiresEffectVerified && state === 'completed' && pathValue(data, descriptor.effectVerifiedPath) !== true) return descriptor.unknownStatus ?? 'outcome-unknown'
     return TERMINAL.get(state)
   }
   return {
@@ -117,6 +135,8 @@ export function createPollingRequestAdapter({ tools, definitionsFor, trustedSign
       const value = await invokeTool({ tools, agent: input.agent, signal: input.signal, trustedSignals, name: descriptor.startName, args, callId: input.operationId })
       const receipt = decodeValue(value)
       if (receipt?.[descriptor.requestIdProperty] !== requestId) throw Object.assign(new Error('MCP start receipt did not confirm the Host request id'), { code: 'REQUEST_ID_NOT_CONFIRMED' })
+      if (descriptor.acceptNotAppliedReceipt && receipt.status === 'rejected' && receipt.notApplied === true)
+        throw notApplied(Object.assign(new Error(receipt.detail ?? 'MCP rejected the request before dispatch'), { code: 'MCP_REQUEST_REJECTED' }))
       return { completionScope: 'external-task', externalHandle: requestId, result: receipt }
     },
     async watch(input) {
@@ -125,7 +145,7 @@ export function createPollingRequestAdapter({ tools, definitionsFor, trustedSign
       for (;;) {
         input.signal.throwIfAborted?.()
         const data = await status(descriptor, input, input.externalHandle, `status:${Date.now()}`)
-        const terminal = mapTerminal(data)
+        const terminal = mapTerminal(descriptor, data)
         if (terminal) return { status: terminal, result: data, summary: `external MCP request ${terminal}` }
         const snapshot = data?.task ?? data?.result ?? data
         const encoded = JSON.stringify(snapshot)
@@ -137,17 +157,17 @@ export function createPollingRequestAdapter({ tools, definitionsFor, trustedSign
       const descriptor = keyFor(input, input.command?.name)
       const value = await invokeTool({ tools, agent: input.agent, signal: input.signal, trustedSignals, name: descriptor.cancelName, args: { [descriptor.requestIdProperty]: input.externalHandle }, callId: `${input.operationId}:cancel` })
       const receipt = decodeValue(value)
-      const terminal = mapTerminal(receipt)
+      const terminal = mapTerminal(descriptor, receipt)
       return terminal === 'cancelled' ? { stopped: true } : { pending: true, receipt }
     },
     async recover(input) {
       const descriptor = keyFor(input, input.task.command?.name)
       const requestId = idFor(input.operationId)
       const data = await status(descriptor, input, requestId, `recover:${Date.now()}`)
-      const terminal = mapTerminal(data)
+      const terminal = mapTerminal(descriptor, data)
       if (terminal) return { status: terminal, completionScope: 'external-task', externalHandle: requestId, result: data }
-      const state = data?.state ?? data?.status
-      if (['running', 'queued', 'stopping', 'partial'].includes(state)) return { status: 'running', completionScope: 'external-task', externalHandle: requestId, result: data }
+      const state = lifecycleState(descriptor, data)
+      if ((descriptor.activeStates ?? ['running', 'queued', 'settling', 'stopping', 'partial']).includes(state)) return { status: 'running', completionScope: 'external-task', externalHandle: requestId, result: data }
       return null
     },
   }
