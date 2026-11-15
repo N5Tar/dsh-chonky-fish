@@ -1,5 +1,7 @@
 # 大肥鱼连续语音聊天 · 三端架构设计 v1
 
+> 2026-11-14 更新：Windows DSH 插件的当前设计以[连续语音通话设计 v2](windows-voice-call-design-v2.md)和[技术方案 v2](voice-call-technical-v2.md)为准，包含自动发送、回复播报与未来桌面端适配边界。本页保留早期三端设想；其中“首次仅按文字回复验收”的范围已被新设计替代。当前技术自审见[v2 review](voice-call-technical-review-v2.md)。
+
 设计稿，2026-11-13。首个验证端为 DSH 聊天面板。
 
 ## 用户体验
@@ -30,7 +32,7 @@ DSH 在 macOS 和 Windows 上均由插件入口选择宿主识别器。独立桌
 
 ## DSH 接入约束
 
-DSH 的转写接口返回文本，聊天投递需另走真实会话入口。当前面板的表单发送函数在忙时直接返回，且会清空输入框。接入时应复用底层会话提交能力，让语音发送得到明确的成功、忙碌或失败结果。若提交回执丢失，应先核对会话记录或利用宿主幂等能力确认投递状态。状态未知时提示用户核对，避免自动重试产生重复消息。[面板发送实现](../app/dsh/ui/runtime.js) · [DSH 语音接口](https://github.com/deepseek-ai/deepseek-harness/blob/main/docs/subsystems/voice-input.zh.md)
+DSH 的转写接口返回文本，聊天投递需另走真实会话入口。当前面板的表单发送函数在忙时直接返回，且会清空输入框。接入时应复用底层会话提交能力，让语音发送得到明确的成功、忙碌或失败结果。若提交回执丢失，应先核对会话记录或利用宿主幂等能力确认投递状态。状态未知时提示用户核对，避免自动重试产生重复消息。[面板发送实现](../app/dsh/ui/runtime.js) · [DSH 语音接口](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/voice-input.zh.md)
 
 ## 验收
 

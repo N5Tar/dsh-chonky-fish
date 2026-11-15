@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "runtime": {
+    "name": "onnxruntime-web",
+    "version": "1.31.1",
+    "executionProvider": "wasm",
+    "numThreads": 1,
+    "license": "MIT"
+  },
+  "model": {
+    "name": "Silero VAD v5",
+    "sampleRate": 16000,
+    "windowSamples": 512,
+    "contextSamples": 64,
+    "license": "MIT",
+    "source": "https://github.com/ricky0123/vad/blob/master/silero_vad_v5.onnx"
+  },
+  "files": {
+    "model": {
+      "file": "silero_vad.onnx",
+      "key": "silero-2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f.onnx",
+      "bytes": 2327524,
+      "sha256": "2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f"
+    },
+    "runtime": {
+      "file": "onnxruntime-web.min.js",
+      "key": "ortjs-cb76ed9827dd1f2c96fcf902f04aa5a8eb0958b7c6bf8a244b362d06e9104797.js",
+      "bytes": 371810,
+      "sha256": "cb76ed9827dd1f2c96fcf902f04aa5a8eb0958b7c6bf8a244b362d06e9104797"
+    },
+    "wasmModule": {
+      "file": "ort-wasm-simd-threaded.mjs",
+      "key": "ortmjs-30ed0b5cd1182ede931fea448afb567d4dc705ec957af09f108a2be5f770dac3.mjs",
+      "bytes": 24738,
+      "sha256": "30ed0b5cd1182ede931fea448afb567d4dc705ec957af09f108a2be5f770dac3"
+    },
+    "wasmBinary": {
+      "file": "ort-wasm-simd-threaded.wasm",
+      "key": "ortwasm-4b884c203b0fa48d057be3332c65513ff85aa3c5bddd6946acc0fab7ecda001d.wasm",
+      "bytes": 14848852,
+      "sha256": "4b884c203b0fa48d057be3332c65513ff85aa3c5bddd6946acc0fab7ecda001d"
+    },
+    "vadWorker": {
+      "file": "vad.worker.js",
+      "key": "vadworker-4c80d67ed84cbe6cac03f3140d86cf1524af68165b8bd279e77203088175585e.js",
+      "bytes": 4655,
+      "sha256": "4c80d67ed84cbe6cac03f3140d86cf1524af68165b8bd279e77203088175585e"
+    },
+    "captureWorklet": {
+      "file": "capture.worklet.js",
+      "key": "worklet-4dd387af76de1d8355f7c5c030e0a8833775781eeb683460d587eb6c7d522b30.js",
+      "bytes": 789,
+      "sha256": "4dd387af76de1d8355f7c5c030e0a8833775781eeb683460d587eb6c7d522b30"
+    }
+  }
+}

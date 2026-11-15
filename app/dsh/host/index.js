@@ -19,12 +19,13 @@ import { createHelloService } from '../../../core/modules/hello/service.js'
 import { createCollectionPreferences } from '../../shared/storage/perception/preferences.js'
 import { createHelloRepository } from '../../shared/storage/hello/repository.js'
 import { createHelloHttpHandler } from '../adapters/hello/http.js'
-import { platform } from '../../shared/platform/index.js'
+import { platform, voiceTtsTarget } from '../../shared/platform/index.js'
 import { validateTimeScale } from '../../../core/modules/abs/clock.js'
 import { validRestTime } from '../../../core/modules/abs/rest.js'
 import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { createPanelSupplement } from '../../../core/modules/persona/supplement.js'
 import { createModulePrompt } from '../../../core/modules/persona/modules.js'
@@ -35,6 +36,7 @@ import { installAbs } from '../adapters/abs/index.js'
 import { installSkills } from '../adapters/skills/index.js'
 import { installPerception } from '../adapters/perception/index.js'
 import { installMigration } from '../adapters/migration/index.js'
+import { registerVoiceRoutes } from '../adapters/voice/http.js'
 import { isSocialHeader } from '../../../core/modules/social/policy.js'
 
 const FULL_ACCESS = 'danger-full-access'
@@ -129,6 +131,24 @@ export function apply(ctx) {
     warn('[chonkyfish] home 布局或迁移恢复初始化失败', error)
     throw error
   })
+
+  // Windows system synthesis and the single Host-local voice lease are Host
+  // capabilities. The Client still owns microphone capture and playback.
+  ctx.effect(() => {
+    try {
+      const voice = registerVoiceRoutes(ctx, {
+        resources,
+        ready: layoutReady,
+        tts: voiceTtsTarget(),
+        isClosed: () => false,
+        assetRoot: fileURLToPath(new URL('../../shared/audio/web/assets/', import.meta.url)),
+      })
+      return () => voice.close()
+    } catch (error) {
+      warn('[chonkyfish/voice] authenticated Host routes unavailable', error)
+      return () => {}
+    }
+  }, 'chonkyfish: voice host')
 
   // 面板「补充人格设定」→ system prompt 变量：预设里的 persona 模板用
   // {{chonkyfish_supplement}} 引用它，所以人格不再混进用户消息。
@@ -321,8 +341,9 @@ export function apply(ctx) {
           paths: resources.paths,
           routes,
           config: resources.getConfig(),
+          configRevision: resources.configRevision(),
         })
-        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
         response.end(request.method === 'HEAD' ? undefined : body)
         return
       }
@@ -335,11 +356,17 @@ export function apply(ctx) {
           replyJson(response, 400, { ok: false, error: 'invalid-config' })
           return null
         }
-        return resources.updateConfig(patch).then((config) => {
-          replyJson(response, 200, { ok: true, config })
+        const expectedRevision = request.headers['x-config-revision']
+        if (expectedRevision !== undefined && (typeof expectedRevision !== 'string' || !/^[a-f0-9]{64}$/i.test(expectedRevision))) {
+          replyJson(response, 400, { ok: false, error: { code: 'CONFIG_REVISION_INVALID' } })
+          return null
+        }
+        return resources.updateConfig(patch, { expectedRevision }).then((config) => {
+          replyJson(response, 200, { ok: true, config, configRevision: resources.configRevision() })
         })
       }).catch((error) => {
         if (error?.code === 'MIGRATION_BUSY') replyJson(response, 409, { ok: false, error: { code: 'MIGRATION_BUSY' } })
+        else if (error?.code === 'STALE_TARGET') replyJson(response, 409, { ok: false, error: { code: 'STALE_TARGET', outcome: 'not_applied' } })
         else replyJson(response, 500, { ok: false, error: String((error && error.message) || error) })
       })
     },

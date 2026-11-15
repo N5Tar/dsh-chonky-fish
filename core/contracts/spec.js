@@ -11,6 +11,7 @@
 
 import { DEFAULT_INBOX_LIMITS } from '../modules/social/limits.js'
 import { ABS_DEFAULTS } from '../modules/abs/config.js'
+import { DEFAULT_VOICE_CONFIG } from '../modules/voice/config.js'
 
 /** 插件自己的 home 目录名：$DSH_HOME/chonkyfish/ */
 export const HOME_DIR = 'chonkyfish'
@@ -79,6 +80,11 @@ export const ROUTES = Object.freeze({
   migrationImportCommit: '/chonkyfish/migration/imports/commit',
   migrationImportCancel: '/chonkyfish/migration/imports/cancel',
   migrationStatus: '/chonkyfish/migration/status',
+  voiceCapabilities: '/chonkyfish/voice/capabilities',
+  voiceCalls: '/chonkyfish/voice/calls',
+  voiceSynthesis: '/chonkyfish/voice/synthesis',
+  voiceCancel: '/chonkyfish/voice/cancel',
+  voiceAssets: '/chonkyfish/voice/assets/',
 })
 
 /** 请求体上限（字节）。state 是整份面板状态，其它是小型控制 JSON。 */
@@ -88,6 +94,10 @@ export const LIMITS = Object.freeze({
   jsonBodyBytes: 16 * 1024,
   migrationArchiveBytes: 128 * 1024 * 1024,
   migrationExpandedBytes: 256 * 1024 * 1024,
+  voiceControlBodyBytes: 4096,
+  voiceSynthesisBodyBytes: 16384,
+  voiceTextChars: 120,
+  voiceWavBytes: 2 * 1024 * 1024,
 })
 
 /** 活动技能库的有界存储与读取限制。 */
@@ -171,4 +181,5 @@ export const DEFAULT_CONFIG = Object.freeze({
     enabled: true,
     maxContentChars: 50000,
   }),
+  voice: DEFAULT_VOICE_CONFIG,
 })

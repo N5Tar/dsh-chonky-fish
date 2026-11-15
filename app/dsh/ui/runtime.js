@@ -28,6 +28,7 @@ function mountChonkyFishPage(wrap, chat, options) {
   var realMode = false
   var realStatus = { phase: realChat ? 'idle' : 'disabled', error: null }
   var realUnsubscribe = null
+  var voiceControl = null
   var lastChatSignature = ''
   var busy = false
 
@@ -1622,6 +1623,10 @@ function mountChonkyFishPage(wrap, chat, options) {
   }
 
   var chatForm = $('chat-form')
+  var voiceButton = pageView === 'chat' ? $('voice-button') : null
+  if (voiceButton && realChat && typeof ChonkyFishVoiceBundle.createVoiceComposerControl === 'function') {
+    voiceControl = ChonkyFishVoiceBundle.createVoiceComposerControl({ button: voiceButton, chat: realChat, toast: toast })
+  } else if (voiceButton) voiceButton.disabled = true
   if (chatForm) {
     chatForm.addEventListener('submit', function (event) {
       event.preventDefault()
@@ -2032,6 +2037,7 @@ function mountChonkyFishPage(wrap, chat, options) {
       realUnsubscribe()
       realUnsubscribe = null
     }
+    if (voiceControl) { voiceControl.dispose(); voiceControl = null }
     if (confirmResolve) {
       var pending = confirmResolve
       confirmResolve = null

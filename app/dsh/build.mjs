@@ -14,6 +14,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildSync } from 'esbuild'
 import { ASSETS, DEFAULT_PANEL_PROMPT, PRESET, ROUTES, STORAGE_KEYS, WORKSPACE_DIR } from '../../core/contracts/spec.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -137,6 +138,18 @@ const perceptionPanel = readFileSync(join(ui, 'perception/client.js'), 'utf8')
 const settingsPanel = readFileSync(join(ui, 'settings/panel.js'), 'utf8')
 const avatarPlayer = readFileSync(join(ui, 'avatar/player.js'), 'utf8')
 const avatarWidget = readFileSync(join(ui, 'avatar/widget.js'), 'utf8')
+const voiceBundleResult = buildSync({
+  entryPoints: [join(here, 'client/voice/bootstrap.js')],
+  bundle: true,
+  format: 'iife',
+  globalName: 'ChonkyFishVoiceBundle',
+  platform: 'browser',
+  target: ['chrome120'],
+  define: { 'import.meta.url': 'location.href' },
+  legalComments: 'none',
+  write: false,
+})
+const voiceBundle = voiceBundleResult.outputFiles[0].text
 const avatarAsset = JSON.parse(readFileSync(join(root, 'assets/avatar/manifest.json'), 'utf8'))
 if (avatarAsset.idleFrame !== avatarAsset.frames.length - 1 || avatarAsset.frames.length < 2) throw new Error('Invalid avatar frame manifest')
 avatarAsset.frames = avatarAsset.frames.map(frame => {
@@ -167,6 +180,7 @@ const moduleSource = `/**
 window.__ModuleLoader__.load({
   id: '@local/chonkyfish-dashboard',
   factory: function (require) {
+    /*__CHONKYFISH_VOICE_BUNDLE__*/
     var React = require('react')
     var h = React.createElement
 
@@ -350,15 +364,23 @@ ${avatarWidget}
       var POND_DIR_NAME = RESOURCES.workspaceName
       var PRESET = RESOURCES.preset
       var listeners = new Set()
+      var voiceLocalInputListeners = new Set()
+      var voiceControllerListeners = new Set()
+      var voiceController = null
+      var voiceResetBarrier = ChonkyFishVoiceBundle.createVoiceResetBarrier()
       var status = { phase: 'idle', error: null }
       var reference = null
       var binding = null
+      var bindingSessionId = null
       var ensurePromise = null
+      var voiceResetPromise = null
+      var ensureGeneration = 0
       var unsubscribes = []
       var disposed = false
       var messageCache = { revision: -1, list: [] }
       var fishWorkspaceId = null
       var workspacePromise = null
+      var voiceBindingRevision = 0
 
       function emit() {
         listeners.forEach(function (listener) {
@@ -462,6 +484,40 @@ ${avatarWidget}
         if (entry === null) return null
         if (!canonicalPath) return id
         return entry.path === canonicalPath ? id : null
+      }
+      function voicePresetMatches(targetBinding) {
+        var session = targetBinding && targetBinding.session
+        try {
+          var projections = session && session.projections
+          if (projections && typeof projections.faceOf === 'function') {
+            var presetFace = projections.faceOf('agentPreset')
+            if (presetFace && typeof presetFace.getSnapshot === 'function') {
+              var projectedPreset = presetFace.getSnapshot()
+              return typeof projectedPreset === 'string' && projectedPreset === PRESET
+            }
+          }
+        } catch (error) {
+          // Older DSH clients may not expose the projection face; use the
+          // explicit selection event as a compatibility fallback below.
+        }
+        try {
+          var eventSource = targetBinding && targetBinding.eventSource
+          var snapshot = eventSource && eventSource.getSnapshot()
+          var entries = snapshot && Array.isArray(snapshot.entries) ? snapshot.entries : null
+          if (!entries) return false
+          for (var i = entries.length - 1; i >= 0; i -= 1) {
+            var event = entries[i] && entries[i].event
+            if (!event || event.type !== 'agent-preset/selected') continue
+            var data = event.data
+            if (typeof data === 'string') return data === PRESET
+            if (!data || typeof data !== 'object' || Array.isArray(data)) return false
+            var selected = data.agentPreset
+            return typeof selected === 'string' && selected === PRESET
+          }
+          return false
+        } catch (error) {
+          return false
+        }
       }
       function injectedPaths() {
         try {
@@ -622,6 +678,8 @@ ${avatarWidget}
       function attach(nextReference, sessionId) {
         reference = nextReference
         binding = nextReference.binding
+        bindingSessionId = sessionId
+        voiceBindingRevision += 1
         unsubscribes.push(binding.eventSource.subscribe(emit))
         unsubscribes.push(binding.session.subscribe(emit))
         reportActiveSession(sessionId)
@@ -644,11 +702,14 @@ ${avatarWidget}
         }
         reference = null
         binding = null
+        bindingSessionId = null
       }
       async function ensure() {
         if (disposed) throw new Error('大肥鱼面板已关闭')
+        if (voiceResetBarrier.isResetting()) throw Object.assign(new Error('大肥鱼会话正在切换，请稍后重试'), { code: 'VOICE_TARGET_RESETTING', outcome: 'not_applied' })
         if (binding) return binding
         if (ensurePromise) return ensurePromise
+        var generation = ensureGeneration
         ensurePromise = (async function () {
           setStatus('connecting')
           var pondWorkspaceId
@@ -657,24 +718,29 @@ ${avatarWidget}
           } catch (error) {
             console.warn('[chonkyfish] 小鱼塘工作区创建失败，暂时使用最近的项目', error)
           }
+          if (generation !== ensureGeneration || voiceResetBarrier.isResetting()) throw Object.assign(new Error('大肥鱼会话正在切换，请稍后重试'), { code: 'VOICE_TARGET_RESETTING', outcome: 'not_applied' })
           var stored = readStoredId()
           if (stored) {
             try {
               var existing = ctx.sessions.retain(stored, { source: 'controllerOperation' })
               await existing.ready
+              if (generation !== ensureGeneration || voiceResetBarrier.isResetting()) { existing.release(); throw Object.assign(new Error('大肥鱼会话正在切换，请稍后重试'), { code: 'VOICE_TARGET_RESETTING', outcome: 'not_applied' }) }
               attach(existing, stored)
               setStatus('ready')
               return binding
             } catch (error) {
+              if (generation !== ensureGeneration || voiceResetBarrier.isResetting()) throw error
               forgetStoredId()
             }
           }
           var workspaceId = pondWorkspaceId || workspaceIdForChat()
           if (!workspaceId) throw new Error('找不到可用的 DSH 工作区')
           var created = await ctx.uiWorkspace.connectWorkspace(workspaceId, { agentPreset: PRESET })
+          if (generation !== ensureGeneration || voiceResetBarrier.isResetting()) throw Object.assign(new Error('大肥鱼会话正在切换，请稍后重试'), { code: 'VOICE_TARGET_RESETTING', outcome: 'not_applied' })
           storeId(created)
           var next = ctx.sessions.retain(created, { source: 'controllerOperation' })
           await next.ready
+          if (generation !== ensureGeneration || voiceResetBarrier.isResetting()) { next.release(); throw Object.assign(new Error('大肥鱼会话正在切换，请稍后重试'), { code: 'VOICE_TARGET_RESETTING', outcome: 'not_applied' }) }
           attach(next, created)
           setStatus('ready')
           return binding
@@ -687,21 +753,126 @@ ${avatarWidget}
           throw error
         }
       }
-      async function send(text) {
-        var current = await ensure()
-        var result = await current.session.prompt([{ type: 'text', text: text }], 'queue')
-        if (!result || result.ok !== true) {
-          var failure = result && result.error
-          throw new Error(failure && (failure.message || failure.code) ? failure.message || failure.code : '发送失败')
+      // Voice may only address the canonical fish pond Session. Unlike the
+      // chat panel, this strict path never falls back to a recent workspace.
+      function getVoiceTarget(runtimeId) {
+        if (voiceResetBarrier.isResetting()) return null
+        var paths = workspaceResourcePaths()
+        var canonicalPath = paths && paths.workspace
+        if (!canonicalPath || typeof runtimeId !== 'string' || !runtimeId || !binding || !reference) return null
+        var sessionId = bindingSessionId
+        if (!sessionId) return null
+        var state = ctx.sessions.list.getSnapshot()
+        var summary = state && state.byId && state.byId[sessionId]
+        if (!summary || summary.removed || summary.cwd !== canonicalPath || !voicePresetMatches(binding)) return null
+        var workspace = workspaceEntry(fishWorkspaceId)
+        if (!workspace || workspace.path !== canonicalPath) return null
+        return { runtimeId: runtimeId, conversationId: sessionId, bindingRevision: String(voiceBindingRevision) }
+      }
+      function getVoiceBinding(ref) {
+        if (voiceResetBarrier.isResetting() || !ref || !binding || !reference || String(voiceBindingRevision) !== ref.bindingRevision) return null
+        var sessionId = bindingSessionId
+        if (!sessionId || ref.conversationId !== sessionId) return null
+        var paths = workspaceResourcePaths()
+        var state = ctx.sessions.list.getSnapshot()
+        var summary = state && state.byId && state.byId[sessionId]
+        if (!paths || !paths.workspace || !summary || summary.removed || summary.cwd !== paths.workspace || !voicePresetMatches(binding)) return null
+        var workspace = workspaceEntry(fishWorkspaceId)
+        if (!workspace || workspace.path !== paths.workspace) return null
+        return { session: binding.session, eventSource: binding.eventSource, sessionId: sessionId }
+      }
+      async function retainVoiceBinding(ref) {
+        var current = getVoiceBinding(ref)
+        if (!current) return null
+        var retained = ctx.sessions.retain(current.sessionId, { source: 'controllerOperation' })
+        try {
+          await retained.ready
+          var paths = workspaceResourcePaths()
+          var state = ctx.sessions.list.getSnapshot()
+          var summary = state && state.byId && state.byId[current.sessionId]
+          if (!paths || !paths.workspace || !summary || summary.removed || summary.cwd !== paths.workspace || !voicePresetMatches(retained.binding) || String(voiceBindingRevision) !== ref.bindingRevision) {
+            retained.release()
+            return null
+          }
+          return { session: retained.binding.session, eventSource: retained.binding.eventSource, sessionId: current.sessionId, release: function () { retained.release() } }
+        } catch (error) {
+          try { retained.release() } catch (ignored) {}
+          throw error
         }
       }
+      async function send(text) {
+        var current = await ensure()
+        var submission = current.session.beginSubmission({ text: text, mode: 'queue', attachments: [] })
+        var localInput = { sessionId: bindingSessionId, bindingRevision: String(voiceBindingRevision), requestId: submission.requestId }
+        function emitVoiceLocalInput(state) {
+          var event = { sessionId: localInput.sessionId, bindingRevision: localInput.bindingRevision, requestId: localInput.requestId, state: state }
+          voiceLocalInputListeners.forEach(function (listener) { try { listener(event) } catch (error) { console.error('[chonkyfish] voice keyboard observer failed', error) } })
+        }
+        var preAdmissionCodes = { 'gateway/bad-request': true, 'session/invalid-time-zone': true, 'session/attachment-invalid': true, 'session/not-found': true, 'session/agent-busy': true, 'session/model-unavailable': true, 'subagent/attachment-invalid': true }
+        emitVoiceLocalInput('prepared')
+        try {
+          var result = await current.session.prompt([{ type: 'text', text: text }], 'queue', undefined, submission.requestId)
+          if (!result || result.ok !== true) {
+            var failure = result && result.error
+            throw Object.assign(new Error(failure && (failure.message || failure.code) ? failure.message || failure.code : '发送失败'), {
+              code: failure && failure.code,
+              outcome: failure && failure.outcome || 'unknown',
+            })
+          }
+          if (result.value && result.value.accepted === true) emitVoiceLocalInput('accepted')
+        } catch (error) {
+          if (preAdmissionCodes[error && error.code] === true) {
+            try { submission.abandon && submission.abandon() } catch (ignored) {}
+            emitVoiceLocalInput('rejected')
+          }
+          throw error
+        }
+      }
+      function onVoiceLocalInput(listener) {
+        if (typeof listener !== 'function') throw new TypeError('voice local input listener must be a function')
+        voiceLocalInputListeners.add(listener)
+        return function () { voiceLocalInputListeners.delete(listener) }
+      }
+      function onVoiceReset(listener) {
+        return voiceResetBarrier.subscribe(listener)
+      }
+      function setVoiceController(next) {
+        voiceController = next || null
+        voiceControllerListeners.forEach(function (listener) { try { listener(voiceController) } catch (error) { console.error('[chonkyfish] voice controller observer failed', error) } })
+      }
+      function clearVoiceController(expected) {
+        if (voiceController === expected) setVoiceController(null)
+      }
+      function onVoiceController(listener) {
+        if (typeof listener !== 'function') throw new TypeError('voice controller listener must be a function')
+        voiceControllerListeners.add(listener)
+        try { listener(voiceController) } catch (error) { console.error('[chonkyfish] voice controller observer failed', error) }
+        return function () { voiceControllerListeners.delete(listener) }
+      }
+      function isVoiceResetting() {
+        return voiceResetBarrier.isResetting() || !!voiceResetPromise
+      }
       async function reset() {
-        releaseReference()
-        forgetStoredId()
-        ensurePromise = null
-        messageCache = { revision: -1, list: [] }
-        setStatus('idle')
-        return ensure()
+        if (voiceResetPromise) return voiceResetPromise
+        ensureGeneration += 1
+        var pendingEnsure = ensurePromise
+        var previousSessionId = bindingSessionId
+        var previousRevision = String(voiceBindingRevision)
+        voiceResetPromise = voiceResetBarrier.run({ sessionId: previousSessionId, bindingRevision: previousRevision }, async function () {
+          if (pendingEnsure) { try { await pendingEnsure } catch (ignored) {} }
+          releaseReference()
+          forgetStoredId()
+          ensurePromise = null
+          messageCache = { revision: -1, list: [] }
+          setStatus('idle')
+        }).then(function () {
+          return ensure()
+        })
+        try { return await voiceResetPromise }
+        catch (error) {
+          ensurePromise = null
+          throw error
+        } finally { voiceResetPromise = null }
       }
       function onChange(listener) {
         listeners.add(listener)
@@ -715,11 +886,23 @@ ${avatarWidget}
       function dispose() {
         disposed = true
         releaseReference()
+        setVoiceController(null)
         listeners.clear()
+        voiceLocalInputListeners.clear()
+        voiceControllerListeners.clear()
         ensurePromise = null
       }
       return {
         ensure: ensure,
+        getVoiceTarget: getVoiceTarget,
+        getVoiceBinding: getVoiceBinding,
+        retainVoiceBinding: retainVoiceBinding,
+        onVoiceLocalInput: onVoiceLocalInput,
+        onVoiceReset: onVoiceReset,
+        isVoiceResetting: isVoiceResetting,
+        setVoiceController: setVoiceController,
+        clearVoiceController: clearVoiceController,
+        onVoiceController: onVoiceController,
         send: send,
         reset: reset,
         getMessages: getMessages,
@@ -917,6 +1100,10 @@ ${avatarWidget}
       ctx.slots.inject('shell.overlay', function () {
         return ctx.slots.register({ name: 'shell.overlay', id: 'chonkyfish-avatar', order: -100, locale: NS }, AvatarWidget)
       })
+      var VoiceOverlay = ChonkyFishVoiceBundle.createVoiceOverlay(ctx, chatBridge, RESOURCES.routes)
+      ctx.slots.inject('shell.overlay', function () {
+        return ctx.slots.register({ name: 'shell.overlay', id: 'chonkyfish-voice', order: -90, locale: NS }, VoiceOverlay)
+      })
       ctx.slots.inject('main', function () {
         return PANELS.map(function (panel) {
           return ctx.slots.register({
@@ -945,5 +1132,12 @@ ${avatarWidget}
 })
 `
 
-writeFileSync(join(root, 'client.js'), moduleSource)
-console.log(`client.js written (${(moduleSource.length / 1024).toFixed(1)} KiB) from ${sourcePath}`)
+// Keep the ESM voice sources in their own esbuild graph; inject its finished
+// browser bundle into the Client factory only after the legacy shell template
+// has been rendered, so no imports are string-concatenated into a faux module.
+const marker = '    /*__CHONKYFISH_VOICE_BUNDLE__*/'
+if (!moduleSource.includes(marker)) throw new Error('voice bundle injection marker is missing')
+const bundledModuleSource = moduleSource.replace(marker, voiceBundle)
+
+writeFileSync(join(root, 'client.js'), bundledModuleSource)
+console.log(`client.js written (${(bundledModuleSource.length / 1024).toFixed(1)} KiB) from ${sourcePath}`)

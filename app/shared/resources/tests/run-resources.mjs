@@ -203,6 +203,7 @@ await test('config: 文件缺失/坏 JSON 时回退默认值', () => {
         enabled: true,
         maxContentChars: 50000,
       },
+      voice: DEFAULT_CONFIG.voice,
     })))
     mkdirSync(workspace.home, { recursive: true })
     writeFileSync(resources.paths.config, '{not-json', 'utf8')
@@ -400,6 +401,34 @@ await test('config updates serialize merge and CAS without changing ABS mode', a
       resources.updateConfig({ abs: { timeScale: 5 } }, { expectedRevision: revision }),
     ])
     assert.deepEqual(results.map(x => x.status), ['fulfilled', 'rejected'])
+  } finally { workspace.cleanup() }
+})
+
+await test('voice config: sanitize defaults and deep merge voice preferences', async () => {
+  const workspace = makeHome()
+  try {
+    const resources = createResources({ homeRoot: workspace.dshHome })
+    await resources.ensureLayout()
+    const config = await resources.updateConfig({ voice: { endSilenceMs: 1800, tts: { voiceId: 'Microsoft Huihui Desktop' } } })
+    assert.equal(config.voice.version, 1)
+    assert.equal(config.voice.endSilenceMs, 1800)
+    assert.equal(config.voice.tts.voiceId, 'Microsoft Huihui Desktop')
+    assert.equal(config.voice.tts.rate, 0)
+    assert.equal(config.voice.replyAudioEnabled, true)
+  } finally { workspace.cleanup() }
+})
+
+await test('voice config: preserve unsupported future schema across other updates', async () => {
+  const workspace = makeHome()
+  try {
+    const resources = createResources({ homeRoot: workspace.dshHome })
+    await resources.ensureLayout()
+    const future = { version: 7, futurePolicy: { vendor: 'future', raw: [1, 2, 3] } }
+    await resources.updateConfig({ voice: future })
+    const updated = await resources.updateConfig({ proactive: { enabled: false } })
+    assert.deepEqual(updated.voice, future)
+    await assert.rejects(resources.updateConfig({ voice: { version: 1 } }), error => error.code === 'VOICE_CONFIG_UNSUPPORTED' && error.outcome === 'not_applied')
+    assert.deepEqual(resources.getConfig().voice, future)
   } finally { workspace.cleanup() }
 })
 

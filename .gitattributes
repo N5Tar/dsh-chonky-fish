@@ -1,0 +1,6 @@
+# Pinned speech assets are verified byte-for-byte against manifest SHA-256.
+app/shared/audio/web/assets/** -text
+app/shared/audio/web/assets/manifest.json text
+app/shared/audio/web/assets/THIRD_PARTY_NOTICES.md text
+app/shared/audio/web/vad.worker.js -text
+app/shared/audio/web/capture.worklet.js -text

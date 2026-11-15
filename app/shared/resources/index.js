@@ -15,6 +15,7 @@
  */
 import { randomUUID, createHash } from 'node:crypto'
 import { sanitizeAbsConfig, mergeAbsConfig } from '../../../core/modules/abs/config.js'
+import { DEFAULT_VOICE_CONFIG, validateVoiceConfig } from '../../../core/modules/voice/config.js'
 import { readFileSync } from 'node:fs'
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -102,6 +103,16 @@ function sanitizeConfig(raw) {
   const proactive = isPlainObject(source.proactive) ? source.proactive : {}
   const eventEngine = isPlainObject(source.eventEngine) ? source.eventEngine : {}
   const diary = isPlainObject(source.diary) ? source.diary : {}
+  const voiceRaw = isPlainObject(source.voice) ? source.voice : {}
+  const voiceTts = isPlainObject(voiceRaw.tts) ? voiceRaw.tts : {}
+  const voiceVersion = Number.isInteger(voiceRaw.version) ? voiceRaw.version : 1
+  // Preserve a future voice schema byte-for-byte through unrelated config edits.
+  let voice = DEFAULT_VOICE_CONFIG
+  if (voiceVersion > 1) voice = structuredClone(voiceRaw)
+  else {
+    try { voice = validateVoiceConfig({ ...voiceRaw, version: 1, tts: { ...voiceTts, providerId: voiceTts.providerId || 'windows-system-speech' } }) }
+    catch { voice = DEFAULT_VOICE_CONFIG }
+  }
   const defaults = DEFAULT_CONFIG
   return {
     version: VERSIONS.config,
@@ -137,6 +148,7 @@ function sanitizeConfig(raw) {
         fallback: defaults.diary.maxContentChars,
       }),
     },
+    voice,
   }
 }
 
@@ -146,6 +158,13 @@ function mergeConfig(current, patch) {
   const proactive = isPlainObject(source.proactive) ? source.proactive : {}
   const eventEngine = isPlainObject(source.eventEngine) ? source.eventEngine : {}
   const diary = isPlainObject(source.diary) ? source.diary : {}
+  const currentVoice = current.voice || DEFAULT_CONFIG.voice
+  const voicePatch = isPlainObject(source.voice) ? source.voice : null
+  const mergedVoice = voicePatch?.version > 1 ? voicePatch : currentVoice.version > 1 && !voicePatch ? currentVoice : {
+    ...currentVoice,
+    ...(voicePatch || {}),
+    tts: { ...(currentVoice.tts || {}), ...(isPlainObject(voicePatch?.tts) ? voicePatch.tts : {}) },
+  }
   return sanitizeConfig({
     version: VERSIONS.config,
     abs: mergeAbsConfig(current.abs, source.abs),
@@ -154,6 +173,7 @@ function mergeConfig(current, patch) {
     proactive: { ...current.proactive, ...proactive },
     eventEngine: { ...current.eventEngine, ...eventEngine },
     diary: { ...current.diary, ...diary },
+    voice: mergedVoice,
   })
 }
 
@@ -302,6 +322,9 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     const operation = configWriteChain.catch(() => {}).then(() => withMigrationWrite(async () => {
       if (expectedRevision !== undefined && expectedRevision !== configRevision()) {
         throw Object.assign(new Error('Configuration changed'), { code: 'STALE_TARGET', outcome: 'not_applied' })
+      }
+      if (isPlainObject(patch) && Object.prototype.hasOwnProperty.call(patch, 'voice') && getConfig().voice?.version > 1) {
+        throw Object.assign(new Error('Voice config schema is newer than this plugin'), { code: 'VOICE_CONFIG_UNSUPPORTED', outcome: 'not_applied' })
       }
       const next = mergeConfig(getConfig(), patch)
       try {

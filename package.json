@@ -17,6 +17,7 @@
     "app/dsh/packaging/icon.svg",
     "app/dsh/locale/*.json",
     "app/dsh/host/**",
+    "app/dsh/client/**",
     "app/dsh/adapters/**",
     "app/dsh/ui/**",
     "app/shared/**",
@@ -25,6 +26,7 @@
     "!app/shared/platform/perception/native/.build/**"
   ],
   "scripts": {
+    "build": "node app/dsh/build.mjs",
     "build:perception": "node app/shared/platform/perception/build-native.mjs --all",
     "test:perception:native": "node core/modules/perception/tests/run-collector.mjs --native",
     "test:perception:soak": "node core/modules/perception/tests/run-soak.mjs",
@@ -46,6 +48,8 @@
     "test": "npm run test:event-engine:all && npm run test:resources && npm run test:platform && npm run test:persona && npm run test:proactive && npm run test:diary && npm run test:migration && npm run test:social && npm run test:abs && npm run test:skills && npm run test:avatar && npm run test:perception && npm run test:hello",
     "test:social": "node core/modules/social/tests/run-stream-liveness.mjs && node core/modules/social/tests/run-peer-bindings.mjs && node core/modules/social/tests/run-channel-reply.mjs && node core/modules/social/tests/run-dingtalk.mjs && node core/modules/social/tests/run-core.mjs && node core/modules/social/tests/run-inbox.mjs && node core/modules/social/tests/run-service.mjs && node core/modules/social/tests/run-bridge.mjs && node core/modules/social/tests/run-reply-outbox.mjs && node core/modules/social/tests/run-main-pump.mjs && node core/modules/social/tests/run-http-tools.mjs && node core/modules/social/tests/run-host.mjs && node core/modules/social/tests/run-client.mjs",
     "test:resources": "node app/shared/resources/tests/run-resources.mjs",
+    "test:voice": "node core/modules/voice/tests/run-core.mjs && node core/modules/voice/tests/run-service.mjs && node app/shared/audio/tests/run-audio.mjs && node app/dsh/client/voice/tests/run-speech.mjs && node app/dsh/client/voice/tests/run-cold-start.mjs && node app/dsh/client/voice/tests/run-auto-reply.mjs && node app/dsh/client/voice/tests/run-send-call-policy.mjs && node app/dsh/adapters/voice/tests/run-conversation.mjs && node app/dsh/adapters/voice/tests/run-http.mjs && node app/shared/platform/voice/tests/run-windows-tts.mjs && node app/dsh/client/voice/tests/run-client-startup.mjs && node app/dsh/client/voice/tests/run-reset-order.mjs && node app/dsh/client/voice/tests/run-reset-bootstrap.mjs && node app/dsh/ui/voice/tests/run-composer-button.mjs",
+    "test:voice:model": "node app/shared/audio/tests/run-vad-model.mjs",
     "test:persona": "node core/modules/persona/tests/run-supplement.mjs",
     "test:hello": "node core/modules/hello/tests/run-core.mjs && node core/modules/hello/tests/run-store.mjs && node app/dsh/adapters/hello/tests/run-http.mjs && node app/dsh/adapters/hello/tests/run-host.mjs && node app/dsh/adapters/hello/tests/run-persona-host.mjs && node app/dsh/ui/hello/tests/run-client.mjs"
   },
@@ -65,5 +69,9 @@
   "homepage": "https://github.com/N5Tar/dsh-chonky-fish",
   "dependencies": {
     "ws": "8.22.2"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "onnxruntime-web": "1.31.1"
   }
 }
