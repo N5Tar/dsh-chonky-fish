@@ -169,6 +169,20 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
   }
   const pause = () => userHalt('paused')
   const stop = () => userHalt(capabilities.supported ? 'stopped' : 'unsupported')
+  // Host migration already owns the persistence lock. Quiesce the collector
+  // without calling a user control (which would try to write that locked file).
+  async function suspendForMigration() {
+    assertOpen(); manualControl = true; ++preferenceGeneration
+    return halt(capabilities.supported ? 'stopped' : 'unsupported')
+  }
+  // Only after migration has published its disabled collection preference.
+  // No disk access here: that write belongs to the migration transaction.
+  function adoptImportedPreference() {
+    assertOpen(); ++preferenceGeneration
+    preferenceRequested = false; preferenceLoaded = true
+    if (preferenceError && error?.code === preferenceError.code) error = null
+    preferenceError = null
+  }
   // Compare and reserve a user control in one synchronous turn. Existing controls
   // reserve preferenceGeneration before their first await, preventing stale Hello
   // requests from overwriting a newer settings-page choice.
@@ -246,5 +260,5 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
     })()
     return closing
   }
-  return { initialize, start, pause, stop, getControlState, setRequested, getStatus, getCurrent, getTimeline, getSummaries, analyze, clean, close }
+  return { initialize, start, pause, stop, suspendForMigration, adoptImportedPreference, getControlState, setRequested, getStatus, getCurrent, getTimeline, getSummaries, analyze, clean, close }
 }

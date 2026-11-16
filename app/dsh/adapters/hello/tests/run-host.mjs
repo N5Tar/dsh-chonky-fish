@@ -34,8 +34,8 @@ const ctx = {
 }
 
 const request = (path, method, body) => new Promise(resolve => {
-  const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]); Object.assign(req,{method,url:path,headers:{host:'localhost','content-type':'application/json'}})
-  routes.get(path).handler(req,{writeHead(status){this.status=status},end(body){resolve({status:this.status,body:body?JSON.parse(body):null})}})
+  const req = Readable.from(body === undefined ? [] : [Buffer.isBuffer(body)?body:Buffer.from(JSON.stringify(body))]); Object.assign(req,{method,url:path,headers:{host:'localhost','content-type':Buffer.isBuffer(body)?'application/zip':'application/json'}})
+  ;(routes.get(path) || routes.get(path.split('?')[0])).handler(req,{writeHead(status){this.status=status},end(body){resolve({status:this.status,body:Buffer.isBuffer(body)?body:body?JSON.parse(body):null})}})
 })
 try {
  apply(ctx)
@@ -58,7 +58,28 @@ try {
  const final=(await request('/chonkyfish/state','GET')).body
  assert.equal(final.state.prompt,'keep existing'); assert.equal(final.state.wallet,99);assert.equal(final.state.name,'hello')
  assert.equal((await request('/chonkyfish/hello','GET')).body.data.current.abs.mode,'shadow')
- console.log('hello Host: PASS (bootstrap, old-state concurrent CAS, existing persona/wallet preservation, base apply, unchanged ABS mode)')
+ // Restore the actual export through the Host routes on a second clean install.
+ const exported=await request('/chonkyfish/migration/exports','POST')
+ assert.equal(exported.status,200,JSON.stringify(exported))
+ const archive=await request('/chonkyfish/migration/exports?id='+exported.body.data.exportId,'GET')
+ assert.equal(archive.status,200);assert(Buffer.isBuffer(archive.body))
+ for(const dispose of effects.splice(0).reverse())await dispose()
+ process.env.DSH_HOME=await mkdtemp(join(tmpdir(),'hello-import-host-'))
+ apply(ctx)
+ for(let i=0;i<100;i++){boot=await request('/chonkyfish/hello','GET');if(boot.status===200)break;await new Promise(r=>setTimeout(r,20))}
+ assert.equal(boot.body.data.state.entryKind,'new')
+ const preview=await request('/chonkyfish/migration/imports/inspect','POST',archive.body)
+ assert.equal(preview.status,200,JSON.stringify(preview))
+ assert.equal((await request('/chonkyfish/hello','GET')).body.data.state.status,'draft')
+ const imported=await request('/chonkyfish/migration/imports/commit','POST',{id:preview.body.data.importId})
+ assert.equal(imported.status,200,JSON.stringify(imported))
+ assert.equal((await request('/chonkyfish/hello','GET')).body.data.state.status,'completed')
+ assert.equal((await request('/chonkyfish/state','GET')).body.state.prompt,'keep existing')
+ for(const dispose of effects.splice(0).reverse())await dispose()
+ apply(ctx)
+ for(let i=0;i<100;i++){boot=await request('/chonkyfish/hello','GET');if(boot.status===200)break;await new Promise(r=>setTimeout(r,20))}
+ assert.equal(boot.body.data.state.status,'completed','restored install remains completed after restart')
+ console.log('hello Host: PASS (bootstrap, old-state concurrent CAS, existing persona/wallet preservation, base apply, unchanged ABS mode, exported archive import and restart)')
 } finally {
  for(const dispose of effects.reverse())await dispose()
  if(priorHome===undefined)delete process.env.DSH_HOME;else process.env.DSH_HOME=priorHome

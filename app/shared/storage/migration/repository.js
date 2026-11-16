@@ -182,6 +182,29 @@ export function createMigrationRepository({ resources, beforeExclusive = async (
         } catch { fail('RECOVERY_REQUIRED') }
       }
     },
+    // Read-only durable evidence for consumers such as first-use onboarding.
+    // A pending/ambiguous transaction must be recovered before any completion
+    // is inferred, even when an older import committed successfully.
+    async readCommittedImport() {
+      const txRoot = path.join(root, 'transactions')
+      let ids
+      try { ids = await readdir(txRoot) } catch (error) { if (error.code === 'ENOENT') return null; throw error }
+      let committed = null
+      for (const id of ids.sort()) {
+        const dir = path.join(txRoot, id), journal = path.join(dir, 'transaction.json')
+        const info = await lstat(dir)
+        if (!info.isDirectory() || info.isSymbolicLink()) fail('RECOVERY_REQUIRED')
+        let tx
+        try {
+          const info = await lstat(journal)
+          if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) fail('RECOVERY_REQUIRED')
+          tx = JSON.parse(await readFile(journal, 'utf8'))
+        } catch { fail('RECOVERY_REQUIRED') }
+        if (tx.id !== id || !['committed', 'rolled-back'].includes(tx.phase)) fail('RECOVERY_REQUIRED')
+        if (tx.phase === 'committed') committed = id
+      }
+      return committed
+    },
     async isBusy() { return busy },
     async withExclusive(fn) { if (busy) fail('MIGRATION_BUSY'); busy = true; onExclusive(true); try { await beforeExclusive(); return await fn() } finally { onExclusive(false); busy = false } },
     async buildPlan(data, snapshot) {

@@ -12,8 +12,9 @@ var MIGRATION_EN = {
 }
 Object.assign(zh, MIGRATION_ZH)
 Object.assign(en, MIGRATION_EN)
-function createMigrationSettings(t) {
-  return function MigrationSettings() {
+function createMigrationSettings(t, options) {
+  var importOnly = options?.importOnly === true
+  return function MigrationSettings(props) {
     var endpoint = (window.__CHONKYFISH_STATE__?.routes || RESOURCES.routes)
     var exportUrl = endpoint.migrationExport || RESOURCES.routes.migrationExport
     var inspectUrl = endpoint.migrationImportInspect || RESOURCES.routes.migrationImportInspect
@@ -81,12 +82,12 @@ function createMigrationSettings(t) {
     var counts = state.preview?.sections
     return h('section', { className: 'cf-migration cf-module' }, h('style', null, MODULE_SURFACE + '\n.cf-migration{--mig-blue:#326fa8;--mig-blue-hover:#285d91;height:100%;overflow:auto;background:var(--dsw-alias-bg-base,#f7faff);color:var(--dsw-alias-label-primary,#213b55);font:14px/1.65 var(--dsw-font-family,system-ui)}.cf-migration .inner{max-width:900px;margin:auto;padding:42px 48px}.cf-migration header{border-bottom:1px solid var(--dsw-alias-border-l1);padding-bottom:24px;margin-bottom:28px}.cf-migration h1{font-size:32px;margin:0 0 8px}.cf-migration h2{font-size:20px;margin:30px 0 8px}.cf-migration p{color:var(--dsw-alias-label-secondary,#71849a);margin:8px 0}.cf-migration .actions{display:flex;gap:12px;margin:24px 0}.cf-migration button{font:inherit;font-weight:600;color:var(--dsw-alias-label-primary,#213b55);background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#d7e3ee);border-radius:8px;padding:10px 16px;cursor:pointer;transition:background-color .16s ease,border-color .16s ease,color .16s ease,transform .16s ease}.cf-migration button:hover:not(:disabled){background:#edf4fa;border-color:#b8ccdf}.cf-migration button:active:not(:disabled){transform:translateY(1px)}.cf-migration button.primary{color:#fff;background:var(--dsw-alias-brand-primary,var(--mig-blue));border-color:var(--dsw-alias-brand-primary,var(--mig-blue));box-shadow:0 2px 5px rgb(33 79 121 / 16%)}.cf-migration button.primary:hover:not(:disabled){color:#fff;background:var(--mig-blue-hover);border-color:var(--mig-blue-hover)}.cf-migration button:disabled{opacity:.5;cursor:wait}.cf-migration .notice{padding:14px 16px;border-left:3px solid var(--dsw-alias-brand-primary,var(--mig-blue));background:var(--dsw-alias-bg-layer-1,#eef4f9);color:var(--dsw-alias-label-primary,#29435d);white-space:pre-line}.cf-migration .error{color:var(--dsw-alias-label-danger,#b42318)}.cf-migration .counts{display:flex;gap:18px;flex-wrap:wrap;margin:18px 0}.cf-migration .counts span{padding:8px 12px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-secondary,#60768d);border:1px solid var(--dsw-alias-border-l1,#dbe5ef);border-radius:8px}.cf-migration :focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:3px}@container (max-width:650px){.cf-migration .inner{padding:26px 20px}.cf-migration .actions{flex-wrap:wrap}}'),
       h('div', { className: 'inner' },
-        h('header', null, h('h1', null, t('navSettings')), h('p', null, t('settingsSubtitle'))),
+        h('header', null, h('h1', null, importOnly ? '导入已有资料' : t('navSettings')), h('p', null, importOnly ? '选择在设置中导出的 .fishpack 资料包，继续之前的小鱼塘。' : t('settingsSubtitle'))),
         h('h2', null, t('migrationTitle')), h('p', null, t('migrationIntro')),
         h('p', null, t('migrationIncluded')), h('p', null, t('migrationExcluded')),
         h('div', { className: 'notice' }, t('migrationPrivacy')),
         h('div', { className: 'actions' },
-          h('button', { className: 'primary', disabled: state.busy, onClick: exportData }, t('migrationExport')),
+          !importOnly && h('button', { className: 'primary', disabled: state.busy, onClick: exportData }, t('migrationExport')),
           h('button', { disabled: state.busy, onClick: function () { fileRef.current?.click() } }, t('migrationImport')),
           h('input', { ref: fileRef, type: 'file', accept: '.fishpack,application/zip', hidden: true, onChange: selectFile, 'aria-label': t('migrationSelect') })),
         state.preview && h(React.Fragment, null,
@@ -96,6 +97,7 @@ function createMigrationSettings(t) {
           state.preview.bytes && h('p', null, t('migrationBytes') + ': ' + state.preview.bytes),
           h('p', null, (state.preview.warnings || []).map(function (key) { var labels = { 'custom-profile-path-not-included': 'migrationWarnCustomProfile', 'browser-profile-excluded': 'migrationWarnBrowserProfile', 'autonomous-actions-disabled-on-import': 'migrationWarnAutonomous' }; return labels[key] ? t(labels[key]) : key }).join(' · ')),
           state.exportId ? h('button', { className: 'primary', onClick: download }, t('migrationDownload')) : h('div', { className: 'actions' }, h('button', { disabled: state.busy, onClick: cancelImport }, t('migrationCancel')), h('button', { className: 'primary', disabled: state.busy, onClick: commit }, t('migrationConfirm')))),
+        importOnly && h('button', { disabled: state.busy, onClick: async function() { await cancelImport(); props?.onBack?.() } }, '返回首次设置'),
         state.message && h('p', { role: state.error ? 'alert' : 'status', className: state.error ? 'error' : '' }, state.message)))
   }
 }

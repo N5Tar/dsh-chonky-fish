@@ -40,7 +40,7 @@
     "requeue:dead-letters": "node app/shared/storage/event-engine/maintenance.mjs",
     "test:proactive": "node core/modules/proactive/tests/run-revisit.mjs && node core/modules/proactive/tests/run-proactive.mjs",
     "test:diary": "node core/modules/diary/tests/run-diary.mjs",
-    "test:migration": "node core/modules/migration/tests/run-migration.mjs && node core/modules/migration/tests/run-http.mjs",
+    "test:migration": "node core/modules/migration/tests/run-migration.mjs && node core/modules/migration/tests/run-http.mjs && node app/dsh/ui/settings/tests/run-client.mjs",
     "test:skills": "node core/modules/skills/tests/run-core.mjs && node core/modules/skills/tests/run-host.mjs && node core/modules/skills/tests/run-http.mjs && node core/modules/skills/tests/run-client.mjs",
     "test:abs": "node core/modules/abs/tests/run-rest.mjs && node core/modules/abs/tests/run-clock.mjs && node core/modules/abs/tests/run-core.mjs && node core/modules/abs/tests/run-review.mjs && node core/modules/abs/tests/run-host.mjs && node core/modules/abs/tests/run-service.mjs && node core/modules/abs/tests/run-client.mjs && node core/modules/abs/tests/run-events-client.mjs",
     "test:avatar": "node app/dsh/ui/avatar/tests/run-player.mjs",
@@ -52,7 +52,7 @@
     "test:voice:model": "node app/shared/audio/tests/run-vad-model.mjs",
     "test:tasks": "node core/modules/tasks/tests/run-core.mjs && node app/shared/storage/tasks/tests/run-sqlite.mjs && node app/dsh/adapters/tasks/tests/run-host-adapter.mjs && node app/dsh/adapters/tasks/tests/run-protocols.mjs && node app/dsh/adapters/tasks/tests/run-host-install.mjs && node app/dsh/adapters/tasks/tests/run-phone-policy.mjs && node app/dsh/adapters/tasks/tests/run-companion-policy.mjs && node app/dsh/adapters/tasks/tests/run-companion-host.mjs && node app/dsh/adapters/voice/tests/run-task-notices.mjs",
     "test:persona": "node core/modules/persona/tests/run-supplement.mjs",
-    "test:hello": "node core/modules/hello/tests/run-core.mjs && node core/modules/hello/tests/run-store.mjs && node app/dsh/adapters/hello/tests/run-http.mjs && node app/dsh/adapters/hello/tests/run-host.mjs && node app/dsh/adapters/hello/tests/run-persona-host.mjs && node app/dsh/ui/hello/tests/run-client.mjs"
+    "test:hello": "node core/modules/hello/tests/run-core.mjs && node core/modules/hello/tests/run-installation.mjs && node core/modules/hello/tests/run-store.mjs && node app/dsh/adapters/hello/tests/run-http.mjs && node app/dsh/adapters/hello/tests/run-host.mjs && node app/dsh/adapters/hello/tests/run-persona-host.mjs && node app/dsh/ui/hello/tests/run-client.mjs && node app/dsh/ui/hello/tests/run-gate.mjs"
   },
   "dsh": {
     "bundle": {

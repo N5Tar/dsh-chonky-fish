@@ -1,7 +1,7 @@
-import { HELLO_PRESET, clone, fail, keys, validateDraft } from './schema.js'
+import { HELLO_PRESET, clone, fail, keys, validateDraft, initialHelloState } from './schema.js'
 const equal = (a,b) => JSON.stringify(a) === JSON.stringify(b)
 const STEPS = ['panel','abs','perception']
-export function createHelloService({ store, panel, abs, perception, social, isMigrationBusy = () => false, now = () => new Date().toISOString() }) {
+export function createHelloService({ store, panel, abs, perception, social, installationExisting = false, readCommittedImport = async () => null, isMigrationBusy = () => false, now = () => new Date().toISOString() }) {
   let chain = Promise.resolve(), closed = false
   const serial = fn => { if (closed) return Promise.reject(fail('HELLO_CLOSED')); const task = chain.then(() => { check(); return fn() }); chain = task.catch(() => {}); return task }
   const check = () => { if (closed) throw fail('HELLO_CLOSED'); if (isMigrationBusy()) throw fail('MIGRATION_BUSY') }
@@ -13,13 +13,21 @@ export function createHelloService({ store, panel, abs, perception, social, isMi
     if (!state) {
       const c = await current(), p = c.panel.state || {}
       // Any persisted panel data or requested perception protects an existing installation.
-      const existing = Object.keys(p).length > 0 || c.panel.generation > 0 || c.perception.requested || Boolean(c.social?.configured || c.social?.dingtalk?.connected || c.social?.dingtalk?.ownerBound)
-      state = { schemaVersion: 1, flowVersion: 'hello-v1', revision: 0, status: 'draft', step: 'welcome', entryKind: existing ? 'existing' : 'new', draft: { name: p.name || '大肥鱼', prompt: typeof p.prompt === 'string' && p.prompt.trim() ? p.prompt : HELLO_PRESET.body, perceptionRequested: null, abs: { timeScale: c.abs.timeScale, restHours: clone(c.abs.restHours) } }, operations: [], baseCompletedAt: null, dingtalk: { status: 'not_started' } }
+      const existing = installationExisting || Object.keys(p).length > 0 || c.panel.generation > 0 || c.perception.requested || Boolean(c.social?.configured || c.social?.dingtalk?.connected || c.social?.dingtalk?.ownerBound)
+      state = initialHelloState({ existing, panel: p, abs: c.abs })
       validateDraft(state.draft); await store.write(state, null)
+    }
+    // Only durable migration evidence can retire a new-install draft. This also
+    // repairs a crash (or failed Hello write) after the import committed.
+    if (state.entryKind === 'new' && state.status !== 'completed' && await readCommittedImport()) {
+      for (const op of state.operations) if (!['completed', 'abandoned'].includes(op.status)) op.status = 'abandoned'
+      state.status = 'completed'; state.step = 'done'; state.baseCompletedAt = now()
+      await persist(state)
+      return state
     }
     // A process may have died after its side effect and before journaling it.
     let changed = false
-    for (const op of state.operations) for (const key of STEPS) if (op.steps[key].status === 'applying') { op.steps[key].status = 'unknown'; op.steps[key].error = 'HELLO_OUTCOME_UNKNOWN'; op.status = 'partial'; state.status = 'partial'; changed = true }
+    for (const op of state.operations.filter(op => !['completed', 'abandoned'].includes(op.status))) for (const key of STEPS) if (op.steps[key].status === 'applying') { op.steps[key].status = 'unknown'; op.steps[key].error = 'HELLO_OUTCOME_UNKNOWN'; op.status = 'partial'; state.status = 'partial'; changed = true }
     if (changed) await persist(state)
     return state
   }
@@ -92,7 +100,8 @@ export function createHelloService({ store, panel, abs, perception, social, isMi
         validateDraft(draft)
       }
       if (input.step !== undefined && !['welcome','persona','perception','rhythm','review','done'].includes(input.step)) throw fail('HELLO_INVALID_STEP')
-      state.draft = draft; state.step = input.step || state.step; if (state.status === 'completed') state.status = 'draft'
+      if (state.status === 'completed') throw fail('HELLO_ALREADY_COMPLETED')
+      state.draft = draft; state.step = input.step || state.step
       await persist(state); return clone(state)
     }),
     applyBase: input => serial(async () => {
@@ -100,7 +109,7 @@ export function createHelloService({ store, panel, abs, perception, social, isMi
       if (typeof input.operationId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(input.operationId)) throw fail('HELLO_INVALID_OPERATION_ID')
       const previous = state.operations.find(o => o.id === input.operationId)
       if (previous) { if (previous.requestRevision !== input.expectedRevision || !equal(previous.expectedSources,input.expectedSources)) throw fail('HELLO_OPERATION_CONFLICT'); return clone(previous) }
-      assertRevision(state,input.expectedRevision); if (busy(state)) throw fail('HELLO_OPERATION_PENDING'); validateDraft(state.draft,true)
+      assertRevision(state,input.expectedRevision); if (state.status === 'completed') throw fail('HELLO_ALREADY_COMPLETED'); if (busy(state)) throw fail('HELLO_OPERATION_PENDING'); validateDraft(state.draft,true)
       const c = await current(); if (!equal(sources(c),input.expectedSources)) throw fail('HELLO_SOURCE_CHANGED')
       if (state.draft.perceptionRequested && !c.perception.supported) throw fail('HELLO_PERCEPTION_UNSUPPORTED')
       const op = { id: input.operationId, requestRevision: input.expectedRevision, input: clone(state.draft), expectedSources: clone(input.expectedSources), status: 'applying', steps: Object.fromEntries(STEPS.map(k => [k,{status:'pending'}])), createdAt: now() }

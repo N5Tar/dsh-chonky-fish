@@ -19,6 +19,7 @@ export function validateDraft(draft, complete = false) {
 export function validateState(state) {
   if (!state || state.schemaVersion !== 1 || !Number.isSafeInteger(state.revision) || state.revision < 0 || !Array.isArray(state.operations) || !['draft','applying','partial','completed'].includes(state.status)) throw fail('HELLO_CORRUPT_STATE')
   if (state.flowVersion !== 'hello-v1' || !['welcome','persona','perception','rhythm','review','done'].includes(state.step) || !['new','existing'].includes(state.entryKind) || !['not_started','skipped'].includes(state.dingtalk?.status) || state.operations.length > 128) throw fail('HELLO_CORRUPT_STATE')
+  if (state.installationVersion !== undefined && state.installationVersion !== 1) throw fail('HELLO_CORRUPT_STATE')
   validateDraft(state.draft)
   for (const op of state.operations) {
     if (!op || typeof op.id !== 'string' || !op.input || !op.steps || !['applying','partial','completed','abandoned'].includes(op.status)) throw fail('HELLO_CORRUPT_STATE')
@@ -26,4 +27,12 @@ export function validateState(state) {
     for (const key of ['panel','abs','perception']) if (!['pending','applying','applied','failed','unknown'].includes(op.steps[key]?.status)) throw fail('HELLO_CORRUPT_STATE')
   }
   return state
+}
+
+export function initialHelloState({ existing = false, panel = {}, abs }) {
+  const state = { schemaVersion: 1, installationVersion: 1, flowVersion: 'hello-v1', revision: 0, status: 'draft', step: 'welcome', entryKind: existing ? 'existing' : 'new',
+    draft: { name: panel.name || '大肥鱼', prompt: typeof panel.prompt === 'string' && panel.prompt.trim() ? panel.prompt : HELLO_PRESET.body,
+      perceptionRequested: null, abs: { timeScale: abs.timeScale, restHours: clone(abs.restHours) } },
+    operations: [], baseCompletedAt: null, dingtalk: { status: 'not_started' } }
+  return validateState(state)
 }

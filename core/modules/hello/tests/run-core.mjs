@@ -74,3 +74,16 @@ async function prepared(f) { let b=await f.service.bootstrap(); await f.service.
  assert.equal(op.status,'completed');assert.equal(f.p.state.prompt,'在原人格页设置的新内容')
 }
 console.log('hello core tests passed')
+
+{
+ const f=fixture(),b=await prepared(f);f.failAbs=true
+ await f.service.applyBase({operationId:'import-over-partial',expectedRevision:b.state.revision,expectedSources:b.expectedSources})
+ f.crash()
+ const imported=createHelloService({...f.ports,readCommittedImport:async()=> 'committed-import'})
+ assert.equal((await imported.bootstrap()).state.status,'completed')
+ assert.equal((await imported.bootstrap()).state.status,'completed','abandoned applying steps cannot reopen onboarding')
+ assert.equal((await imported.resume({operationId:'import-over-partial'})).status,'abandoned')
+ const revision=f.data().revision
+ await assert.rejects(imported.saveDraft({expectedRevision:revision,patch:{name:'stale'}}),/ALREADY_COMPLETED/)
+ assert.equal(f.calls.panel,1,'stale partial operation cannot overwrite restored data')
+}

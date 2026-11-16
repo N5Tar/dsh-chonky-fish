@@ -1085,7 +1085,6 @@ ${avatarWidget}
      */
     var PANELS = [
       { id: 'chonkyfish', view: 'chat', label: 'nav', icon: ICON_CHAT, order: 20 },
-      { id: 'chonkyfish-hello', view: 'hello', label: 'navHello', icon: ICON_PERSONA, order: 20.5 },
       { id: 'chonkyfish-wallet', view: 'wallet', label: 'navWallet', icon: ICON_WALLET, order: 21 },
       { id: 'chonkyfish-persona', view: 'settings', label: 'navPersona', icon: ICON_PERSONA, order: 22 },
       { id: 'chonkyfish-diary', view: 'diary', label: 'navDiary', icon: ICON_DIARY, order: 24 },
@@ -1137,7 +1136,7 @@ ${avatarWidget}
             name: 'main',
             key: panel.id,
             locale: NS,
-          }, panel.view === 'hello' ? createHelloPage() : panel.view === 'chat' ? createHelloChatGate() : panel.view === 'abs' ? AbsLabPage : panel.view === 'skills' ? createSafeSkillsPage(t) : panel.view === 'preferences' ? createMigrationSettings(t) : createPanelPage(panel.view))
+          }, createHelloGate(panel.view === 'abs' ? AbsLabPage : panel.view === 'skills' ? createSafeSkillsPage(t) : panel.view === 'preferences' ? createMigrationSettings(t) : createPanelPage(panel.view), t))
         })
       })
 

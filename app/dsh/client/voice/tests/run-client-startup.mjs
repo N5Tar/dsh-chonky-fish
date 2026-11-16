@@ -111,6 +111,10 @@ function makeEnvironment(injectionMode) {
   }
   Object.defineProperty(ctx, 'remote', { get() { throw new Error('unguarded ctx.remote access') } })
   plugin.apply(ctx)
+  const mainPanels = registrations.filter(item => item.metadata?.name === 'main')
+  assert.equal(mainPanels.length, 8, 'all eight destinations remain registered')
+  assert(mainPanels.every(item => item.component.name === 'HelloGate'), 'generated bundle gates every destination')
+  assert(!registrations.some(item => item.metadata?.id === 'chonkyfish-hello'), 'no first-use sidebar menu')
   return { registrations, effects, cleanups, consoleErrors, document, ctx, get injectionDisposals() { return injectionDisposals } }
 }
 

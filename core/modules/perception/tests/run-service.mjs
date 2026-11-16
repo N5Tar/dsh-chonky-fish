@@ -328,3 +328,22 @@ console.log(`perception service: ${tests.length} passed`)
   await f.service.close()
 }
 console.log('perception conditional control: PASS')
+
+// Migration owns the preference file while its exclusive lock is held.
+{
+  let locked = false, persisted = true, writes = 0
+  const f = fixture({ preferences: { read: async()=>persisted, write: async value=>{if(locked)throw new Error('MIGRATION_BUSY');writes++;persisted=value} } })
+  await f.service.initialize(); await until(()=>f.stats().startCalls===1)
+  locked = true
+  await f.service.suspendForMigration()
+  assert.equal(writes,0,'suspend must not write inside migration lock')
+  assert.equal(f.service.getStatus().state,'stopped')
+  assert.equal(f.service.getControlState().requested,true,'pre-publish failure preserves old persisted intent')
+  persisted=false // Published by the migration transaction itself.
+  f.service.adoptImportedPreference()
+  assert.equal(f.service.getControlState().requested,false)
+  assert.equal(f.stats().startCalls,1,'import does not restart collection')
+  locked=false;await f.service.start();assert.equal(writes,1,'normal explicit controls still work after import')
+  await f.service.close()
+}
+console.log('perception migration quiescence: PASS')

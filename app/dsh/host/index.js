@@ -15,6 +15,8 @@
  *    proactive routes. Every path, route, limit and default comes from the
  *    resource module — this file does not hardcode them.
  */
+import { initializeHelloInstallation } from '../../shared/storage/hello/installation.js'
+import { createMigrationRepository } from '../../shared/storage/migration/repository.js'
 import { createHelloService } from '../../../core/modules/hello/service.js'
 import { createCollectionPreferences } from '../../shared/storage/perception/preferences.js'
 import { createHelloRepository } from '../../shared/storage/hello/repository.js'
@@ -151,8 +153,8 @@ export function apply(ctx, config = {}) {
   }, 'chonkyfish: native companion input isolation')
 
   // home 布局（目录 + 默认 config）；所有异步启动器都会 await 它。
-  const layoutReady = resources.ensureLayout({ logger: ctx.logger }).then(async (layout) => {
-    const { createMigrationRepository } = await import('../../shared/storage/migration/repository.js')
+  const installationReady = initializeHelloInstallation({ resources, syncDirectory: platform.syncDirectory })
+  const layoutReady = installationReady.then(() => resources.ensureLayout({ logger: ctx.logger })).then(async (layout) => {
     await createMigrationRepository({ resources }).recover()
     return layout
   }).catch((error) => {
@@ -457,7 +459,7 @@ export function apply(ctx, config = {}) {
 
   // Owner-controlled transfer for ChonkyFish data only; never exposed as an Agent tool.
   ctx.effect(() => {
-    const migration = installMigration(ctx, { resources, ready: layoutReady, pluginVersion: '0.4.10', beforeExclusive: async () => { await resources.waitForMigrationWrites(); await writeChain }, beforePublish: async () => { const service = activePerception?.getService?.(); if (service) await service.stop() }, onExclusive: value => { migrationMaintaining = value; resources.setMigrationMaintenance?.(value) }, onCommitted: async () => { try { const saved = JSON.parse(await readFile(resources.paths.state, 'utf8')); stateGeneration = saved.generation || stateGeneration + 1 } catch { stateGeneration += 1 } } })
+    const migration = installMigration(ctx, { resources, ready: layoutReady, pluginVersion: '0.4.10', beforeExclusive: async () => { await resources.waitForMigrationWrites(); await writeChain }, beforePublish: async () => { const service = activePerception?.getService?.(); if (service) await service.suspendForMigration() }, onExclusive: value => { migrationMaintaining = value; resources.setMigrationMaintenance?.(value) }, onCommitted: async () => { activePerception?.getService?.()?.adoptImportedPreference(); try { const saved = JSON.parse(await readFile(resources.paths.state, 'utf8')); stateGeneration = saved.generation || stateGeneration + 1 } catch { stateGeneration += 1 } } })
     return () => migration.close()
   }, 'chonkyfish: migration')
 
@@ -522,6 +524,8 @@ export function apply(ctx, config = {}) {
       const store = createHelloRepository({ path: resources.paths.hello, withMigrationRead: resources.withMigrationRead,
         withMigrationWrite: resources.withMigrationWrite, syncDirectory: platform.syncDirectory })
       helloService = createHelloService({ store, isMigrationBusy: resources.isMigrationBusy,
+        installationExisting: await installationReady,
+        readCommittedImport: () => resources.withMigrationRead(() => createMigrationRepository({ resources }).readCommittedImport()),
         panel: { read: readPanel, patchIdentity: ({ expectedGeneration, name, prompt }) => writeState(latest => {
           if (prompt !== undefined && latest.state.prompt?.trim() && latest.state.prompt !== prompt)
             throw unavailable('HELLO_PERSONA_EXISTS')
