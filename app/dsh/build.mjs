@@ -150,11 +150,11 @@ const voiceBundleResult = buildSync({
   write: false,
 })
 const voiceBundle = voiceBundleResult.outputFiles[0].text
-const avatarAsset = JSON.parse(readFileSync(join(root, 'assets/avatar/manifest.json'), 'utf8'))
-if (avatarAsset.idleFrame !== avatarAsset.frames.length - 1 || avatarAsset.frames.length < 2) throw new Error('Invalid avatar frame manifest')
+const avatarAsset = JSON.parse(readFileSync(join(root, 'assets/avatar/random/manifest.json'), 'utf8'))
+if (!avatarAsset.frames[avatarAsset.idleFrame] || !avatarAsset.actions?.length) throw new Error('Invalid avatar frame manifest')
 avatarAsset.frames = avatarAsset.frames.map(frame => {
-  if (!/^blink-\d{2}\.webp$/.test(frame.file) || !(frame.durationMs > 0)) throw new Error('Invalid avatar frame')
-  return { durationMs: frame.durationMs, src: 'data:image/webp;base64,' + readFileSync(join(root, 'assets/avatar', frame.file)).toString('base64') }
+  if (!/^[a-z]+\/\d{2}\.png$/.test(frame.file) || !(frame.durationMs > 0)) throw new Error('Invalid avatar frame')
+  return { durationMs: frame.durationMs, src: 'data:image/png;base64,' + readFileSync(join(root, 'assets/avatar/random', frame.file)).toString('base64') }
 })
 
 /* -------------------------------------------------------------- client.js */
