@@ -6,13 +6,13 @@
 >
 > **访问边界已变更：所有 ChonkyFish HTTP 接口均不再做插件私有鉴权，也不要求 `x-chonkyfish-token`。能访问这些路由的调用方即可读取数据或执行接口支持的写入/投递；不要将它们无保护地暴露到公网。** DSH 宿主自身的认证、权限与审批机制不因此移除；第三方平台凭证仍必需，目标会话/聊天绑定、数据校验和 ABS 休息规则仍保留。
 
-![icon](app/dsh/packaging/icon.svg)
+![大肥鱼角色设定：正面、侧面与背面](assets/chonkyfish-character.png)
 
 ## 特性
 
 - **自有面板**：侧栏六个平级入口（大肥鱼 / 零花钱 / 人格 / 感知 / 日记 / 社交），各自一个主面板：聊天页保留顶栏、消息流、无边框鱼鱼舞台、快捷 chips，其余入口把原来的弹窗内容铺成独立整页（钱包账本、人格设定、感知事件、只读日记、社交连接）
 - **真实对话**：消息走 DSH Session，不是前端假回复；会话保存在 DSH 日志里，标准对话界面也能打开
-- **通话中的原生星露谷陪伴**：可选接入独立 LAN 农场工人客户端；联机、走路、挥工具和农活使用后台任务回执，持续对话不等待游戏操作结束。需要对应版本的 Stardew MCP bridge，配置与验收范围见[使用说明](docs/stardew-native-companion-2026-11-15.md)。
+- **通话中的原生星露谷陪伴**：可选接入独立 LAN 农场工人客户端；联机、走路、挥工具和农活使用后台任务回执，持续对话不等待游戏操作结束。需要对应版本的 Stardew MCP bridge，配置与验收范围见[使用说明](docs/stardew-native-companion-2026-11-15.md)。 环境检测、自动安装与 MCP 启停的后续方案见[设计草案](docs/stardew-companion-setup-design-v1.md)（未实施）。
 - **agent preset**：安装本插件即注册 `chonkyfish` preset（人格 + 通用工具），无需单独安装预设包
 - **通用工具**：bash / pwsh、文件读写与 glob/grep、后台任务、todo、web_search / web_fetch
 - **全权限会话**：`chonkyfish` 会话会自动切到 `danger-full-access` + 审批 `never`，因此可以通过 AppleScript / CDP 控制本机浏览器（⚠️ 见下方安全说明）
