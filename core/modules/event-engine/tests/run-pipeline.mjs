@@ -96,6 +96,34 @@ test('小鱼塘 + chonkyfish 会话：user+assistant 聚合成一个 pending job
   }
 })
 
+test('时间上下文不清空主人记录，也不覆盖自主来源', () => {
+  for (const origin of ['user', 'schedule', 'chonkyfish-nudge', 'external']) {
+    for (const before of [true, false]) {
+      const turns = [], skips = []
+      const collector = createTurnCollector({ onTurn: x => turns.push(x), onSkip: x => skips.push(x) })
+      let seq = 0
+      const feed = (type, data) => collector.feed('test', event(++seq, type, data))
+      const time = () => feed('user/message', { source: { kind: 'time-context' }, content: [{ type: 'text', text: '时间提示' }] })
+      feed('turn/start', { turn: 1 })
+      if (before) time()
+      feed('user/message', { ...(origin === 'external' ? { id: 'social-' + 'a'.repeat(64) } : {}), source: { kind: origin === 'external' ? 'user' : origin }, content: [{ type: 'text', text: '喜欢茶' }] })
+      time()
+      feed('assistant/message', { message: { content: [{ type: 'text', text: '记住了' }] } })
+      feed('turn/end', { turn: 1 })
+      assert.equal(turns.length, origin === 'user' ? 1 : 0)
+      if (origin === 'user') assert.deepEqual(turns[0].records.map(x => x.text), ['喜欢茶', '记住了'])
+      else assert.equal(skips[0].provenance.kind, origin === 'external' ? 'channel-message' : origin)
+    }
+  }
+  const turns = [], skips = []
+  const c = createTurnCollector({ onTurn: x => turns.push(x), onSkip: x => skips.push(x) })
+  c.feed('test', turnStart(1, 1))
+  c.feed('test', event(2, 'user/message', { source: { kind: 'time-context' }, content: [{ type: 'text', text: '时间提示' }] }))
+  c.feed('test', turnEnd(3, 1))
+  assert.equal(turns.length, 0)
+  assert.equal(skips[0].reason, 'empty_turn')
+})
+
 test('非主人来源的 user 消息不进抽取（定时提醒 / 主动消息旁白）', () => {
   const { file, cleanup } = tempDb()
   const engine = createEventEngine({ file, workspaceRoot: POND, now })

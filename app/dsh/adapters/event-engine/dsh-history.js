@@ -34,7 +34,7 @@ export async function loadTurnRecords({ sessionQuery, sessionId, fromSeq, toSeq 
     if (record.type !== 'user/message' || Number(record.seq) < Number(start?.seq ?? 0) || Number(record.seq) > toSeq) continue
     const window = await sessionQuery.readEvent({ sessionId, seq: Number(record.seq), before: 0, after: 0 })
     const source = window?.target?.data?.source
-    if (isChannelUserMessage(window?.target?.data) || (source && source.kind !== 'user')) return []
+    if (isChannelUserMessage(window?.target?.data) || (source && source.kind !== 'user' && source.kind !== 'time-context')) return []
   }
   for (const record of ordered) {
     const seq = Number(record.seq)
@@ -46,6 +46,7 @@ export async function loadTurnRecords({ sessionQuery, sessionId, fromSeq, toSeq 
     const window = await sessionQuery.readEvent({ sessionId, seq, before: 0, after: 0 })
     const event = window && window.target
     if (!event) continue
+    if (event.type === 'user/message' && event.data?.source?.kind === 'time-context') continue
     const content = event.type === 'user/message' ? event.data?.content : event.data?.message?.content
     const text = messageText(content)
     if (text.trim() === '') continue

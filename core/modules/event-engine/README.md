@@ -99,6 +99,10 @@ app/shared/storage/event-engine/
 定时提醒（`source.kind = 'schedule'`）、系统注入（`agent-instructions` 等）都只出现在会话日志里，
 不进入抽取区间——否则第三人称旁白会被抽成「主人说过」的事实。
 
+`time-context` 是元数据，只跳过该条时间快照，不改变整轮来源，也不清空已收集的主人消息。历史回读遵守同一规则。定时唤醒、主动旁白、外部社交等来源仍排除整个轮次及其回复。
+
+提取请求使用宿主 `llm.prepareCall` 绑定模型能力与发送；优先使用模型配置的推理默认值，未配置时选择能力列表中的首个开启档位，避免推理模型收到隐式 `none`。无推理能力的模型不附加该参数。默认不发送 `temperature`，避免不支持温度的接口拒绝整个请求。旧宿主没有 `prepareCall` 时保留原 `stream` 路径；本次真实验证覆盖当前桌面宿主。
+
 **工具事件不进 job**（V1 不做工具事实），但游标照常推进。
 
 审计里会看到的观测/跳过原因：`empty_turn`、`turn_not_buffered`、`duplicate_turn`、

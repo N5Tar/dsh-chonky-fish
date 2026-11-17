@@ -37,7 +37,7 @@ const REPAIR_INSTRUCTION =
  * 不传 maxTokens 就不限制输出长度（2026-10-27 拍板）：宁可多花一点 token，
  * 也不要把 JSON 截断成非法输出。
  */
-export function createExtractor({ llm, resolveModel, temperature = 0.1, maxTokens = null, logger = null }) {
+export function createExtractor({ llm, resolveModel, temperature, maxTokens = null, logger = null }) {
   function warn(message, error) {
     if (!logger) return
     try {
@@ -56,11 +56,27 @@ export function createExtractor({ llm, resolveModel, temperature = 0.1, maxToken
       model,
       system: SYSTEM_PROMPT,
       messages,
-      temperature,
       signal,
     }
+    if (typeof temperature === 'number') request.temperature = temperature
     if (typeof maxTokens === 'number' && maxTokens > 0) request.maxTokens = maxTokens
-    const stream = llm.stream(request)
+    // Bind capabilities and dispatch to the same adapter registration. Some
+    // reasoning-only models reject the adapter's implicit disabled effort.
+    let stream
+    if (typeof llm.prepareCall === 'function') {
+      const controls = { provider, model }
+      if (request.temperature !== undefined) controls.temperature = request.temperature
+      if (request.maxTokens !== undefined) controls.maxTokens = request.maxTokens
+      const prepared = await llm.prepareCall(controls, signal, (config, info) => {
+        const reasoning = info.reasoning
+        const effort = reasoning?.defaultEffort
+          ?? reasoning?.efforts?.find(item => item.id !== 'off' && item.id !== 'none')?.id
+        return effort === undefined ? config : { ...config, reasoningEffort: effort }
+      })
+      stream = prepared.stream({ ...request, ...prepared.config })
+    } else {
+      stream = llm.stream(request)
+    }
     for await (const chunk of stream) {
       if (!chunk || typeof chunk !== 'object') continue
       if (chunk.type === 'text-delta') text += chunk.text

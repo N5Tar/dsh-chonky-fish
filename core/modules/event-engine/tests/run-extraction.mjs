@@ -324,6 +324,18 @@ await test('读原文：跳过工具事件与被 compaction 换掉的 shadowed �
   assert.deepEqual(await loadTurnRecords({ sessionQuery: makeSessionQuery(eventsBySession), sessionId: SID, fromSeq: 2, toSeq: 5 }), [], 'replayed jobs cannot attribute plain channel messages to the owner')
 })
 
+await test('历史回读忽略时间上下文，但保留自主轮次隔离', async () => {
+  for (const origin of ['user', 'schedule', 'chonkyfish-nudge']) {
+    const owner = userEvent('我喜欢茶', 2)
+    owner.data.source = { kind: origin }
+    const time = userEvent('时间提示', 3)
+    time.data.source = { kind: 'time-context' }
+    const events = [turnStartEvent(1), owner, time, assistantEvent('记住了', 4)]
+    const records = await loadTurnRecords({ sessionQuery: makeSessionQuery(new Map([[SID, new Map(events.map(x => [x.seq, x]))]])), sessionId: SID, fromSeq: 2, toSeq: 4 })
+    assert.deepEqual(records.map(x => x.text), origin === 'user' ? ['我喜欢茶', '记住了'] : [])
+  }
+})
+
 await test('会话日志读不到 → payload_unavailable，可重试', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'chonkyfish-extract-'))
   const engine = createEventEngine({ file: join(dir, 'events.db'), workspaceRoot: POND, now })
@@ -360,12 +372,37 @@ await test('模型在 JSON 前后夹散文 → 仍能抽出来，不需要修复
   }
 })
 
+await test('模型未配置推理默认值时选择其支持的开启档位，并通过绑定请求发送', async () => {
+  for (const reasoning of [undefined, { efforts: [{ id: 'off' }, { id: 'low' }, { id: 'high' }] }, { efforts: [{ id: 'low' }, { id: 'high' }], defaultEffort: 'high' }]) {
+    const calls = []
+    const llm = {
+      prepareCall: async (config, signal, configure) => {
+        const { provider, model, ...controls } = config
+        const resolved = { provider, model, ...configure(controls, { reasoning }) }
+        return { config: resolved, stream: async function* (request) {
+          calls.push(request)
+          assert.deepEqual(request.reasoningEffort, reasoning ? (reasoning.defaultEffort ?? 'low') : undefined)
+          assert.equal(request.provider, 'test')
+          assert.equal(Object.hasOwn(request, 'temperature'), false)
+          yield { type: 'text-delta', text: JSON.stringify({ schemaVersion: '1.0', events: [], noEventReason: 'uncertain' }) }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        } }
+      },
+      stream: () => { throw new Error('must use prepared dispatch') },
+    }
+    const extractor = createExtractor({ llm, resolveModel: () => ({ provider: 'test', model: 'reasoning-model' }) })
+    const result = await extractor.extract({ turn: { sessionId: SID, turn: 1, observedAt: now() }, records: [] })
+    assert.equal(result.ok, true)
+    assert.equal(calls.length, 1)
+  }
+})
+
 await test('不再限制 maxTokens（2026-10-27 拍板：宁可多花 token 也不截断 JSON）', async () => {
   const env = setup({ responses: [validOutput()] })
   try {
     await env.runner.runOnce()
     assert.equal(env.llm.calls[0].maxTokens, undefined, '不传 maxTokens')
-    assert.equal(env.llm.calls[0].temperature, 0.1)
+    assert.equal(Object.hasOwn(env.llm.calls[0], 'temperature'), false)
   } finally {
     env.cleanup()
   }

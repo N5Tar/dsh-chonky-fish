@@ -93,6 +93,8 @@ export function createTurnCollector({ maxRecordsPerTurn = 400, onTurn, onSkip })
           })
           return
         case 'user/message':
+          // 时间快照是轮次元数据，不是发起者；忽略自身，保留已有来源与记录。
+          if (data.source?.kind === 'time-context' && !isChannelUserMessage(data)) return
           // 不是主人打字的 user 消息（定时提醒、主动消息旁白、系统注入……）不算「主人说了」，
           // 否则旁白里的第三人称说明会被抽成主人的事实。老日志没有 source 时按主人处理。
           if (isChannelUserMessage(data) || (data.source && data.source.kind !== 'user')) {
