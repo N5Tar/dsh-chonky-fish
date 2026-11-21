@@ -5,10 +5,11 @@ import { fileURLToPath } from 'node:url'
 
 const helper = fileURLToPath(new URL('./windows-tts.ps1', import.meta.url))
 const helperSource = readFileSync(helper, 'utf8')
-const MAX_OUTPUT = 3 * 1024 * 1024
+const MAX_OUTPUT = 20 * 1024 * 1024
+const MAX_AUDIO = 12 * 1024 * 1024
 
 function waveInfo(wav) {
-  if (!Buffer.isBuffer(wav) || wav.length < 44 || wav.length > 2 * 1024 * 1024 || wav.toString('ascii', 0, 4) !== 'RIFF' || wav.toString('ascii', 8, 12) !== 'WAVE') throw Object.assign(new Error('Invalid WAV output'), { code: 'TTS_INVALID_WAV' })
+  if (!Buffer.isBuffer(wav) || wav.length < 44 || wav.length > MAX_AUDIO || wav.toString('ascii', 0, 4) !== 'RIFF' || wav.toString('ascii', 8, 12) !== 'WAVE') throw Object.assign(new Error('Invalid WAV output'), { code: 'TTS_INVALID_WAV' })
   let offset = 12, format = null, dataBytes = 0
   while (offset + 8 <= wav.length) {
     const name = wav.toString('ascii', offset, offset + 4), size = wav.readUInt32LE(offset + 4), start = offset + 8
@@ -19,7 +20,7 @@ function waveInfo(wav) {
   }
   if (!format || format.codec !== 1 || ![1, 2].includes(format.channels) || format.sampleRate < 8000 || format.sampleRate > 48000 || format.bits !== 16 || !dataBytes || dataBytes % (format.channels * 2) !== 0) throw Object.assign(new Error('Unsupported WAV format'), { code: 'TTS_INVALID_WAV' })
   const frames = dataBytes / (format.channels * 2)
-  if (frames > format.sampleRate * 30) throw Object.assign(new Error('WAV is too long'), { code: 'TTS_LIMIT_EXCEEDED' })
+  if (frames > format.sampleRate * 300) throw Object.assign(new Error('WAV is too long'), { code: 'TTS_LIMIT_EXCEEDED' })
   return { codec: 'pcm_s16le', channels: format.channels, sampleRate: format.sampleRate, frames, durationMs: Math.ceil(frames * 1000 / format.sampleRate), bytes: wav.length }
 }
 
@@ -91,7 +92,7 @@ export function createWindowsTts({ executable, timeoutMs = 15000 }) {
     inspect: () => ({ supported: true, providerId: 'windows-system-speech', reason: null }),
     async listVoices() { const result = await invoke({ action: 'voices' }, { timeout: 5000 }); return Array.isArray(result.voices) ? result.voices : [] },
     async synthesize({ text, voiceId = null, rate = 0, signal }) {
-      if (typeof text !== 'string' || !text.trim() || text.length > 120) throw Object.assign(new Error('Text must contain 1–120 characters'), { code: 'TTS_INVALID_TEXT' })
+      if (typeof text !== 'string' || !text.trim() || text.length > 12000) throw Object.assign(new Error('Text must contain 1–12000 characters'), { code: 'TTS_INVALID_TEXT' })
       const result = await invoke({ action: 'synthesize', text, voiceId, rate }, { signal })
       if (typeof result?.wav !== 'string') throw Object.assign(new Error('TTS helper returned no audio'), { code: 'TTS_HELPER_FAILED' })
       const wav = Buffer.from(result.wav, 'base64'); const info = waveInfo(wav)

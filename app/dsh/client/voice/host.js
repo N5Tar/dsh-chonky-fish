@@ -1,12 +1,72 @@
-import { decodePcm16Wav } from '../../../shared/audio/wav.js'
-import { createLinearResampler, floatToPcm16 } from '../../../shared/audio/resample.js'
-
 const id = () => globalThis.crypto?.randomUUID?.() || `voice-${Date.now()}-${Math.random().toString(16).slice(2)}`
 const sameRef = (a, b) => Boolean(a && b && a.runtimeId === b.runtimeId && a.conversationId === b.conversationId && a.bindingRevision === b.bindingRevision)
+function decodeBase64(value) {
+  if (typeof value !== 'string') throw Object.assign(new Error('Host audio frame is missing base64 data'), { code: 'VOICE_AUDIO_FRAME' })
+  const binary = atob(value), bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+function queryUrl(endpoint, values) {
+  const params = new URLSearchParams()
+  Object.entries(values).forEach(([key, value]) => { if (value !== undefined && value !== null) params.set(key, String(value)) })
+  return `${endpoint}${endpoint.includes('?') ? '&' : '?'}${params.toString()}`
+}
+async function readSse(endpoint, body, { fetcher, signal, onError } = {}) {
+  const response = await fetcher(endpoint, { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify(body), ...(signal ? { signal } : {}) })
+  if (!response.ok) {
+    let payload = null
+    try { payload = await response.json() } catch {}
+    const code = payload?.error?.code || `VOICE_HOST_REQUEST_${response.status}`
+    throw Object.assign(new Error(code), { code, status: response.status, outcome: payload?.error?.outcome || 'not_applied' })
+  }
+  if (!response.body?.getReader) throw Object.assign(new Error('Host did not return a readable event stream'), { code: 'VOICE_STREAM_UNAVAILABLE', outcome: 'unknown' })
+  const reader = response.body.getReader(), decoder = new TextDecoder()
+  let buffer = '', completed = false, cancelled = false
+  async function* events() {
+    try {
+      while (true) {
+        const { value, done } = await reader.read()
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+        let boundary
+        while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
+          const frame = buffer.slice(0, boundary.index).replace(/\r/g, '')
+          buffer = buffer.slice(boundary.index + boundary[0].length)
+          const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')
+          if (!data) continue
+          let item
+          try { item = JSON.parse(data) } catch { throw Object.assign(new Error('Host returned an invalid audio event'), { code: 'VOICE_STREAM_EVENT_INVALID', outcome: 'unknown' }) }
+          if (item.type === 'error') throw Object.assign(new Error(item.code || 'VOICE_SYNTHESIS_FAILED'), { code: item.code || 'VOICE_SYNTHESIS_FAILED', outcome: 'unknown' })
+          if (item.type === 'audio') {
+            if (!['pcm_s16le', 'wav'].includes(item.format?.codec) || !Number.isInteger(item.format.sampleRate) || ![1, 2].includes(item.format.channels)) throw Object.assign(new Error('Host returned an unsupported audio format'), { code: 'VOICE_AUDIO_FORMAT', outcome: 'unknown' })
+            yield { type: 'audio', data: decodeBase64(item.data), format: item.format }
+          } else if (item.type === 'complete') {
+            completed = true
+            yield { type: 'complete', receipt: item.receipt }
+            return
+          } else {
+            throw Object.assign(new Error('Host returned an unknown audio event'), { code: 'VOICE_STREAM_EVENT_INVALID', outcome: 'unknown' })
+          }
+        }
+        if (done) break
+      }
+    } catch (error) {
+      if (error?.name === 'AbortError' || signal?.aborted) cancelled = true
+      try { onError?.(error) } catch {}
+      throw error
+    } finally {
+      if (!completed) {
+        try { await reader.cancel() } catch {}
+      }
+      try { reader.releaseLock() } catch {}
+    }
+    if (!completed && !cancelled) throw Object.assign(new Error('Synthesis stream ended before completion'), { code: 'VOICE_SYNTHESIS_INCOMPLETE', outcome: 'unknown' })
+  }
+  return events()
+}
 
-export function createDshHostVoice({ routes, audioStore, fetcher = globalThis.fetch?.bind(globalThis) } = {}) {
-  if (!routes || !audioStore || typeof fetcher !== 'function') throw new TypeError('routes, audioStore, and fetch are required')
-  let hostInfo = null, lease = null, active = null, closed = false
+export function createDshHostVoice({ routes, fetcher = globalThis.fetch?.bind(globalThis) } = {}) {
+  if (!routes || typeof fetcher !== 'function') throw new TypeError('routes and fetch are required')
+  let hostInfo = null, voiceSettings = null, lease = null, active = null, closed = false
   const ownerId = id()
 
   async function request(endpoint, method, body, signal) {
@@ -26,6 +86,82 @@ export function createDshHostVoice({ routes, audioStore, fetcher = globalThis.fe
   async function capabilities() {
     hostInfo = await request(routes.voiceCapabilities, 'GET')
     return hostInfo
+  }
+
+  async function readVoiceSettings() {
+    voiceSettings = await request(routes.voiceSettings, 'GET')
+    return voiceSettings
+  }
+  async function updateVoiceSettings(tts) {
+    voiceSettings = await request(routes.voiceSettings, 'PUT', { tts })
+    return voiceSettings
+  }
+  function previewBinding(binding) {
+    if (binding === undefined) return undefined
+    if (!binding || typeof binding !== 'object' || Array.isArray(binding)) throw Object.assign(new TypeError('Voice preview binding is invalid'), { code: 'VOICE_PREVIEW_BINDING_INVALID', outcome: 'not_applied' })
+    const value = {}
+    for (const key of ['providerId', 'modelId', 'region', 'workspaceId', 'credentialRef']) {
+      if (Object.hasOwn(binding, key) && binding[key] !== undefined) value[key] = binding[key]
+    }
+    return value
+  }
+  async function registerVoiceSource({ conversationRef, inputId, submissionId, text, operation } = {}) {
+    const current = callData({ callId: lease?.callId, conversation: conversationRef })
+    if (typeof inputId !== 'string' || !inputId || typeof submissionId !== 'string' || !submissionId || typeof text !== 'string') throw Object.assign(new TypeError('Voice source registration is invalid'), { code: 'VOICE_SOURCE_INVALID', outcome: 'not_applied' })
+    return request(routes.voiceSources, 'POST', { ...current, inputId, submissionId, text }, operation?.signal)
+  }
+  async function releaseVoiceSource({ conversationRef, submissionId, operation } = {}) {
+    if (!lease || !sameRef(lease.conversationRef, conversationRef)) return { released: false }
+    const current = callData({ callId: lease.callId, conversation: conversationRef })
+    if (typeof submissionId !== 'string' || !submissionId) return { released: false }
+    return request(routes.voiceSources, 'POST', { action: 'release', ...current, submissionId }, operation?.signal)
+  }
+  async function* synthesizeReply({ source, voice = {} } = {}, { operation } = {}) {
+    const current = callData({ callId: lease?.callId, conversation: lease?.conversationRef })
+    if (typeof source?.sessionId !== 'string' || !source.sessionId || !Number.isSafeInteger(source.seq) || source.seq < 0) throw Object.assign(new TypeError('Voice reply source is invalid'), { code: 'VOICE_SOURCE_INVALID', outcome: 'not_applied' })
+    const opId = operationId(operation), signal = operation?.signal
+    const run = { operationId: opId, callId: current.callId }
+    active = run
+    const cancel = () => {
+      const { conversationRef: ignored, ...cancelLease } = current
+      void request(routes.voiceCancel, 'POST', { ...cancelLease, operationId: opId }).catch(() => {})
+    }
+    signal?.addEventListener('abort', cancel, { once: true })
+    try {
+      const stream = await readSse(routes.voiceSynthesis, { ...current, operationId: opId, source, voiceId: voice?.voiceId ?? null, rate: voice?.rate ?? 0 }, { fetcher, signal })
+      for await (const event of stream) {
+        if (active !== run || signal?.aborted) throw Object.assign(new Error('Synthesis was cancelled'), { code: 'TTS_CANCELLED', outcome: 'unknown' })
+        yield event
+      }
+    } finally { signal?.removeEventListener('abort', cancel); if (active === run) active = null }
+  }
+  async function getVoicePreviewCatalog(binding) {
+    const selected = previewBinding(binding)
+    return request(routes.voicePreview, 'POST', { action: 'catalog', ...(selected === undefined ? {} : { binding: selected }) })
+  }
+  async function* synthesizeVoicePreview({ operationId: suppliedOperationId, text, voiceId, rate = 0, emotionTag, binding } = {}, { operation } = {}) {
+    const opId = suppliedOperationId || operationId(operation)
+    const signal = operation?.signal
+    const selected = previewBinding(binding)
+    const body = { action: 'synthesize', operationId: opId, text, voiceId, rate, ...(emotionTag ? { emotionTag } : {}), ...(selected === undefined ? {} : { binding: selected }) }
+    const stream = await readSse(routes.voicePreview, body, { fetcher, signal })
+    yield* stream
+  }
+  async function listStoredAudio(sessionId, seqs, { signal } = {}) {
+    if (typeof sessionId !== 'string' || !sessionId || !Array.isArray(seqs) || seqs.some(seq => !Number.isSafeInteger(seq) || seq < 0)) throw Object.assign(new TypeError('Stored audio query is invalid'), { code: 'VOICE_AUDIO_QUERY_INVALID' })
+    return request(queryUrl(routes.voiceAudio, { sessionId, seqs: seqs.join(',') }), 'GET', undefined, signal)
+  }
+  async function getStoredAudio(audioId, sessionId, { signal } = {}) {
+    const response = await fetcher(queryUrl(routes.voiceAudio, { audioId, sessionId }), { method: 'GET', credentials: 'same-origin', cache: 'no-store', ...(signal ? { signal } : {}) })
+    if (!response.ok) {
+      let payload = null
+      try { payload = await response.json() } catch {}
+      const code = payload?.error?.code || `VOICE_AUDIO_${response.status}`
+      throw Object.assign(new Error(code), { code, status: response.status })
+    }
+    const mimeType = response.headers?.get?.('content-type')?.split(';')[0]?.trim().toLowerCase() || 'audio/wav'
+    if (mimeType !== 'audio/wav') throw Object.assign(new Error('Stored audio format is not supported'), { code: 'VOICE_AUDIO_FORMAT' })
+    return { data: new Uint8Array(await response.arrayBuffer()), format: { codec: 'wav', mimeType } }
   }
 
   const ownership = {
@@ -56,37 +192,15 @@ export function createDshHostVoice({ routes, audioStore, fetcher = globalThis.fe
   }
 
   const synthesis = {
-    inspect() { return { available: hostInfo?.synthesis?.supported === true, providerId: 'windows-system-speech', voices: hostInfo?.synthesis?.voices || [] } },
-    async synthesize(text, voice = {}, { operation } = {}) {
-      const current = callData({ callId: lease?.callId, conversation: lease?.conversationRef })
-      const opId = operationId(operation), signal = operation?.signal
-      const run = { operationId: opId, callId: current.callId }
-      active = run
-      const cancel = () => {
-        const { conversationRef: ignored, ...cancelLease } = current
-        void request(routes.voiceCancel, 'POST', { ...cancelLease, operationId: opId }).catch(() => {})
-      }
-      signal?.addEventListener('abort', cancel, { once: true })
-      try {
-        const result = await request(routes.voiceSynthesis, 'POST', { ...current, operationId: opId, text, voiceId: voice?.voiceId ?? null, rate: voice?.rate ?? 0 }, signal)
-        if (active !== run || signal?.aborted) throw Object.assign(new Error('Synthesis was cancelled'), { code: 'TTS_CANCELLED' })
-        if (typeof result?.wav !== 'string') throw Object.assign(new Error('Host returned no WAV'), { code: 'TTS_INVALID_WAV' })
-        const binary = atob(result.wav), wav = new Uint8Array(binary.length)
-        for (let i = 0; i < binary.length; i++) wav[i] = binary.charCodeAt(i)
-        const decoded = decodePcm16Wav(wav, { maxBytes: 2 * 1024 * 1024, maxSeconds: 30 })
-        const mono = new Float32Array(decoded.sampleCount)
-        for (let i = 0; i < decoded.sampleCount; i++) {
-          let total = 0
-          for (let channel = 0; channel < decoded.channels; channel++) total += decoded.samples[i * decoded.channels + channel] / 32768
-          mono[i] = total / decoded.channels
-        }
-        const resampled = createLinearResampler(decoded.sampleRate, 16000).process(mono)
-        const pcm = floatToPcm16(resampled)
-        const clipRef = audioStore.putClip(pcm, { sampleRate: 16000, channels: 1, sampleCount: pcm.length })
-        return { clipRef }
-      } finally { signal?.removeEventListener('abort', cancel); if (active === run) active = null }
+    async inspect() {
+      const settings = voiceSettings || await readVoiceSettings()
+      const providerId = settings?.tts?.providerId || 'windows-system-speech'
+      const available = providerId === 'aliyun-qwen-tts'
+        ? settings?.credentialConfigured === true
+        : hostInfo?.synthesis?.supported === true
+      return { available, providerId, voices: providerId === 'windows-system-speech' ? hostInfo?.synthesis?.voices || [] : [], capabilities: settings?.capabilities || {} }
     },
-    release(clipRef) { return audioStore.release(clipRef) },
+    synthesizeReply,
   }
 
   const foregroundRequest = async (action, conversationRef, fields = {}, { includeLease = true } = {}) => {
@@ -136,7 +250,16 @@ export function createDshHostVoice({ routes, audioStore, fetcher = globalThis.fe
     ownership,
     synthesis,
     foreground,
-    close() { if (active && lease) { const { conversationRef: ignored, ...cancelLease } = callData({ callId: lease.callId, conversation: lease.conversationRef }); void request(routes.voiceCancel, 'POST', { ...cancelLease, operationId: active.operationId }).catch(() => {}) } closed = true; lease = null; hostInfo = null },
+    readVoiceSettings,
+    updateVoiceSettings,
+    registerVoiceSource,
+    releaseVoiceSource,
+    synthesizeReply,
+    getVoicePreviewCatalog,
+    synthesizeVoicePreview,
+    listStoredAudio,
+    getStoredAudio,
+    close() { if (active && lease) { const { conversationRef: ignored, ...cancelLease } = callData({ callId: lease.callId, conversation: lease.conversationRef }); void request(routes.voiceCancel, 'POST', { ...cancelLease, operationId: active.operationId }).catch(() => {}) } closed = true; lease = null; hostInfo = null; voiceSettings = null },
     get state() { return { hostInfo, lease: lease && { callId: lease.callId, serviceGeneration: lease.serviceGeneration } } },
   }
 }

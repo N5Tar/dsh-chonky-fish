@@ -27,9 +27,28 @@ function fixture({ captureStart, synthesis, config } = {}) {
   let transcriptions = 0;
   const recognition = { inspect: async () => ({ available: true, selection: { providerId: 'fixture-asr', language: 'zh' } }), async transcribe() { return { text: `口述${++transcriptions}` }; } };
   const speaker = synthesis || { async inspect() { return { available: true }; }, async synthesize() { return audio.putClip(new Int16Array(1600)); }, async release(ref) { released++; audio.release(ref); } };
+  speaker.synthesizeReply ||= async function* ({ source, voice }, { operation } = {}) {
+    const clipRef = await speaker.synthesize('', voice, { operation, source });
+    try {
+      const samples = audio.read(clipRef);
+      yield { type: 'audio', data: new Uint8Array(samples.buffer), format: { codec: 'pcm_s16le', sampleRate: 24000, channels: 1 } };
+      yield { type: 'complete' };
+    } finally { await speaker.release?.(clipRef); }
+  };
   const playback = {
     inspect: async () => ({ available: true }), async unlock() { return { ready: true }; },
-    async play(_ref, options) { played++; options.onStarted?.(); options.onEnded?.(); return { ended: true }; }, async stop() { playbackStops++; }, async release() {},
+    async play(_ref, options) { played++; options.onStarted?.(); options.onEnded?.(); return { ended: true }; },
+    openStream(options = {}) {
+      const chunks = [];
+      let resolveFinished, rejectFinished;
+      const finished = new Promise((resolve, reject) => { resolveFinished = resolve; rejectFinished = reject; });
+      return {
+        async append(bytes) { chunks.push(bytes); },
+        endInput() { Promise.resolve(playback.play({ format: options.format, chunks }, { onStarted: options.onStarted })).then(resolveFinished, rejectFinished); },
+        finished,
+      };
+    },
+    async stop() { playbackStops++; }, async release() {},
   };
   const ownership = { async acquire() { return { valid: true, leaseMs: 15000 }; }, async renew() { renewals++; return { valid: true, leaseMs: 15000 }; }, async release() {} };
   const clock = { monoNow: () => now, schedule(fn, ms) { const handle = { fn, ms, cancelled: false }; timers.set(handle, handle); return handle; }, cancel(handle) { if (handle) handle.cancelled = true; } };
@@ -43,7 +62,11 @@ function fixture({ captureStart, synthesis, config } = {}) {
     sequence += 30000;
     await settle();
   };
-  const emit = (events) => follow({ streamGeneration: 1, cursor: `c-${Math.random()}`, reset: false, events });
+  const emit = (events) => {
+    const consumed = new Map(events.filter(event => event.type === 'input.consumed').map(event => [String(event.conversationTurnId), event.submissionId ? [event.submissionId] : []]));
+    const sessionId = service.getSnapshot().call.conversationRef?.conversationId || REF.conversationId;
+    return follow({ streamGeneration: 1, cursor: `c-${Math.random()}`, reset: false, events: events.map((event, index) => event.type === 'reply.message' ? { ...event, submissionIds: event.submissionIds || consumed.get(String(event.conversationTurnId)) || [], source: event.source || { sessionId, seq: sequence + index + 1 }, surfaceRevision: event.surfaceRevision || `${sequence + index + 1}` } : event) });
+  };
   const advanceTimer = async (ms) => { now += ms; for (const handle of [...timers.keys()]) if (!handle.cancelled && handle.ms <= ms) { timers.delete(handle); await handle.fn(); } await settle(); };
   return { service, audio, capture, playback, conversation, recognition, ownership, begin, speak, emit, submitted, timers, advanceTimer, get renewals() { return renewals; }, get stoppedCaptures() { return stoppedCaptures; }, get captureStarts() { return captureStarts; }, get playbackStops() { return playbackStops; }, get played() { return played; }, get released() { return released; }, get conversationReleases() { return conversationReleases; }, get captureEvents() { return captureEvents; }, get follow() { return follow; }, get prepared() { return prepared; } };
 }
@@ -78,7 +101,7 @@ await test('output-only mode speaks new keyboard replies without ASR or micropho
   assert.equal(f.captureStarts, 0);
   assert.equal(captureInspections, 0);
   assert.equal(recognitionInspections, 0);
-  f.emit([{ type: 'input.consumed', submissionId: 'typed', conversationTurnId: 'typed-turn', origin: 'local' }, { type: 'reply.final', replyId: 'typed-reply', conversationTurnId: 'typed-turn', text: '打字也会读给你听。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'typed-turn', outcome: 'completed' }]);
+  f.emit([{ type: 'input.consumed', submissionId: 'typed', conversationTurnId: 'typed-turn', origin: 'local' }, { type: 'reply.message', replyId: 'typed-reply', conversationTurnId: 'typed-turn', text: '打字也会读给你听。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'typed-turn', outcome: 'completed' }]);
   await settle();
   assert.equal(f.played, 1);
   assert.equal(f.released, 1);
@@ -195,14 +218,13 @@ await test('hangup awaits media cleanup while retaining the old in-flight target
   oldFollow({ streamGeneration: 1, cursor: 'late-old-turn', reset: false, events: [
     { type: 'input.accepted', submissionId: 'sub-1', evidence: 'late-old-target-proof' },
     { type: 'input.consumed', submissionId: 'sub-1', conversationTurnId: 'old-call-turn', origin: 'local' },
-    { type: 'reply.final', replyId: 'old-call-reply', conversationTurnId: 'old-call-turn', text: '旧目标的迟到回复。', origin: 'local' },
+    { type: 'reply.message', replyId: 'old-call-reply', conversationTurnId: 'old-call-turn', text: '旧目标的迟到回复。', origin: 'local', submissionIds: ['sub-1'], source: { sessionId: REF.conversationId, seq: 1 }, surfaceRevision: '1' },
     { type: 'turn.ended', conversationTurnId: 'old-call-turn', outcome: 'completed' },
   ] });
   await settle();
   assert.equal(f.service.getSnapshot().inputs[0].admission, 'accepted');
   assert.equal(f.played, 0, 'late old-target reply must never play in the new call');
-  assert.equal(f.service.getSnapshot().replies.find((reply) => reply.replyId === 'old-call-reply').replayable, false);
-  await assert.rejects(f.service.replayReply('old-call-reply'), { code: 'VOICE_REPLY_NOT_REPLAYABLE' });
+  assert.equal('replayable' in f.service.getSnapshot().replies.find((reply) => reply.replyId === 'old-call-reply'), false);
   assert.equal(f.submitted.filter((input) => input.inputId === f.submitted[0].inputId).length, 1, 'late evidence must not resubmit the old input');
   await f.advanceTimer(30000);
   assert.equal(f.conversationReleases, 1, 'old drain releases its independent target at the 30 second bound');
@@ -490,7 +512,7 @@ await test('speech during synthesis suppresses stale output and releases its lat
   const submissionId = f.submitted[0].submissionId;
   f.emit([
     { type: 'input.consumed', submissionId, conversationTurnId: 'turn-r', origin: 'local' },
-    { type: 'reply.final', replyId: 'reply-old', conversationTurnId: 'turn-r', text: '你好。', origin: 'local' },
+    { type: 'reply.message', replyId: 'reply-old', conversationTurnId: 'turn-r', text: '你好。', origin: 'local' },
     { type: 'turn.ended', conversationTurnId: 'turn-r', outcome: 'completed' },
   ]);
   await settle();
@@ -506,7 +528,7 @@ await test('late synthesis from a hung-up call cannot play into a restarted targ
   const synthesisGate = deferred(), nextRef = { runtimeId: 'fixture-runtime', conversationId: 'new-synth-target', bindingRevision: 'binding-new' };
   const f = fixture({ synthesis: { async inspect() { return { available: true }; }, async synthesize() { return synthesisGate.promise; }, async release(ref) { f.audio.release(ref); } }, config: { version: 1, duplexPreference: 'headphones' } });
   await f.begin(); await f.speak(); const submissionId = f.submitted[0].submissionId;
-  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'old-synth-turn', origin: 'local' }, { type: 'reply.final', replyId: 'old-synth-reply', conversationTurnId: 'old-synth-turn', text: '旧通话的回复。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'old-synth-turn', outcome: 'completed' }]);
+  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'old-synth-turn', origin: 'local' }, { type: 'reply.message', replyId: 'old-synth-reply', conversationTurnId: 'old-synth-turn', text: '旧通话的回复。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'old-synth-turn', outcome: 'completed' }]);
   await settle(); assert.equal(f.service.getSnapshot().playback.status, 'synthesizing');
   await f.service.hangup(); await f.begin(nextRef);
   const lateClip = f.audio.putClip(new Int16Array(160)); synthesisGate.resolve(lateClip); await settle();
@@ -522,10 +544,10 @@ await test('old speaker gate tail cannot ungate a new call while it is synthesiz
   let synthesisCount = 0;
   const f = fixture({ synthesis: { async inspect() { return { available: true }; }, async synthesize() { return ++synthesisCount === 1 ? f.audio.putClip(new Int16Array(160)) : newSynthesis.promise; }, async release(ref) { f.audio.release(ref); } }, config: { version: 1, duplexPreference: 'speaker-turn-taking', replyAudioEnabled: true } });
   await f.begin(); await f.speak(); const submissionId = f.submitted[0].submissionId;
-  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'old-speaker-turn', origin: 'local' }, { type: 'reply.final', replyId: 'old-speaker-reply', conversationTurnId: 'old-speaker-turn', text: '旧通话回复。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'old-speaker-turn', outcome: 'completed' }]);
+  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'old-speaker-turn', origin: 'local' }, { type: 'reply.message', replyId: 'old-speaker-reply', conversationTurnId: 'old-speaker-turn', text: '旧通话回复。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'old-speaker-turn', outcome: 'completed' }]);
   await settle(); assert.equal(f.capture.gated, true); assert.equal(f.played, 1);
   await f.service.hangup(); await f.begin(nextRef);
-  f.emit([{ type: 'input.consumed', submissionId: 'new-keyboard', conversationTurnId: 'new-speaker-turn', origin: 'local' }, { type: 'reply.final', replyId: 'new-speaker-reply', conversationTurnId: 'new-speaker-turn', text: '新通话回复。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'new-speaker-turn', outcome: 'completed' }]);
+  f.emit([{ type: 'input.consumed', submissionId: 'new-keyboard', conversationTurnId: 'new-speaker-turn', origin: 'local' }, { type: 'reply.message', replyId: 'new-speaker-reply', conversationTurnId: 'new-speaker-turn', text: '新通话回复。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'new-speaker-turn', outcome: 'completed' }]);
   await settle(); assert.equal(f.service.getSnapshot().playback.status, 'synthesizing');
   await f.advanceTimer(400); assert.equal(f.capture.gated, true, 'the old tail token cannot ungate the new call');
   const lateClip = f.audio.putClip(new Int16Array(160)); newSynthesis.resolve(lateClip); await settle();
@@ -540,7 +562,7 @@ await test('stop settles active playback and its output clip is released', async
   f.playback.stop = async () => { playGate?.({ stopped: true }); };
   await f.begin(); await f.speak();
   const submissionId = f.submitted[0].submissionId;
-  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'turn-play', origin: 'local' }, { type: 'reply.final', replyId: 'reply-play', conversationTurnId: 'turn-play', text: '好。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'turn-play', outcome: 'completed' }]);
+  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'turn-play', origin: 'local' }, { type: 'reply.message', replyId: 'reply-play', conversationTurnId: 'turn-play', text: '好。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'turn-play', outcome: 'completed' }]);
   await settle();
   assert.equal(f.service.getSnapshot().playback.status, 'playing');
   await f.service.setOutputEnabled(false); await settle();
@@ -553,7 +575,7 @@ await test('synthesized clip is released when playback rejects', async () => {
   const f = fixture({ config: { version: 1, duplexPreference: 'headphones' } });
   f.playback.play = async () => { throw new Error('output device failed'); };
   await f.begin(); await f.speak(); const submissionId = f.submitted[0].submissionId;
-  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'reject-turn', origin: 'local' }, { type: 'reply.final', replyId: 'reject-reply', conversationTurnId: 'reject-turn', text: '播放失败。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'reject-turn', outcome: 'completed' }]);
+  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'reject-turn', origin: 'local' }, { type: 'reply.message', replyId: 'reject-reply', conversationTurnId: 'reject-turn', text: '播放失败。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'reject-turn', outcome: 'completed' }]);
   await settle();
   assert.equal(f.audio.stats.clips, 0);
   assert.equal(f.released, 1);
@@ -571,12 +593,12 @@ await test('deferred playback stop publishes idle and queues a new eligible repl
   };
   f.playback.stop = () => { stopStarted = true; return stopGate.promise.then(() => { firstPlay?.({ stopped: true }); }); };
   await f.begin(); await f.speak(); const submissionId = f.submitted[0].submissionId;
-  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'stop-turn-a', origin: 'local' }, { type: 'reply.final', replyId: 'stop-reply-a', conversationTurnId: 'stop-turn-a', text: '先停止。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'stop-turn-a', outcome: 'completed' }]);
+  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'stop-turn-a', origin: 'local' }, { type: 'reply.message', replyId: 'stop-reply-a', conversationTurnId: 'stop-turn-a', text: '先停止。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'stop-turn-a', outcome: 'completed' }]);
   await settle(); assert.equal(f.service.getSnapshot().playback.status, 'playing');
   const disabling = f.service.setOutputEnabled(false); await settle();
   assert.equal(stopStarted, true); assert.equal(f.service.getSnapshot().playback.status, 'stopping');
   await f.service.setOutputEnabled(true);
-  f.emit([{ type: 'input.consumed', submissionId: 'keyboard-during-stop', conversationTurnId: 'stop-turn-b', origin: 'local' }, { type: 'reply.final', replyId: 'stop-reply-b', conversationTurnId: 'stop-turn-b', text: '停止后播放。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'stop-turn-b', outcome: 'completed' }]);
+  f.emit([{ type: 'input.consumed', submissionId: 'keyboard-during-stop', conversationTurnId: 'stop-turn-b', origin: 'local' }, { type: 'reply.message', replyId: 'stop-reply-b', conversationTurnId: 'stop-turn-b', text: '停止后播放。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'stop-turn-b', outcome: 'completed' }]);
   await settle(); assert.equal(playCalls, 1, 'new reply waits while the earlier asynchronous stop is pending');
   stopGate.resolve(); await disabling; await settle();
   assert.equal(playCalls, 2, 'eligible new reply resumes after stop settles');
@@ -589,37 +611,36 @@ await test('speaker output cancellation restores capture after the tail delay', 
   f.playback.play = (_ref, options) => { options.onStarted(); return new Promise((resolve) => { playGate = resolve; }); };
   f.playback.stop = async () => { playGate?.({ stopped: true }); };
   await f.begin(); await f.speak(); const submissionId = f.submitted[0].submissionId;
-  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'speaker-turn', origin: 'local' }, { type: 'reply.final', replyId: 'speaker-reply', conversationTurnId: 'speaker-turn', text: '说完恢复聆听。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'speaker-turn', outcome: 'completed' }]);
+  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'speaker-turn', origin: 'local' }, { type: 'reply.message', replyId: 'speaker-reply', conversationTurnId: 'speaker-turn', text: '说完恢复聆听。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'speaker-turn', outcome: 'completed' }]);
   await settle(); assert.equal(f.capture.gated, true);
   await f.service.setOutputEnabled(false); await settle(); assert.equal(f.capture.gated, true);
   await f.advanceTimer(400); assert.equal(f.capture.gated, false);
   await f.service.hangup();
 });
 
-await test('recent successful local replies expose bounded replay metadata and replay explicitly', async () => {
+await test('stored reply audio replays through output playback without a TTS request', async () => {
   const f = fixture({ config: { version: 1, duplexPreference: 'headphones' } }); await f.begin(); await f.speak();
   const submissionId = f.submitted[0].submissionId;
-  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'replay-turn', origin: 'local' }, { type: 'reply.final', replyId: 'reply-replay', conversationTurnId: 'replay-turn', text: '再说一次。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'replay-turn', outcome: 'completed' }]);
+  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'replay-turn', origin: 'local' }, { type: 'reply.message', replyId: 'reply-replay', conversationTurnId: 'replay-turn', text: '再说一次。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'replay-turn', outcome: 'completed' }]);
   await settle(); assert.equal(f.played, 1);
-  const reply = f.service.getSnapshot().replies.find((x) => x.replyId === 'reply-replay');
-  assert.equal(reply.replayable, true);
-  await f.service.replayReply('reply-replay'); assert.equal(f.played, 2);
-  await f.service.setOutputEnabled(false);
-  await assert.rejects(f.service.replayReply('reply-replay'), { code: 'VOICE_OUTPUT_DISABLED' });
+  await f.service.playStoredAudio({ format: { codec: 'wav', sampleRate: 24000, channels: 1 }, data: new Uint8Array([1, 2, 3]) }); assert.equal(f.played, 2);
   await f.service.hangup();
+  await f.service.playStoredAudio({ format: { codec: 'wav', sampleRate: 24000, channels: 1 }, data: new Uint8Array([1, 2, 3]) }); assert.equal(f.played, 3);
+  await f.service.setOutputEnabled(false);
+  await assert.rejects(f.service.playStoredAudio({ format: { codec: 'wav', sampleRate: 24000, channels: 1 }, data: new Uint8Array([1]) }), { code: 'VOICE_OUTPUT_DISABLED' });
 });
 
 await test('normalized keyboard acceptance advances output epoch and a later reply remains eligible', async () => {
   const synthGate = deferred(); let synthCount = 0;
   const f = fixture({ synthesis: { async inspect() { return { available: true }; }, async synthesize() { return ++synthCount === 1 ? synthGate.promise : f.audio.putClip(new Int16Array(160)); }, async release(ref) { f.audio.release(ref); } }, config: { version: 1, duplexPreference: 'headphones' } });
   await f.begin(); await f.speak(); const first = f.submitted[0].submissionId;
-  f.emit([{ type: 'input.consumed', submissionId: first, conversationTurnId: 'spoken-turn', origin: 'local' }, { type: 'reply.final', replyId: 'stale-spoken-reply', conversationTurnId: 'spoken-turn', text: '稍后播放。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'spoken-turn', outcome: 'completed' }]);
+  f.emit([{ type: 'input.consumed', submissionId: first, conversationTurnId: 'spoken-turn', origin: 'local' }, { type: 'reply.message', replyId: 'stale-spoken-reply', conversationTurnId: 'spoken-turn', text: '稍后播放。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'spoken-turn', outcome: 'completed' }]);
   await settle();
   f.emit([{ type: 'input.accepted', submissionId: 'keyboard-request', evidence: 'session-message', origin: 'local' }, { type: 'input.consumed', submissionId: 'keyboard-request', conversationTurnId: 'keyboard-turn', origin: 'local' }]);
   await settle();
   const lateClip = f.audio.putClip(new Int16Array(160)); synthGate.resolve(lateClip); await settle();
   assert.equal(f.played, 0);
-  f.emit([{ type: 'turn.ended', conversationTurnId: 'keyboard-turn', outcome: 'completed' }, { type: 'input.consumed', submissionId: 'keyboard-request-2', conversationTurnId: 'later-turn', origin: 'local' }, { type: 'reply.final', replyId: 'later-reply', conversationTurnId: 'later-turn', text: '现在可以播放。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'later-turn', outcome: 'completed' }]);
+  f.emit([{ type: 'turn.ended', conversationTurnId: 'keyboard-turn', outcome: 'completed' }, { type: 'input.consumed', submissionId: 'keyboard-request-2', conversationTurnId: 'later-turn', origin: 'local' }, { type: 'reply.message', replyId: 'later-reply', conversationTurnId: 'later-turn', text: '现在可以播放。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'later-turn', outcome: 'completed' }]);
   await settle();
   assert.equal(f.played, 1);
   await f.service.hangup();
@@ -627,24 +648,23 @@ await test('normalized keyboard acceptance advances output epoch and a later rep
 
 await test('autonomous replies without a post-start tracked turn are not eligible', async () => {
   const f = fixture({ config: { version: 1, duplexPreference: 'headphones' } }); await f.begin();
-  f.emit([{ type: 'reply.final', replyId: 'baseline-autonomous', conversationTurnId: 'old-turn', text: '已经在运行的旧回复。', origin: 'autonomous' }, { type: 'turn.ended', conversationTurnId: 'old-turn', outcome: 'completed' }]);
+  f.emit([{ type: 'reply.message', replyId: 'baseline-autonomous', conversationTurnId: 'old-turn', text: '已经在运行的旧回复。', origin: 'autonomous' }, { type: 'turn.ended', conversationTurnId: 'old-turn', outcome: 'completed' }]);
   await settle();
   assert.equal(f.played, 0);
-  assert.equal(f.service.getSnapshot().replies.find((x) => x.replyId === 'baseline-autonomous').replayable, false);
-  await assert.rejects(f.service.replayReply('baseline-autonomous'), { code: 'VOICE_REPLY_NOT_REPLAYABLE' });
+  assert.equal('replayable' in f.service.getSnapshot().replies.find((x) => x.replyId === 'baseline-autonomous'), false);
   await f.service.hangup();
 });
 
-await test('committed segments speak before turn end and final aggregation does not repeat them', async () => {
+await test('one committed message speaks before turn end and a duplicate source does not resynthesize', async () => {
   const f = fixture({ config: { version: 1, duplexPreference: 'headphones' } }); await f.begin(); await f.speak();
   const input = f.service.getSnapshot().inputs[0], submissionId = f.submitted[0].submissionId;
   f.emit([
     { type: 'input.consumed', submissionId, conversationTurnId: 'long-task-turn', origin: 'local' },
-    { type: 'reply.segment', replyId: 'segment-a', responseId: 'response-a', stepId: 'step-a', surfaceRevision: '1', inputIds: [input.inputId], submissionIds: [submissionId], conversationTurnId: 'long-task-turn', text: '我开始执行了。', origin: 'local' },
+    { type: 'reply.message', replyId: 'segment-a', responseId: 'response-a', stepId: 'step-a', surfaceRevision: '1', inputIds: [input.inputId], submissionIds: [submissionId], conversationTurnId: 'long-task-turn', text: '我开始执行了。', origin: 'local' },
   ]);
   await settle(); assert.equal(f.played, 1, 'a committed answer is independent of the running task');
-  f.emit([{ type: 'reply.final', replyId: 'aggregate-a', conversationTurnId: 'long-task-turn', text: '我开始执行了。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'long-task-turn', outcome: 'completed' }]);
-  await settle(); assert.equal(f.played, 1, 'turn aggregation must not repeat an already committed segment');
+  f.emit([{ type: 'reply.message', replyId: 'segment-a', responseId: 'response-a', stepId: 'step-a', surfaceRevision: '2', inputIds: [input.inputId], submissionIds: [submissionId], conversationTurnId: 'long-task-turn', text: '我开始执行了。', origin: 'local' }, { type: 'turn.ended', conversationTurnId: 'long-task-turn', outcome: 'completed' }]);
+  await settle(); assert.equal(f.played, 1, 'the same committed message source cannot trigger a second synthesis request');
   await f.service.dispose();
 });
 
@@ -668,12 +688,12 @@ await test('failed recognition releases its slot so a single-button call survive
   await f.service.dispose();
 });
 
-await test('a late segment from an older step in the same turn never uses the newest input epoch', async () => {
+await test('a late committed message from an older step never uses the newest input epoch', async () => {
   const f = fixture({ config: { version: 1, duplexPreference: 'headphones' } }); await f.begin(); await f.speak(); await f.speak();
   const [a, b] = f.service.getSnapshot().inputs, [sa, sb] = f.submitted.map(item => item.submissionId);
   f.emit([{ type: 'input.consumed', submissionId: sa, conversationTurnId: 'shared-turn', origin: 'local' }, { type: 'input.consumed', submissionId: sb, conversationTurnId: 'shared-turn', origin: 'local' },
-    { type: 'reply.segment', replyId: 'late-a', responseId: 'response-a', surfaceRevision: '1', conversationTurnId: 'shared-turn', inputIds: [a.inputId], submissionIds: [sa], origin: 'local', text: '旧回答。' },
-    { type: 'reply.segment', replyId: 'current-b', responseId: 'response-b', surfaceRevision: '1', conversationTurnId: 'shared-turn', inputIds: [b.inputId], submissionIds: [sb], origin: 'local', text: '当前回答。' }]);
+    { type: 'reply.message', replyId: 'late-a', responseId: 'response-a', surfaceRevision: '1', conversationTurnId: 'shared-turn', inputIds: [a.inputId], submissionIds: [sa], origin: 'local', text: '旧回答。' },
+    { type: 'reply.message', replyId: 'current-b', responseId: 'response-b', surfaceRevision: '1', conversationTurnId: 'shared-turn', inputIds: [b.inputId], submissionIds: [sb], origin: 'local', text: '当前回答。' }]);
   await settle(); assert.equal(f.played, 1);
   assert.equal(f.service.getSnapshot().replies.find(reply => reply.replyId === 'current-b').status, 'played');
   await f.service.dispose();
@@ -704,7 +724,7 @@ await test('speaker duplex keeps capture running and a near-end utterance stops 
   f.playback.play = (_ref, options) => { options.onStarted?.(); return new Promise(resolve => { finish = resolve; }); };
   f.playback.stop = async () => { finish?.({ stopped: true }); };
   await f.begin(); await f.speak(); const submissionId = f.submitted[0].submissionId;
-  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'duplex-turn', origin: 'local' }, { type: 'reply.segment', replyId: 'duplex-reply', responseId: 'response-duplex', surfaceRevision: '1', conversationTurnId: 'duplex-turn', submissionIds: [submissionId], text: '用户可以随时打断这一句。', origin: 'local' }]);
+  f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'duplex-turn', origin: 'local' }, { type: 'reply.message', replyId: 'duplex-reply', responseId: 'response-duplex', surfaceRevision: '1', conversationTurnId: 'duplex-turn', submissionIds: [submissionId], text: '用户可以随时打断这一句。', origin: 'local' }]);
   await settle(); assert.equal(f.service.getSnapshot().playback.status, 'playing');
   assert.notEqual(f.capture.gated, true, 'full duplex must not drop microphone PCM during TTS');
   f.captureEvents({ type: 'speech-start', sampleIndex: 50000 }); await settle();
@@ -713,11 +733,11 @@ await test('speaker duplex keeps capture running and a near-end utterance stops 
   await f.service.dispose();
 });
 
-await test('pending ASR holds a newly committed reply and a duplicate segment is only played once', async () => {
+await test('pending ASR holds a newly committed reply and a duplicate message is only played once', async () => {
   const f = fixture({ config: { version: 1, duplexPreference: 'headphones' } }), pending = deferred();
   f.recognition.transcribe = () => pending.promise;
   await f.begin(); await f.speak();
-  const segment = { type: 'reply.segment', replyId: 'typed-during-asr', responseId: 'typed-response', surfaceRevision: '1', conversationTurnId: 'typed-turn', submissionIds: ['typed'], text: '等你说完再回答。', origin: 'local' };
+  const segment = { type: 'reply.message', replyId: 'typed-during-asr', responseId: 'typed-response', surfaceRevision: '1', conversationTurnId: 'typed-turn', submissionIds: ['typed'], text: '等你说完再回答。', origin: 'local' };
   f.emit([{ type: 'input.accepted', submissionId: 'typed', origin: 'local' }, { type: 'input.consumed', submissionId: 'typed', conversationTurnId: 'typed-turn', origin: 'local' }, segment, segment]);
   await settle(); assert.equal(f.played, 0);
   pending.resolve({ text: '' }); await settle();
@@ -726,10 +746,10 @@ await test('pending ASR holds a newly committed reply and a duplicate segment is
   await f.service.dispose();
 });
 
-await test('a prepared submission does not grant segment playback until matching consumption is proven', async () => {
+await test('a prepared submission does not grant playback until matching consumption is proven', async () => {
   const f = fixture({ config: { version: 1, duplexPreference: 'headphones' } }); await f.begin(); await f.speak();
   const submissionId = f.submitted[0].submissionId;
-  f.emit([{ type: 'reply.segment', replyId: 'proof-wait', responseId: 'proof-response', surfaceRevision: '1', conversationTurnId: 'proof-turn', submissionIds: [submissionId], text: '需要先确认输入消费。', origin: 'local' }]);
+  f.emit([{ type: 'reply.message', replyId: 'proof-wait', responseId: 'proof-response', surfaceRevision: '1', conversationTurnId: 'proof-turn', submissionIds: [submissionId], text: '需要先确认输入消费。', origin: 'local' }]);
   await settle(); assert.equal(f.played, 0, 'prepare/accept alone is not a consumption watermark');
   f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'proof-turn', origin: 'local' }]);
   await settle(); assert.equal(f.played, 1, 'a delayed proof activates the waiting committed segment');
@@ -766,11 +786,11 @@ await test('an owned task notice speaks during the call and obeys pending near-e
   await f.begin(); await f.speak();
   const submissionId = 'chonkyfish-task-notice:task-1:v2';
   f.emit([{ type: 'input.consumed', submissionId, conversationTurnId: 'task-notice-turn', taskId: 'task-1', taskVersion: 2, sourceInputId: 'original-task-input', origin: 'owned-task' },
-    { type: 'reply.segment', replyId: 'owned-notice', responseId: 'owned-response', surfaceRevision: '1', conversationTurnId: 'task-notice-turn', submissionIds: [submissionId], text: '后台任务已经完成。', origin: 'owned-task' }]);
+    { type: 'reply.message', replyId: 'owned-notice', responseId: 'owned-response', surfaceRevision: '1', conversationTurnId: 'task-notice-turn', submissionIds: [submissionId], text: '后台任务已经完成。', origin: 'owned-task' }]);
   await settle(); assert.equal(f.played, 0, 'a task completion cannot speak over an unresolved utterance');
   asr.resolve({ text: '' }); await settle(); assert.equal(f.played, 1);
   await f.service.hangup();
-  f.emit([{ type: 'reply.segment', replyId: 'after-end', responseId: 'after-end', surfaceRevision: '1', conversationTurnId: 'task-notice-turn', submissionIds: [submissionId], text: '挂断后不能出声。', origin: 'owned-task' }]);
+  f.emit([{ type: 'reply.message', replyId: 'after-end', responseId: 'after-end', surfaceRevision: '1', conversationTurnId: 'task-notice-turn', submissionIds: [submissionId], text: '挂断后不能出声。', origin: 'owned-task' }]);
   await settle(); assert.equal(f.played, 1);
   await f.service.dispose();
 });
@@ -781,7 +801,7 @@ await test('a task notice consumed during ASR cannot resume ahead of the newly a
   const noticeId = 'chonkyfish-task-notice:task-2:v3';
   f.emit([{ type: 'input.consumed', submissionId: noticeId, conversationTurnId: 'notice-priority', taskId: 'task-2', taskVersion: 3, sourceInputId: 'original-task-input', origin: 'owned-task' }]);
   await settle(); asr.resolve({ text: '现在先回答我的新问题。' }); await settle();
-  f.emit([{ type: 'reply.segment', replyId: 'late-notice', responseId: 'late-notice-response', surfaceRevision: '1', conversationTurnId: 'notice-priority', submissionIds: [noticeId], text: '迟到的任务通知。', origin: 'owned-task' }]);
+  f.emit([{ type: 'reply.message', replyId: 'late-notice', responseId: 'late-notice-response', surfaceRevision: '1', conversationTurnId: 'notice-priority', submissionIds: [noticeId], text: '迟到的任务通知。', origin: 'owned-task' }]);
   await settle(); assert.equal(f.played, 0);
   await f.service.dispose();
 });
@@ -792,7 +812,7 @@ await test('a task notice stays silent after ASR while preparation is still wait
   await f.begin(); await f.speak();
   const noticeId = 'chonkyfish-task-notice:task-3:v4';
   f.emit([{ type: 'input.consumed', submissionId: noticeId, conversationTurnId: 'notice-before-prepare', taskId: 'task-3', taskVersion: 4, sourceInputId: 'old-input', origin: 'owned-task' },
-    { type: 'reply.segment', replyId: 'pending-task-audio', responseId: 'pending-task-response', surfaceRevision: '1', conversationTurnId: 'notice-before-prepare', submissionIds: [noticeId], text: '不能盖过刚说的新问题。', origin: 'owned-task' }]);
+    { type: 'reply.message', replyId: 'pending-task-audio', responseId: 'pending-task-response', surfaceRevision: '1', conversationTurnId: 'notice-before-prepare', submissionIds: [noticeId], text: '不能盖过刚说的新问题。', origin: 'owned-task' }]);
   await settle(); asr.resolve({ text: '这是优先处理的新问题。' }); await settle();
   assert.equal(f.played, 0, 'queued/submitting user input must retain priority after ASR');
   preparation.resolve({ submissionId: 'prepared-priority' }); await settle(); assert.equal(f.played, 0);

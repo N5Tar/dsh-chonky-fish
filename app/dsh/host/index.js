@@ -26,7 +26,7 @@ import { validateTimeScale } from '../../../core/modules/abs/clock.js'
 import { validRestTime } from '../../../core/modules/abs/rest.js'
 import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { createPanelSupplement } from '../../../core/modules/persona/supplement.js'
@@ -37,8 +37,11 @@ import { installSocial } from '../adapters/social/index.js'
 import { installAbs } from '../adapters/abs/index.js'
 import { installSkills } from '../adapters/skills/index.js'
 import { installPerception } from '../adapters/perception/index.js'
+import { installMemory } from '../adapters/memory/index.js'
 import { installMigration } from '../adapters/migration/index.js'
 import { registerVoiceRoutes } from '../adapters/voice/http.js'
+import { createVoiceSourcePolicy } from '../adapters/voice/source-policy.js'
+import { createVoiceProviders } from '../../shared/voice/providers/index.js'
 import { installManagedTasks } from '../adapters/tasks/host.js'
 import { createTaskNoticeBridge } from '../adapters/voice/task-notices.js'
 import { createPhoneTaskPolicy } from '../adapters/tasks/phone-policy.js'
@@ -121,6 +124,7 @@ export function apply(ctx, config = {}) {
   let helloService = null
   let helloFailure = null
   let activeVoiceRoutes = null
+  let activeVoiceSourcePolicy = null
   let activePanelSession // Updated synchronously by the existing panel-session route.
   let socialCapabilities = () => ({ dingtalk: { connected: false, ownerBound: false } })
 
@@ -165,17 +169,33 @@ export function apply(ctx, config = {}) {
   // Windows system synthesis and the single Host-local voice lease are Host
   // capabilities. The Client still owns microphone capture and playback.
   ctx.effect(() => {
+    const windowsTts = voiceTtsTarget()
+    const providers = createVoiceProviders({ getConfig: () => resources.getConfig(), windowsTts })
+    let archive = null
+    const voicePolicyRepository = {
+      modelHistoryProjectionVerified: false,
+      saveLabelRule(value) { return archive?.saveLabelRule?.(value) ?? false },
+      getLabelRule(value) { return archive?.getLabelRule?.(value) ?? null },
+    }
+    const sourcePolicy = createVoiceSourcePolicy({
+      ctx, repository: voicePolicyRepository, getProvider: providers.getProvider,
+      namespaceId: String(resources.home || resources.dshHome || 'chonkyfish'), ownerPath: resources.paths?.workspace,
+    })
     try {
       const voice = registerVoiceRoutes(ctx, {
         resources,
         ready: layoutReady,
-        tts: voiceTtsTarget(),
+        tts: windowsTts, providers, sourcePolicy,
+        sessionQuery: service(ctx, 'sessionQuery'),
         isClosed: () => false,
         assetRoot: fileURLToPath(new URL('../../shared/audio/web/assets/', import.meta.url)),
       })
+      archive = voice.repository || null
       activeVoiceRoutes = voice
-      return () => { if (activeVoiceRoutes === voice) activeVoiceRoutes = null; voice.close() }
+      activeVoiceSourcePolicy = sourcePolicy
+      return () => { if (activeVoiceRoutes === voice) activeVoiceRoutes = null; if (activeVoiceSourcePolicy === sourcePolicy) activeVoiceSourcePolicy = null; voice.close() }
     } catch (error) {
+      sourcePolicy.close(); providers.close?.()
       warn('[chonkyfish/voice] authenticated Host routes unavailable', error)
       return () => {}
     }
@@ -213,7 +233,7 @@ export function apply(ctx, config = {}) {
   // {{chonkyfish_supplement}} 引用它，所以人格不再混进用户消息。
   ctx.effect(() => {
     const supplement = createPanelSupplement({ statePath: resources.paths.state, defaultProfileDirectory: resources.paths.personalProfile, logger: ctx.logger, isMigrationBusy: resources.isMigrationBusy })
-    const modules = createModulePrompt({ readContext: () => ({ ...supplement.readState(), ...socialCapabilities() }) })
+    const modules = createModulePrompt({ readContext: context => ({ ...supplement.readState(), ...socialCapabilities(), voiceExpression: activeVoiceSourcePolicy?.render(context) || '', memoryRoot: resolve(resources.paths.memory), memoryEnabled: resources.getConfig().memory.enabled }) })
     const disposeSupplement = ctx.systemPrompt.variable(supplement.variableName, supplement.provider)
     const phoneTaskPolicy = createPhoneTaskPolicy({
       isOwnerAgent: agent => isFishAgent(ctx, agent, spec.PRESET) && !isSocialHeader(agent.session?.header),
@@ -476,6 +496,12 @@ export function apply(ctx, config = {}) {
     return () => { if (activePerception === perception) activePerception = null; return perception.close() }
   }, 'chonkyfish: perception')
 
+  // 活跃会话索引：独立于事件引擎和活动感知。关闭 memory.enabled 时 effect 仍可释放。
+  ctx.effect(() => {
+    const memory = installMemory(ctx, { resources, ready: layoutReady, pathSemantics: platform })
+    return () => memory.close()
+  }, 'chonkyfish: memory')
+
   /* ------------------------------------------------------------- diary */
 
   // 日记模块：单工具 `diary`（write/read/list）+ 本地 Markdown + 面板只读路由。
@@ -490,7 +516,8 @@ export function apply(ctx, config = {}) {
   void startEventEngine(ctx, { resources, ready: layoutReady, warn })
 
   ctx.effect(() => {
-    const abs = installAbs(ctx, { resources, ready: layoutReady, warn })
+    const abs = installAbs(ctx, { resources, ready: layoutReady, warn,
+      readWorkStreak: () => activePerception?.getService?.()?.getWorkStreak?.() ?? null })
     activeAbs = abs
     return () => { if (activeAbs === abs) activeAbs = null; void abs.close().catch((error) => warn('[chonkyfish/abs] shutdown failed', error)) }
   }, 'chonkyfish: abs')

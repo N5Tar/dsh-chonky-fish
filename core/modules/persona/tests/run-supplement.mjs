@@ -195,6 +195,17 @@ test('模块扩展：稳定排序、动态渲染、空模块与重复 ID', () =>
   assert.equal(createModulePrompt({ readContext: () => ({}), modules: [] }).read(), '')
 })
 
+test('模块 prompt provider passes the current DSH assembly context into the reader', () => {
+  const projected = { agent: { id: 'session-1' }, scope: 'current' }
+  let observed
+  const prompt = createModulePrompt({ readContext: context => { observed = context; return {} }, modules: [] })
+  assert.equal(prompt.read(projected), '')
+  assert.equal(observed, projected)
+  const voicePrompt = createModulePrompt({ readContext: context => ({ voiceExpression: context.voiceExpression }) })
+  assert.ok(voicePrompt.read({ voiceExpression: '本次允许的标签规则' }).includes('### 本次语音表达\n\n本次允许的标签规则'))
+  assert.equal(voicePrompt.read({ voiceExpression: '' }).includes('### 本次语音表达'), false)
+})
+
 test('发布预设在面板补充后拼接模块，保留 complete 模式', () => {
   for (const path of ['../../../../app/dsh/packaging/cordis.patch.yml']) {
     const template = readFileSync(new URL(path, import.meta.url), 'utf8')

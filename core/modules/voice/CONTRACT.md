@@ -4,7 +4,7 @@ The public ESM entry is `core/modules/voice/index.js`:
 
 ```js
 import { createVoiceService, DEFAULT_VOICE_CONFIG, validateVoiceConfig,
-  VOICE_LIMITS, speechToText, splitSpeechSentences } from './core/modules/voice/index.js'
+  VOICE_LIMITS, parseSpeechReply } from './core/modules/voice/index.js'
 const service = createVoiceService({ capture, recognition, conversation,
   synthesis, playback, ownership, audio, clock, ids, config })
 ```
@@ -17,10 +17,11 @@ selection })`. `start` never delays or fabricates this gesture result.
 
 - `clock`: `{ monoNow(): number, schedule(fn, delayMs): handle,
   cancel(handle): void }`. `ids.createId(kind): string`.
-- `playback`: `inspect()`, `unlock()`, `play(clipRef,{operation,onStarted,
-  onEnded,onError}) -> Promise<{ended?:boolean,stopped?:boolean}>`, `stop()`,
-  `release()`. `unlock` is called by the composition root; the play promise
-  must settle on natural end, active stop, or failure.
+- `playback`: `inspect()`, `unlock()`, `openStream({format,operation,onStarted})`
+  returning `{append(Uint8Array),endInput(),finished}`, `stop()`, `release()`.
+  `unlock` is called by the composition root. `openStream` accepts `pcm_s16le`
+  chunks and one complete `wav` frame; its `finished` promise settles on
+  natural end, active stop, or failure.
 - `capture`: `inspect()`, `start({callRef,selection,onEvent,operation})`,
   `cut({startSample,endSample,operation}) -> clipRef` (ownership transfers to
   the core), optional `setTurnActive(boolean)`, `gate(boolean)`,
@@ -45,8 +46,12 @@ selection })`. `start` never delays or fabricates this gesture result.
   `{accepted:false, outcome:'not_applied'|'unknown', rejected?:true, code?}`.
   `follow` batches use `{streamGeneration,cursor,reset,events}`. Event fields
   follow the normalized DTOs below and `docs/voice-call-technical-v3.md`.
-- `synthesis`: `inspect()`, `synthesize(text,voice,{operation}) -> clipRef`,
-  `release(clipRef)`.
+- `synthesis`: `inspect()`,
+  `synthesizeReply({source:{sessionId,seq},voice},{operation}) -> AsyncIterable`
+  of `{type:'audio',data:Uint8Array,format}` and a final
+  `{type:'complete',receipt?}`. One call synthesizes one committed assistant
+  message. Audio formats are `pcm_s16le` or `wav`; complete WAV is one audio
+  event followed by `complete`.
 - `ownership`: `acquire({callRef,conversationRef})`, `renew()`, `release()`;
   acquire/renew return `{valid:boolean, scopeId?, leaseMs?}`. A revocation may
   be delivered to capture as `{type:'error', error:{code:'OWNERSHIP_LOST'}}`.
@@ -55,9 +60,10 @@ selection })`. `start` never delays or fabricates this gesture result.
 `unmute()`, `setOutputEnabled(enabled)`, `hangup({abandonPending=false,preservePlayback=false})`, `continueCall()`,
 `retryInput(inputId)`, `editInput(inputId,text)`, `submitHeld(inputId)`,
 `discardInput(inputId)`, `retryUnknown(inputId)` (only performs an evidence
-check; it never resubmits), `replayReply(replyId)` (explicitly replays only a
-recent successful local/autonomous reply under current call/output/input
-gates), `getSnapshot()`, `subscribe(listener)`, and
+check; it never resubmits),
+`playStoredAudio({format,data,operation})` (plays stored reply bytes through the
+shared output stream without requesting TTS), `getSnapshot()`,
+`subscribe(listener)`, and
 `dispose()`. All commands return promises except snapshot/subscription methods.
 
 With `inputEnabled:false`, startup skips capture/recognition capability checks and
@@ -89,7 +95,7 @@ Snapshots are serializable UI data only:
 ```js
 { call:{status,id,conversationRef}, capture:{status,muted},
   inputs:[{inputId,order,status,transcript,admission,localDisposition,clips:<count>,error}],
-  replies:[{replyId,conversationTurnId,status,origin,replayable}],
+  replies:[{replyId,conversationTurnId,status,origin,source}],
   playback:{status,enabled,replyId}, queue:{unresolved,waiting}, error }
 ```
 
@@ -139,19 +145,22 @@ Committed events use the following payloads (in addition to stream identity):
 { type: 'input.accepted', inputId, submissionId, evidence }
 { type: 'input.consumed', inputId, submissionId, messageId,
   conversationTurnId, stepId, origin }
-{ type: 'reply.segment', replyId, conversationTurnId, responseId, stepId,
-  inputIds, submissionIds, origin, text, surfaceRevision }
+{ type: 'reply.message', replyId, conversationTurnId, responseId, stepId,
+  inputIds, submissionIds, origin, text, source:{sessionId,seq}, surfaceRevision }
 { type: 'reply.revoked', replyId, conversationTurnId, responseId, stepId,
   surfaceRevision }
 ```
 
-A segment may play before `turn.ended`, but only after its declared inputs
-have matching `input.consumed` proof in the same call. Preparation or acceptance
-alone is insufficient. A step inherits the consumed watermark of its prior
-step, then incorporates new consumption. Newest received input and whole-turn
-origin are not substitutes for step provenance. Historical, external, mixed,
-revoked and interrupted outputs cannot become current local audio. Repeated
-segments/final aggregation do not replay already delivered audio.
+Each committed assistant message may play before `turn.ended`, once, only
+after its declared inputs have matching `input.consumed` proof in the same call.
+Preparation or acceptance alone is insufficient. The normalized message must
+identify its exact committed source as `sessionId + seq`; the Host checks that
+source against the observed current session event before synthesis. A step
+inherits the consumed watermark of its prior step, then incorporates new
+consumption. Newest received input and whole-turn origin are not substitutes
+for step provenance. Historical, external, mixed, revoked and interrupted
+outputs cannot become current local audio. There is no final-turn aggregation,
+sentence splitting, or replay-by-resynthesis path.
 
 An `owned-task` consumed event additionally contains `taskId`, `taskVersion`
 and `sourceInputId`. Its stable submission identity is

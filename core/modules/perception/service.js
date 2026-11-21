@@ -1,5 +1,5 @@
 import { resolveConfig } from './config.js'
-import { RULE_VERSION, analyzeActivity, buildIntervals, computeFreshness, shouldPersistSummary } from './core.js'
+import { RULE_VERSION, analyzeActivity, buildIntervals, computeFreshness, createWorkStreakTracker, shouldPersistSummary } from './core.js'
 
 const fault = (code, message) => Object.assign(new Error(message), { code })
 const publicError = (error, code = 'PERCEPTION_ERROR') => ({ code: error?.code || code, message: error?.message || '感知模块不可用' })
@@ -12,6 +12,7 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
   if (typeof collectorFactory !== 'function') throw new TypeError('createPerceptionService requires a collectorFactory port')
   let state = capabilities.supported ? 'stopped' : 'unsupported'
   let latestSample = null, summary = null, savedSummary = null, error = null, cleanup = null
+  const workStreak = createWorkStreakTracker({ config })
   let closed = false, closing = null, cleaning = null, initializing = null, stopping = null, haltReason = null, controlGeneration = 0
   let analysisTimer, cleanupTimer, restoring
   let preferenceTail = Promise.resolve(), preferenceRead = null, preferenceLoaded = false, preferenceRequested = false, preferenceError = null, manualControl = false, preferenceGeneration = 0
@@ -54,12 +55,13 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
     onState(next) {
       if (closed || haltReason) return
       state = next.state
+      if (['stopped', 'stopping', 'stale', 'error', 'disposed', 'unsupported'].includes(next.state)) workStreak.reset()
     },
     onError(cause) { error ||= publicError(cause, 'COLLECTOR_ERROR'); state = 'error' },
     onSample(sample) {
       if (closed || haltReason || !isEnabled()) throw fault('UNAVAILABLE', '采集已停止或模块已禁用')
       try {
-        if (store.insertSample(sample)) latestSample = sample
+        if (store.insertSample(sample)) { latestSample = sample; workStreak.observe(sample) }
       } catch (cause) {
         error = publicError(cause, 'STORAGE_ERROR'); state = 'error'; throw cause
       }
@@ -134,6 +136,7 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
     if (generation !== controlGeneration) throw fault('CANCELLED', '开始采集已取消')
     if (cleanup?.error) throw fault('STORAGE_ERROR', '过期数据清理失败，请修复后重试')
     haltReason = null; error = null; latestSample = null; summary = null; savedSummary = null
+    workStreak.reset()
     try { return await collector.start() }
     catch (cause) { if (!closed && !haltReason) { state = 'error'; error = publicError(cause, 'COLLECTOR_ERROR') }; throw cause }
   }
@@ -199,6 +202,14 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
       sample: latestSample, summary, config })
     return { data: summary, freshness }
   }
+  function getWorkStreak() {
+    const time = now()
+    if (closed || !isEnabled() || state !== 'running' || !latestSample || time < latestSample.receivedAtMs || time - latestSample.receivedAtMs > config.sampleStaleMs) {
+      workStreak.reset()
+      return null
+    }
+    return workStreak.snapshot({ nowMs: time, sampleStaleMs: config.sampleStaleMs })
+  }
   function getStatus() {
     const time = now()
     expireMemory(time)
@@ -260,5 +271,5 @@ export function createPerceptionService({ store, binaryPath, capabilities = { su
     })()
     return closing
   }
-  return { initialize, start, pause, stop, suspendForMigration, adoptImportedPreference, getControlState, setRequested, getStatus, getCurrent, getTimeline, getSummaries, analyze, clean, close }
+  return { initialize, start, pause, stop, suspendForMigration, adoptImportedPreference, getControlState, setRequested, getStatus, getCurrent, getWorkStreak, getTimeline, getSummaries, analyze, clean, close }
 }

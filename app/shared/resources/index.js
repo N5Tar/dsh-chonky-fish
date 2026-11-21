@@ -148,6 +148,7 @@ function sanitizeConfig(raw) {
         fallback: defaults.diary.maxContentChars,
       }),
     },
+    memory: { enabled: typeof source.memory?.enabled === 'boolean' ? source.memory.enabled : defaults.memory.enabled },
     voice,
   }
 }
@@ -173,6 +174,7 @@ function mergeConfig(current, patch) {
     proactive: { ...current.proactive, ...proactive },
     eventEngine: { ...current.eventEngine, ...eventEngine },
     diary: { ...current.diary, ...diary },
+    memory: { ...current.memory, ...(isPlainObject(source.memory) ? source.memory : {}) },
     voice: mergedVoice,
   })
 }
@@ -222,11 +224,15 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     events: join(home, FILES.events),
     tasks: join(home, FILES.tasks),
     abs: join(home, FILES.abs),
+    absActivityDatabase: join(home, FILES.abs, FILES.absActivityDatabase),
     skills: join(home, FILES.skills),
     perception: join(home, FILES.perception),
     perceptionDatabase: join(home, FILES.perception, FILES.perceptionDatabase),
     perceptionPreferences: join(home, FILES.perception, FILES.perceptionPreferences),
+    voice: join(home, FILES.voice),
+    voiceDatabase: join(home, FILES.voice, FILES.voiceDatabase),
     diary: join(home, DIARY_DIR),
+    memory: join(home, FILES.memory),
     personalProfile: join(home, PERSONAL_PROFILE_DIR),
     workspace: join(home, WORKSPACE_DIR),
     social: join(home, SOCIAL.directory),
@@ -384,6 +390,16 @@ export function createResources({ env = process.env, homeRoot } = {}) {
       await mkdir(paths.personalProfile, { recursive: true })
     } catch (error) {
       warn(logger, '[chonkyfish] 个人档案目录创建失败', error)
+    }
+    try {
+      await mkdir(paths.voice, { recursive: true })
+    } catch (error) {
+      warn(logger, '[chonkyfish] 语音目录创建失败', error)
+    }
+    try {
+      await mkdir(paths.memory, { recursive: true })
+    } catch (error) {
+      warn(logger, '[chonkyfish] 记忆目录创建失败', error)
     }
     return { home: paths.home, workspace: paths.workspace }
   }

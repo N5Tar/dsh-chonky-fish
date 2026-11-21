@@ -131,6 +131,40 @@ test('查询参数：limit 截断、sinceSeq、sessionId 过滤', () => {
   }
 })
 
+test('UTC+8 当日汇总、分类/证据过滤和分页使用归一化列', () => {
+  const { engine, cleanup } = makeEngine()
+  try {
+    const inDay = [
+      { ...makeEvent(), observedAt: '2026-10-26T17:00:00.000Z', category: 'preference', evidenceStatus: 'reported' },
+      { ...makeEvent(), observedAt: '2026-10-27T09:20:00.000Z', category: 'goal', evidenceStatus: 'intent' },
+      { ...makeEvent(), observedAt: '2026-10-27T12:00:00.000Z', category: 'goal', evidenceStatus: 'reported' },
+      { ...makeEvent(), observedAt: '2026-10-27T16:00:00.000Z', category: 'interaction', evidenceStatus: 'reported' },
+    ]
+    const stored = engine.storeEvents(inDay)
+    const parsed = parseEventsQuery('/x?day=2026-10-27&limit=1&offset=0&category=goal&evidenceStatus=reported')
+    assert.deepEqual(parsed.summaryWindow, { observedSince: '2026-10-26T16:00:00.000Z', observedBefore: '2026-10-27T16:00:00.000Z' })
+    assert.throws(() => parseEventsQuery('/x?day=2026-02-30'), /valid UTC\+8/)
+    assert.throws(() => parseEventsQuery('/x?day=2026-10-27&category=unknown'), /category is invalid/)
+    assert.equal(handleEventsRequest({ engine, url: '/x?day=2026-02-30' }).status, 400, 'invalid query parameters use a client error status')
+    assert.equal(handleEventsRequest({ engine, url: '/x?day=2026-10-27&evidenceStatus=unknown' }).status, 400)
+    const firstPage = handleEventsRequest({ engine, url: '/x?day=2026-10-27&limit=1&category=goal&evidenceStatus=reported' })
+    assert.equal(firstPage.status, 200)
+    assert.deepEqual(firstPage.body.summary, { total: 3, categories: { preference: 1, goal: 2 } })
+    assert.equal(firstPage.body.page.total, 1, 'server filters apply to the whole UTC+8 day')
+    assert.equal(firstPage.body.page.hasMore, false)
+    assert.equal(firstPage.body.events[0].category, 'goal')
+    assert.equal(firstPage.body.events[0].evidenceStatus, 'reported')
+    const stableFirst = handleEventsRequest({ engine, url: '/x?day=2026-10-27&limit=1&category=goal' })
+    engine.storeEvents([{ ...makeEvent(), observedAt: '2026-10-27T15:00:00.000Z', category: 'goal', evidenceStatus: 'reported' }])
+    const page = handleEventsRequest({ engine, url: `/x?day=2026-10-27&limit=1&offset=1&category=goal&snapshotSeq=${stableFirst.body.page.snapshotSeq}` })
+    assert.equal(page.body.page.total, 2)
+    assert.equal(page.body.page.offset, 1)
+    assert.equal(page.body.page.hasMore, false)
+    assert.equal(page.body.events[0].eventSeq, stored.events[1].eventSeq)
+    assert.notEqual(page.body.events[0].eventSeq, stableFirst.body.events[0].eventSeq, 'new rows do not shift a later page within the frozen snapshot')
+  } finally { cleanup() }
+})
+
 test('消费者：一次投递不重复，游标落库', async () => {
   const { engine, cleanup } = makeEngine()
   try {

@@ -100,11 +100,15 @@ await test('paths: 所有文件都在 home 下，工作区在 home/小鱼塘', (
     events: join(home, FILES.events),
     tasks: join(home, FILES.tasks),
     abs: join(home, FILES.abs),
+    absActivityDatabase: join(home, FILES.abs, FILES.absActivityDatabase),
     skills: join(home, FILES.skills),
     perception: join(home, FILES.perception),
     perceptionDatabase: join(home, FILES.perception, FILES.perceptionDatabase),
     perceptionPreferences: join(home, FILES.perception, FILES.perceptionPreferences),
+    voice: join(home, FILES.voice),
+    voiceDatabase: join(home, FILES.voice, FILES.voiceDatabase),
     diary: join(home, '日记'),
+    memory: join(home, FILES.memory),
     personalProfile: join(home, '个人资料'),
     workspace: join(home, WORKSPACE_DIR),
     social: join(home, 'social'),
@@ -140,6 +144,8 @@ await test('layout: 建 home/工作区目录和默认 config.json，不碰旧路
     assert.equal(existsSync(join(workspace.home, WORKSPACE_DIR)), true)
     assert.equal(existsSync(resources.paths.diary), true)
     assert.equal(existsSync(resources.paths.personalProfile), true)
+    assert.equal(existsSync(resources.paths.voice), true)
+    assert.equal(existsSync(resources.paths.memory), true)
     assert.equal(existsSync(resources.paths.config), true)
     // 规划里不包含旧 $DSH_HOME/小鱼塘：不会被创建/迁移
     assert.equal(existsSync(join(workspace.dshHome, WORKSPACE_DIR)), false)
@@ -204,6 +210,7 @@ await test('config: 文件缺失/坏 JSON 时回退默认值', () => {
         enabled: true,
         maxContentChars: 50000,
       },
+      memory: { enabled: true },
       voice: DEFAULT_CONFIG.voice,
     })))
     mkdirSync(workspace.home, { recursive: true })
@@ -416,6 +423,13 @@ await test('voice config: sanitize defaults and deep merge voice preferences', a
     assert.equal(config.voice.tts.voiceId, 'Microsoft Huihui Desktop')
     assert.equal(config.voice.tts.rate, 0)
     assert.equal(config.voice.replyAudioEnabled, true)
+    assert.equal(config.voice.tts.credentialRef, null)
+    const aliyun = await resources.updateConfig({ voice: { tts: { providerId: 'aliyun-qwen-tts', credentialRef: 'DASHSCOPE_API_KEY', region: 'ap-southeast-1', workspaceId: 'workspace_123', voiceId: 'longanhuan_v3.1' } } })
+    assert.equal(aliyun.voice.tts.providerId, 'aliyun-qwen-tts')
+    assert.equal(aliyun.voice.tts.modelId, 'qwen-audio-3.1-tts-flash')
+    const invalidCredential = await resources.updateConfig({ voice: { tts: { credentialRef: 'SECRET_VALUE' } } })
+    assert.equal(invalidCredential.voice.tts.credentialRef, null)
+    assert.notEqual(JSON.stringify(invalidCredential.voice).includes('SECRET_VALUE'), true)
   } finally { workspace.cleanup() }
 })
 

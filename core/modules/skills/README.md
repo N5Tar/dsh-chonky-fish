@@ -14,7 +14,7 @@
 
 ## 存储
 
-运行数据存于 `$DSH_HOME/chonkyfish/skills/<skillId>.json`。每个技能只有本地创建后才存在；`create` 写入首版，之后的 `record/revise/rollback` 追加新版本，更新插件不会覆盖已有内容。目录就是技能清单，不再有代码内置的初始技能。
+运行数据存于 `$DSH_HOME/chonkyfish/skills/<skillId>.json`。每个技能只有本地创建后才存在；`create` 写入首版，之后的 `record/revise/rollback` 追加新版本，更新插件不会覆盖已有内容。目录就是技能清单。技能模块自己没有内置正文。记忆模块只在 `memory` 这个 id 不存在时，用同一条 `create` 写入一份，正文来自 `core/modules/memory/SKILL.md`；已有的 `skills/memory.json` 保持原样。
 
 旧版（内置 seed 时代）的 `<skillId>.json` 只有 `{format, skillId, snapshots}`，首版 action 为 `seed`。当前版本在读取时会**原地迁移**：从首版指南推导标题/描述（无标题时回退到 skillId），把 `seed` 改为 `create`，所有快照、经验和修订内容原样保留；迁移失败也只按内存中的升级结果提供读取，不重置文件。若旧文件本身结构仍然非法（版本号错乱、缺修订、空指南等），仍然 fail-closed 报 `CORRUPT_STATE`。
 

@@ -2,10 +2,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, lstat, open, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { platform } from '../../platform/index.js'
-import { mergeMigrationPreferences, migrationFail } from '../../../../core/modules/migration/policy.js'
+import { mergeMigrationPreferences, migrationFail, validateMemoryRelative } from '../../../../core/modules/migration/policy.js'
 
 const fail = code => migrationFail(code)
-const fingerprint = async (targets, preservedRuntimeDirectory) => {
+const fingerprint = async (targets, preservedRules) => {
   const hash = createHash('sha256')
   async function visit(p) {
     let info
@@ -15,9 +15,10 @@ const fingerprint = async (targets, preservedRuntimeDirectory) => {
     if (!info.isDirectory()) fail('UNSAFE_PATH')
     const names = (await readdir(p)).sort()
     for (const name of names) {
-      if (path.resolve(p) === path.resolve(preservedRuntimeDirectory) && name.toLowerCase() === 'browser-profile') {
-        // Track the preserved entry itself, not active browser cache/database contents.
-        hash.update(name); hash.update('preserved-runtime-profile')
+      const rule = preservedRules.find(item => path.resolve(p) === path.resolve(item.directory) && (item.caseInsensitive ? name.toLowerCase() === item.name : name === item.name))
+      if (rule) {
+        // 只记下被保留的目录名，不把浏览器缓存或本机会话索引的内容算进迁移指纹。
+        hash.update(name); hash.update(rule.marker)
         continue
       }
       hash.update(name)
@@ -31,8 +32,12 @@ const fingerprint = async (targets, preservedRuntimeDirectory) => {
 export function createMigrationRepository({ resources, beforeExclusive = async () => {}, beforePublish = async () => {}, onExclusive = () => {}, onCommitted = async () => {}, faultInjector = async () => {} }) {
   let busy = false
   const root = resources.paths.migration
-  const targets = [resources.paths.state, resources.paths.config, resources.paths.personalProfile, resources.paths.diary, resources.paths.skills, resources.paths.perceptionPreferences]
-  async function safeFiles(directory, prefix, maxFiles, filter) {
+  const targets = [resources.paths.state, resources.paths.config, resources.paths.personalProfile, resources.paths.diary, resources.paths.skills, resources.paths.perceptionPreferences, resources.paths.memory]
+  const preservedRules = [
+    { directory: resources.paths.personalProfile, name: 'browser-profile', marker: 'preserved-runtime-profile', caseInsensitive: true },
+    { directory: resources.paths.memory, name: 'sessions', marker: 'preserved-local-session-index', caseInsensitive: true },
+  ]
+  async function safeFiles(directory, prefix, maxFiles, filter, skipRootName) {
     const result = new Map()
     async function walk(current, rel) {
       let names
@@ -41,6 +46,7 @@ export function createMigrationRepository({ resources, beforeExclusive = async (
         // This is a runtime browser profile, not personal knowledge: it contains
         // login state, caches, databases and open lock files and must never migrate.
         if (prefix === 'profile' && rel === '' && name.toLowerCase() === 'browser-profile') continue
+        if (rel === '' && skipRootName && skipRootName(name)) continue
         const full = path.join(current, name), st = await lstat(full)
         if (st.isSymbolicLink() || (st.isFile() && st.nlink !== 1)) fail('UNSAFE_PATH')
         const child = rel ? `${rel}/${name}` : name
@@ -94,6 +100,30 @@ export function createMigrationRepository({ resources, beforeExclusive = async (
     try { return (await readdir(directory)).filter(name => name.toLowerCase() === 'browser-profile') }
     catch (error) { if (error.code === 'ENOENT') return []; throw error }
   }
+  function validPreserve(record) {
+    const preserve = record.preserve || []
+    if (!Array.isArray(preserve)) return false
+    if (record.target === resources.paths.personalProfile) return preserve.every(relative => typeof relative === 'string' && relative.toLowerCase() === 'browser-profile')
+    if (record.target === resources.paths.memory) return preserve.every(relative => typeof relative === 'string' && relative.toLowerCase() === 'sessions' && !/[/\\\0]/.test(relative))
+    return preserve.length === 0
+  }
+  async function localPreserve(target, targetInfo) {
+    if (!targetInfo) return []
+    if (target === resources.paths.personalProfile) return preservedProfileNames(target)
+    if (target === resources.paths.memory) {
+      let names
+      try { names = await readdir(target) } catch (error) { if (error.code === 'ENOENT') return []; throw error }
+      const preserved = []
+      for (const name of names) {
+        if (name.toLowerCase() !== 'sessions') continue
+        const info = await lstat(path.join(target, name))
+        if (info.isSymbolicLink() || !info.isDirectory()) fail('UNSAFE_PATH')
+        preserved.push(name)
+      }
+      return preserved
+    }
+    return []
+  }
   async function restoreRecord(record) {
     const backupExists = await exists(record.backup)
     if (backupExists) {
@@ -129,7 +159,7 @@ export function createMigrationRepository({ resources, beforeExclusive = async (
     try { return JSON.parse(await readFile(pathname, 'utf8')) } catch (e) { if (e.code === 'ENOENT') return fallback; fail('INVALID_DATA') }
   }
   return {
-    async readDirectory(directory, prefix, maxFiles, filter) { return safeFiles(directory, prefix, maxFiles, filter) },
+    async readDirectory(directory, prefix, maxFiles, filter, skipRootName) { return safeFiles(directory, prefix, maxFiles, filter, skipRootName) },
     async saveExport(id, bytes) { const dir = path.join(root, 'exports'); await mkdir(dir, { recursive: true }); await writeFile(path.join(dir, `${id}.fishpack`), bytes, { flag: 'wx', mode: 0o600 }) },
     async saveImport(id, plan) { const dir = path.join(root, 'staging', id); await mkdir(dir, { recursive: true }); await this.writePlan(dir, plan) },
     async writePlan(directory, plan) {
@@ -141,7 +171,7 @@ export function createMigrationRepository({ resources, beforeExclusive = async (
       }
     },
     async removeImport(id) { await rm(path.join(root, 'staging', id), { recursive: true, force: true }) },
-    async fingerprintTarget() { return fingerprint(targets, resources.paths.personalProfile) },
+    async fingerprintTarget() { return fingerprint(targets, preservedRules) },
     async recover() {
       const txRoot = path.join(root, 'transactions')
       await mkdir(txRoot, { recursive: true, mode: 0o700 })
@@ -174,7 +204,7 @@ export function createMigrationRepository({ resources, beforeExclusive = async (
           const seenTargets = new Set()
           for (const record of [...tx.targets].reverse()) {
             const index = targets.indexOf(record.target)
-            if (index < 0 || seenTargets.has(record.target) || record.backup !== path.join(dir, 'backup', String(index)) || record.stage !== path.join(dir, 'stage', String(index)) || !Array.isArray(record.preserve || []) || (record.preserve || []).some(relative => typeof relative !== 'string' || relative.toLowerCase() !== 'browser-profile')) fail('RECOVERY_REQUIRED')
+            if (index < 0 || seenTargets.has(record.target) || record.backup !== path.join(dir, 'backup', String(index)) || record.stage !== path.join(dir, 'stage', String(index)) || !validPreserve(record)) fail('RECOVERY_REQUIRED')
             seenTargets.add(record.target)
             await restoreRecord(record)
           }
@@ -208,6 +238,7 @@ export function createMigrationRepository({ resources, beforeExclusive = async (
     async isBusy() { return busy },
     async withExclusive(fn) { if (busy) fail('MIGRATION_BUSY'); busy = true; onExclusive(true); try { await beforeExclusive(); return await fn() } finally { onExclusive(false); busy = false } },
     async buildPlan(data, snapshot) {
+      if (data.includeMemory) for (const name of data.memory.keys()) validateMemoryRelative(name)
       const state = { ...(snapshot.stateWrap || {}), version: 1, generation: (snapshot.stateWrap?.generation || 0) + 1, state: { ...(snapshot.stateWrap?.state || {}), ...data.identity, ...data.wallet, profileDirectory: resources.paths.personalProfile } }
       const config = mergeMigrationPreferences(snapshot.config, data.preferences)
       const collectionPreference = Buffer.from(JSON.stringify({ version: 1, collectionEnabled: false }) + '\n')
@@ -219,13 +250,14 @@ export function createMigrationRepository({ resources, beforeExclusive = async (
         [resources.paths.skills, { kind: 'directory', files: new Map([...data.skills].map(([name, content]) => [name.slice(7), content])) }],
         [resources.paths.perceptionPreferences, { kind: 'file', content: collectionPreference }],
       ])
+      if (data.includeMemory) plan.set(resources.paths.memory, { kind: 'directory', files: data.memory })
       return plan
     },
     async commitPlan(id, plan, expectedVersion) {
       const txRoot = path.join(root, 'transactions', id)
       const transactions = path.dirname(txRoot)
       const stageRoot = path.join(txRoot, 'stage'), backupRoot = path.join(txRoot, 'backup')
-      const initialVersion = await fingerprint(targets, resources.paths.personalProfile)
+      const initialVersion = await fingerprint(targets, preservedRules)
       if (expectedVersion && initialVersion !== expectedVersion) fail('STALE_TARGET')
       const records = []
       for (const [target] of plan) {
@@ -233,7 +265,7 @@ export function createMigrationRepository({ resources, beforeExclusive = async (
         if (index < 0) fail('UNSAFE_PATH')
         const stage = path.join(stageRoot, String(index)), backup = path.join(backupRoot, String(index))
         const targetInfo = await lstat(target).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error))
-        records.push({ target, stage, backup, existed: !!targetInfo, preserve: target === resources.paths.personalProfile && targetInfo ? await preservedProfileNames(target) : [] })
+        records.push({ target, stage, backup, existed: !!targetInfo, preserve: await localPreserve(target, targetInfo) })
       }
       const journalTargets = records.map(({ target, stage, backup, existed, preserve }) => ({ target, stage, backup, existed, preserve }))
       const journal = phase => ({ phase, id, targets: journalTargets })
@@ -263,7 +295,7 @@ export function createMigrationRepository({ resources, beforeExclusive = async (
         await writeJournal(txRoot, journal('publishing'))
         await faultInjector('journal-publishing', { id, txRoot })
         publishingStarted = true
-        if (await fingerprint(targets, resources.paths.personalProfile) !== (expectedVersion || initialVersion)) fail('STALE_TARGET')
+        if (await fingerprint(targets, preservedRules) !== (expectedVersion || initialVersion)) fail('STALE_TARGET')
 
         for (const record of records) {
           await mkdir(path.dirname(record.target), { recursive: true, mode: 0o700 })

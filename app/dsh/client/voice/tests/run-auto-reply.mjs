@@ -20,9 +20,23 @@ set('AudioContext', AudioContext)
 set('navigator', { mediaDevices: { async getUserMedia() { micRequests++; throw new Error('automatic reply playback must never access the microphone') } } })
 set('location', { href: 'http://localhost/' })
 const response = data => ({ ok: true, status: 200, async json() { return data } })
+let settingsState = { tts: { providerId: 'windows-system-speech', voiceId: null, rate: 0, credentialRef: null, region: 'cn-beijing', workspaceId: '', modelId: 'qwen-audio-3.1-tts-flash' }, credentialConfigured: false, capabilities: { emotionSupported: false, emotionTags: [], audioOutput: 'complete', conversationEmotionEnabled: false } }
+let catalogLoads = 0
+const catalogRequests = []
+const previewRequests = []
+const settingsWrites = []
+const eventStream = events => {
+  const bytes = new TextEncoder().encode(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(''))
+  let sent = false
+  return { ok: true, status: 200, body: { getReader() { return { async read() { if (sent) return { done: true }; sent = true; return { done: false, value: bytes } }, async cancel() {}, releaseLock() {} } } } }
+}
 set('fetch', async (endpoint, options = {}) => {
   const path = new URL(endpoint, 'http://localhost/').pathname
   if (path === '/caps') return response({ ok: true, data: { host: { local: true, os: 'win32', arch: 'x64' }, ownership: { serviceGeneration: 'host-auto-reply' }, synthesis: { supported: true, voices: [] }, assets: { endpoint: '/chonkyfish/voice/assets' } } })
+  if (path === '/voice-settings') {
+    if (options.method === 'PUT') { const body = JSON.parse(options.body); settingsWrites.push(body.tts); settingsState = { ...settingsState, tts: body.tts, credentialConfigured: true }; return response({ ok: true, data: settingsState }) }
+    return response({ ok: true, data: settingsState })
+  }
   if (path === '/config') return response({ ok: true, config: { voice: { version: 1 } } })
   if (path === '/chonkyfish/voice/assets') return response(manifest)
   const body = JSON.parse(options.body || '{}')
@@ -33,7 +47,14 @@ set('fetch', async (endpoint, options = {}) => {
   }
   if (path === '/synthesis') {
     synthesisRequests++
-    return response({ ok: true, data: { wav: Buffer.from(encodePcm16Wav(new Int16Array(1600))).toString('base64') } })
+    const wav = Buffer.from(encodePcm16Wav(new Int16Array(1600))).toString('base64')
+    return eventStream([{ type: 'audio', data: wav, format: { codec: 'wav', sampleRate: 16000, channels: 1 } }, { type: 'complete' }])
+  }
+  if (path === '/voice-preview') {
+    if (body.action === 'catalog') { catalogLoads++; catalogRequests.push(body); if (!body.binding) assert.match(settingsState.tts.workspaceId, /^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$/); return response({ ok: true, data: { voices: [{ id: 'aliyun-voice-1', name: 'Voice One', sample: null, source: 'https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list' }] } }) }
+    previewRequests.push(body)
+    const wav = Buffer.from(encodePcm16Wav(new Int16Array(1600))).toString('base64')
+    return eventStream([{ type: 'audio', data: wav, format: { codec: 'wav', sampleRate: 16000, channels: 1 } }, { type: 'complete' }])
   }
   throw new Error(`Unexpected request ${path}`)
 })
@@ -52,14 +73,17 @@ const chat = {
 }
 let attachOptionalSpeech
 const ctx = { inject(_keys, callback) { attachOptionalSpeech = callback; const missing = Promise.reject(new Error('no optional ASR service')); missing.dispose = () => {}; return missing } }
-const controller = createDshVoiceController({ ctx, chat, routes: { voiceCapabilities: '/caps', voiceAssets: '/chonkyfish/voice/assets', config: '/config', voiceCalls: '/calls', voiceSynthesis: '/synthesis' } })
+const testRoutes = { voiceCapabilities: '/caps', voiceSettings: '/voice-settings', voiceAssets: '/chonkyfish/voice/assets', config: '/config', voiceCalls: '/calls', voiceSources: '/voice-sources', voiceSynthesis: '/synthesis', voicePreview: '/voice-preview', voiceAudio: '/voice-audio', voiceCancel: '/voice-cancel' }
+const controller = createDshVoiceController({ ctx, chat, routes: testRoutes })
 async function settle() { for (let i = 0; i < 30; i++) await new Promise(resolve => setTimeout(resolve, 0)) }
 function reply(n) {
   for (const listener of localListeners) listener({ sessionId: session.sessionId, bindingRevision: '1', requestId: `typed-${n}`, state: 'prepared' })
   const events = [
     { type: 'turn/start', data: { turn: n } },
-    { type: 'user/message', surfaceOp: 'append', data: { turn: n, source: { kind: 'user', rpcId: `typed-${n}` }, content: [{ type: 'text', text: `问题${n}` }] } },
-    { type: 'assistant/message', surfaceOp: 'append', data: { turn: n, message: { content: [{ type: 'text', text: `自动播报第${n}条。` }] } } },
+    { type: 'step/start', data: { turn: n, step: 1 } },
+    { type: 'user/message', data: { turn: n, source: { kind: 'user', rpcId: `typed-${n}` }, content: [{ type: 'text', text: `问题${n}` }] } },
+    { type: 'assistant/message', surfaceOp: 'append', data: { turn: n, step: 1, message: { content: [{ type: 'text', text: `自动播报第${n}条。` }] } } },
+    { type: 'step/end', data: { turn: n, step: 1 } },
     { type: 'turn/end', data: { turn: n, reason: { kind: 'completed' } } },
   ]
   for (const event of events) { entries.push({ event: { ...event, seq: entries.length + 1 } }); for (const listener of sourceListeners) listener() }
@@ -97,7 +121,7 @@ try {
     const cleanup = callback({ remote: { speech: { async catalog() { return { ok: true, value: { selection: { providerId: 'local', language: 'zh' }, providers: [{ id: 'local', preparation: { phase: 'ready' } }] } } } } } })
     const ready = Promise.resolve(); ready.dispose = () => cleanup?.(); return ready
   } }
-  const switcher = createDshVoiceController({ ctx: speechCtx, chat, routes: { voiceCapabilities: '/caps', voiceAssets: '/chonkyfish/voice/assets', config: '/config', voiceCalls: '/calls', voiceSynthesis: '/synthesis' } })
+  const switcher = createDshVoiceController({ ctx: speechCtx, chat, routes: testRoutes })
   try {
     assert.equal(await switcher.prepareReplyAudio(), true)
     await switcher.start()
@@ -120,7 +144,7 @@ try {
     if (new URL(endpoint, 'http://localhost/').pathname === '/caps') { capsRequested = true; await capsGate }
     return previousFetch(endpoint, options)
   })
-  const pendingController = createDshVoiceController({ ctx, chat, routes: { voiceCapabilities: '/caps', voiceAssets: '/chonkyfish/voice/assets', config: '/config', voiceCalls: '/calls', voiceSynthesis: '/synthesis' } })
+  const pendingController = createDshVoiceController({ ctx, chat, routes: testRoutes })
   try {
     const leasesBefore = leases
     const pending = pendingController.prepareReplyAudio()
@@ -132,6 +156,35 @@ try {
     assert.equal(leases, leasesBefore, 'late setup cannot reattach or acquire a call after reset')
     assert.equal(micRequests, 1)
   } finally { await pendingController.dispose(); set('fetch', previousFetch) }
+
+  const settingsController = createDshVoiceController({ ctx, chat, routes: testRoutes })
+  try {
+    assert.equal((await settingsController.readVoiceSettings()).tts.providerId, 'windows-system-speech', 'settings begin with the Windows default')
+    const aliyun = { providerId: 'aliyun-qwen-tts', voiceId: null, rate: 2, credentialRef: 'DASHSCOPE_API_KEY', region: 'cn-beijing', workspaceId: 'workspace_123', modelId: 'qwen-audio-3.1-tts-flash' }
+    const writesBeforeDraft = settingsWrites.length
+    const draftCatalog = await settingsController.getVoicePreviewCatalog(aliyun)
+    assert.equal(draftCatalog.voices[0].id, 'aliyun-voice-1', 'an unsaved vendor draft can load its voice catalog')
+    assert.deepEqual(catalogRequests[0].binding, { providerId: aliyun.providerId, modelId: aliyun.modelId, region: aliyun.region, workspaceId: aliyun.workspaceId, credentialRef: aliyun.credentialRef })
+    await settingsController.playVoicePreview({ binding: aliyun, voiceId: 'aliyun-voice-1', text: '未保存设置试听', rate: 1 })
+    assert.equal(previewRequests[0].voiceId, 'aliyun-voice-1', 'draft preview uses the explicit selected voice')
+    assert.equal(previewRequests[0].rate, 1)
+    assert.deepEqual(previewRequests[0].binding, { providerId: aliyun.providerId, modelId: aliyun.modelId, region: aliyun.region, workspaceId: aliyun.workspaceId, credentialRef: aliyun.credentialRef })
+    assert.equal(settingsWrites.length, writesBeforeDraft, 'draft catalog and preview do not save or rewrite conversation settings')
+    assert.equal(settingsState.tts.providerId, 'windows-system-speech', 'draft preview does not replace the saved Windows binding')
+    await settingsController.updateVoiceSettings(aliyun)
+    assert.equal(settingsWrites[0].credentialRef, 'DASHSCOPE_API_KEY', 'Aliyun uses the fixed Host credential alias')
+    assert.equal(settingsWrites[0].workspaceId, 'workspace_123', 'Aliyun saves the validated workspace ID')
+    assert.equal((await settingsController.getVoicePreviewCatalog()).voices[0].id, 'aliyun-voice-1', 'a saved workspace can load its catalog')
+    await settingsController.updateVoiceSettings({ ...aliyun, voiceId: 'aliyun-voice-1' })
+    await settingsController.getVoicePreviewCatalog()
+    await assert.rejects(settingsController.playVoicePreview({ text: '试听这段语音', rate: 11 }), { code: 'VOICE_PREVIEW_RATE_INVALID' })
+    await settingsController.playVoicePreview({ text: '试听这段语音', rate: -3 })
+    assert.equal(catalogLoads, 3, 'draft and saved provider selections load their own catalogs')
+    assert.equal(previewRequests[1].voiceId, 'aliyun-voice-1', 'preview uses the saved voice binding')
+    assert.equal(previewRequests[1].rate, -3, 'explicit preview rate is sent after range validation')
+    assert.equal(previewRequests[1].text, '试听这段语音')
+    assert.equal('binding' in previewRequests[1], false, 'saved preview omits draft binding and follows the saved Host configuration')
+  } finally { await settingsController.dispose() }
 } finally {
   await controller.dispose()
   for (const [key, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key] }

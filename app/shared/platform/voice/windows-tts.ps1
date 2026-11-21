@@ -14,7 +14,7 @@ try {
       [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ id = $request.id; voices = $voices }) -Compress -Depth 4))
       continue
     }
-    if ($request.action -ne 'synthesize' -or [string]::IsNullOrWhiteSpace($request.text) -or $request.text.Length -gt 120) {
+    if ($request.action -ne 'synthesize' -or [string]::IsNullOrWhiteSpace($request.text) -or $request.text.Length -gt 12000) {
       [Console]::Out.WriteLine((ConvertTo-Json -Compress -InputObject ([ordered]@{ id = $request.id; error = 'INVALID_TEXT' })))
       continue
     }

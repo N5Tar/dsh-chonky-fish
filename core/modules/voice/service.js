@@ -1,6 +1,5 @@
 import { validateVoiceConfig, DEFAULT_VOICE_CONFIG } from './config.js';
 import { VOICE_LIMITS } from './limits.js';
-import { speechToText, splitSpeechSentences } from './speech-text.js';
 import { createTurnState } from './turns.js';
 
 const noop = () => {};
@@ -19,7 +18,7 @@ export function createVoiceService(deps) {
   let error = null, epoch = 0, order = 0, currentInput = null, turn = createTurnState({ endSilenceMs: config.endSilenceMs });
   let disposed = false, accepting = false;
   let startGeneration = 0, captureGeneration = 0, activeRun = null, cleanupPromise = Promise.resolve(), playbackEpoch = 0, playbackStopGeneration = 0, playbackStopPromise = Promise.resolve(), activeSynthesisOperation = null, activeRecognitionOperation = null, activeSpeakerGate = null;
-  let streamCursor, activeTurnIds = new Map(), replies = new Map(), opGeneration = 0, replyRunTasks = new Map(), recognitionBusyRuns = new Set();
+  let streamCursor, replies = new Map(), opGeneration = 0, replyRunTasks = new Map(), recognitionBusyRuns = new Set();
   const listeners = new Set();
   let eventQueue = Promise.resolve();
   let recognitionQueue = [];
@@ -28,7 +27,7 @@ export function createVoiceService(deps) {
   const op = (kind) => { const controller = new AbortController(); return { operationId: ids.createId(kind), generation: ++opGeneration, signal: controller.signal, cancel: (reason) => { if (!controller.signal.aborted) controller.abort(reason); } }; };
   const snapshot = () => clone({
     call, capture: captureState, inputs: inputs.map(({ inputId, order: n, status, transcript, admission, clips, failure, supersedes, duplicateRisk, localDisposition }) => ({ inputId, order: n, status, transcript: transcript ?? null, admission, clips: clips.length, error: failure ?? null, supersedes: supersedes ?? null, duplicateRisk: Boolean(duplicateRisk), localDisposition: localDisposition ?? null })),
-    replies: [...replies.values()].slice(-16).map((reply) => ({ replyId: reply.replyId, conversationTurnId: reply.conversationTurnId, status: reply.status || 'available', origin: reply.origin, replayable: reply.run === activeRun && reply.ended && reply.eligibleTurn && ['local', 'autonomous'].includes(reply.origin) })),
+    replies: [...replies.values()].slice(-16).map((reply) => ({ replyId: reply.replyId, conversationTurnId: reply.conversationTurnId, status: reply.status || 'available', origin: reply.origin, source: reply.source })),
     playback: playbackState, queue: { unresolved: inputs.filter((x) => !['accepted', 'discarded'].includes(x.admission) && x.localDisposition !== 'abandoned').length, waiting: inputs.filter((x) => ['queued', 'held', 'unknown', 'rejected'].includes(x.status) && x.localDisposition !== 'abandoned').length }, error,
   });
   const publish = () => { const view = snapshot(); for (const fn of listeners) { try { fn(view); } catch {} } };
@@ -287,10 +286,10 @@ export function createVoiceService(deps) {
     playbackStopPromise = stopping;
     return stopping;
   }
-  function consumedSegmentEpoch(segment, run) {
-    const inputIds = segment.inputIds || [], submissionIds = segment.submissionIds || [];
+  function consumedReplyEpoch(replyEvent, run) {
+    const inputIds = replyEvent.inputIds || [], submissionIds = replyEvent.submissionIds || [];
     if (!inputIds.length && !submissionIds.length) return null;
-    const epochs = [], key = `${run?.generation}:${String(segment.conversationTurnId)}`;
+    const epochs = [], key = `${run?.generation}:${String(replyEvent.conversationTurnId)}`;
     for (const id of inputIds) {
       const input = inputs.find(item => item.run === run && item.inputId === id && item.conversationTurnKey === key && item.consumed);
       if (!input) return null;
@@ -299,7 +298,7 @@ export function createVoiceService(deps) {
     for (const id of submissionIds) {
       const proof = run?.consumedSubmissions.get(id);
       if (!proof || proof.turnKey !== key) return null;
-      if (segment.origin === 'owned-task' && proof.invalidatedByInput) return null;
+      if (replyEvent.origin === 'owned-task' && proof.invalidatedByInput) return null;
       epochs.push(proof.epoch);
     }
     return Math.max(...epochs);
@@ -313,7 +312,7 @@ export function createVoiceService(deps) {
   function refreshConsumptionProof(run) {
     for (const reply of replies.values()) {
       if (reply.run !== run || !reply.awaitingConsumption || reply.interruptedByInput || reply.status === 'revoked') continue;
-      const provenEpoch = consumedSegmentEpoch(reply, run);
+      const provenEpoch = consumedReplyEpoch(reply, run);
       if (provenEpoch === null) continue;
       reply.awaitingConsumption = false; reply.epoch = provenEpoch;
       reply.eligibleTurn = run === activeRun && call.status === 'connected' && ['local', 'owned-task'].includes(reply.origin);
@@ -333,36 +332,28 @@ export function createVoiceService(deps) {
         else if (!input && event.origin === 'local' && run === activeRun && !run.submissionEpochs.has(event.submissionId)) { run.submissionEpochs.set(event.submissionId, ++epoch); suppressReplies(epoch); suppressTaskNotices(run, epoch); if (playbackState.status === 'playing' || playbackState.status === 'synthesizing') void stopPlayback('interruption'); }
       } else if (event.type === 'input.consumed') {
         const input = inputs.find((x) => x.run === run && x.submissionId === event.submissionId);
-        if (input) { if (input.admission !== 'accepted') acceptInput(input, 'consumption-event'); input.consumed = true; input.conversationTurnId = event.conversationTurnId; input.conversationTurnKey = turnKey(event.conversationTurnId); input.turnEnded = false; run.consumedSubmissions.set(event.submissionId, { epoch: input.epoch, turnKey: input.conversationTurnKey }); activeTurnIds.set(input.conversationTurnKey, { epoch: input.epoch, origin: event.origin, inputIds: [input.inputId] }); }
-        else if (event.origin === 'local' && run === activeRun) { let inputEpoch = run.submissionEpochs.get(event.submissionId); if (inputEpoch === undefined) { inputEpoch = ++epoch; run.submissionEpochs.set(event.submissionId, inputEpoch); suppressReplies(epoch); } const key = turnKey(event.conversationTurnId); run.consumedSubmissions.set(event.submissionId, { epoch: inputEpoch, turnKey: key }); activeTurnIds.set(key, { epoch: inputEpoch, origin: 'local', inputIds: [], run }); }
+        if (input) { if (input.admission !== 'accepted') acceptInput(input, 'consumption-event'); input.consumed = true; input.conversationTurnId = event.conversationTurnId; input.conversationTurnKey = turnKey(event.conversationTurnId); input.turnEnded = false; run.consumedSubmissions.set(event.submissionId, { epoch: input.epoch, turnKey: input.conversationTurnKey }); }
+        else if (event.origin === 'local' && run === activeRun) { let inputEpoch = run.submissionEpochs.get(event.submissionId); if (inputEpoch === undefined) { inputEpoch = ++epoch; run.submissionEpochs.set(event.submissionId, inputEpoch); suppressReplies(epoch); } const key = turnKey(event.conversationTurnId); run.consumedSubmissions.set(event.submissionId, { epoch: inputEpoch, turnKey: key }); }
         else if (event.origin === 'owned-task' && run === activeRun && typeof event.submissionId === 'string' && event.submissionId.startsWith('chonkyfish-task-notice:') && typeof event.taskId === 'string' && Number.isSafeInteger(event.taskVersion) && event.taskVersion > 0 && typeof event.sourceInputId === 'string') {
           const key = turnKey(event.conversationTurnId);
           run.submissionEpochs.set(event.submissionId, epoch);
           run.consumedSubmissions.set(event.submissionId, { epoch, turnKey: key, origin: 'owned-task' });
-          activeTurnIds.set(key, { epoch, origin: 'owned-task', inputIds: [], run });
         }
         refreshConsumptionProof(run);
-      } else if (event.type === 'turn.started') {
-        if (event.origin === 'autonomous') activeTurnIds.set(turnKey(event.conversationTurnId), { epoch, origin: 'autonomous', inputIds: [], run });
       } else if (event.type === 'reply.revoked') {
         const reply = replies.get(event.replyId);
         if (reply?.run === run) { reply.suppressed = true; reply.status = 'revoked'; if (playbackState.replyId === reply.replyId) void stopPlayback('surface-revoked'); }
-      } else if (event.type === 'reply.segment') {
-        if (typeof event.replyId !== 'string' || typeof event.text !== 'string' || !event.responseId || !event.surfaceRevision) continue;
+      } else if (event.type === 'reply.message') {
+        if (typeof event.replyId !== 'string' || typeof event.text !== 'string' || !event.surfaceRevision || event.interrupted === true || event.source?.sessionId !== run?.ref?.conversationId || !Number.isSafeInteger(event.source?.seq) || event.source.seq < 0) continue;
         const previous = replies.get(event.replyId);
         if (previous && (previous.surfaceRevision === event.surfaceRevision || previous.started)) continue;
-        const segmentEpoch = consumedSegmentEpoch(event, run);
+        const messageEpoch = consumedReplyEpoch(event, run);
         const key = turnKey(event.conversationTurnId);
         const activeReplyRun = run === activeRun && call.status === 'connected' && ['local', 'owned-task'].includes(event.origin);
-        const eligible = activeReplyRun && segmentEpoch !== null;
-        const reply = { ...event, run, conversationRef: run?.ref, conversationTurnKey: key, epoch: segmentEpoch ?? epoch, final: true, ended: true, awaitingConsumption: segmentEpoch === null, eligibleTurn: eligible, suppressed: !activeReplyRun || segmentEpoch !== null && segmentEpoch < epoch, status: 'available' };
-        replies.set(event.replyId, reply); run?.segmentTurns.add(key); void queueReply(reply);
-      } else if (event.type === 'reply.final') {
-        if (run?.segmentTurns.has(turnKey(event.conversationTurnId))) continue;
-        const turnInfo = activeTurnIds.get(turnKey(event.conversationTurnId));
-        const origin = event.origin || turnInfo?.origin || 'unknown';
-        const activeReplyRun = run === activeRun && call.status === 'connected';
-        replies.set(event.replyId, { ...event, run, conversationRef: run?.ref, conversationTurnKey: turnKey(event.conversationTurnId), epoch: turnInfo?.epoch ?? epoch, origin, eligibleTurn: activeReplyRun && Boolean(turnInfo), final: true, ended: false, suppressed: !activeReplyRun || !turnInfo });
+        const eligible = activeReplyRun && messageEpoch !== null;
+        const reply = { ...event, run, conversationRef: run?.ref, conversationTurnKey: key, epoch: messageEpoch ?? epoch, ended: true, awaitingConsumption: messageEpoch === null, eligibleTurn: eligible, suppressed: !activeReplyRun || messageEpoch !== null && messageEpoch < epoch, status: 'available' };
+        replies.set(event.replyId, reply);
+        if (eligible) void queueReply(reply);
       } else if (event.type === 'turn.ended') {
         const key = turnKey(event.conversationTurnId);
         const turnInputs = inputs.filter((x) => x.run === run && x.conversationTurnKey === key);
@@ -373,10 +364,7 @@ export function createVoiceService(deps) {
             input.failure = { ...errorView(failure, 'conversation'), outcome: 'applied', retryable: false };
           }
         }
-        if (event.outcome !== 'completed') { activeTurnIds.delete(key); void deliverNext(); continue; }
-        activeTurnIds.delete(key);
-        const reply = [...replies.values()].find((r) => r.conversationTurnKey === key);
-        if (reply) { reply.ended = true; void queueReply(reply); }
+        if (event.outcome !== 'completed') { void deliverNext(); continue; }
         trimHistory();
         void deliverNext();
       } else if (event.type === 'input.removed') {
@@ -390,8 +378,8 @@ export function createVoiceService(deps) {
   }
   const outputBlocked = () => inputs.some((x) => x.run === activeRun && x.localDisposition !== 'abandoned' && !x.holdUntilExplicit && ((!x.attemptClosed && ['recording', 'recognizing'].includes(x.status)) || (x.admission !== 'accepted' && ['queued', 'submitting'].includes(x.status))));
   function drainReplies() { for (const reply of replies.values()) if (reply.run === activeRun && reply.ended && reply.eligibleTurn && !reply.suppressed && reply.epoch >= epoch && !['played', 'interrupted', 'revoked', 'failed', 'stopped'].includes(reply.status)) void queueReply(reply); }
-  function queueReply(reply, options = {}) {
-    if (reply.queued || !options.manual && ['played', 'revoked'].includes(reply.status)) return Promise.resolve(false);
+  function queueReply(reply) {
+    if (reply.queued || ['played', 'revoked'].includes(reply.status)) return Promise.resolve(false);
     reply.queued = true;
     const replyRun = reply?.run;
     const previous = replyRunTasks.get(replyRun) || Promise.resolve();
@@ -401,17 +389,16 @@ export function createVoiceService(deps) {
         await stopping.catch(() => {});
         if (replyRun !== activeRun) return false;
       }
-      return queueReplyNow(reply, options);
+      return queueReplyNow(reply);
     });
     replyRunTasks.set(replyRun, task);
     task.then(() => { reply.queued = false; if (replyRunTasks.get(replyRun) === task) replyRunTasks.delete(replyRun); }, () => { reply.queued = false; if (replyRunTasks.get(replyRun) === task) replyRunTasks.delete(replyRun); });
     return task;
   }
-  async function queueReplyNow(reply, { manual = false } = {}) {
-    if (!playbackState.enabled || reply.run !== activeRun || (!manual && reply.suppressed) || !reply.eligibleTurn || !['local', 'autonomous', 'owned-task'].includes(reply.origin) || (!manual && reply.epoch < epoch) || outputBlocked() || call.status !== 'connected' || ['playing', 'synthesizing', 'stopping'].includes(playbackState.status)) return false;
-    const text = speechToText(reply.text);
-    const sentences = splitSpeechSentences(text);
-    if (!sentences.length) return false;
+  async function queueReplyNow(reply) {
+    if (!playbackState.enabled || reply.run !== activeRun || reply.suppressed || !reply.eligibleTurn || !['local', 'owned-task'].includes(reply.origin) || reply.epoch < epoch || outputBlocked() || call.status !== 'connected' || ['playing', 'synthesizing', 'stopping'].includes(playbackState.status)) return false;
+    if (!reply.text.trim()) return false;
+    if (reply.text.length > VOICE_LIMITS.replyChars) { reply.status = 'failed'; reply.failure = { code: 'VOICE_REPLY_TEXT_LIMIT', stage: 'synthesis', outcome: 'not_applied' }; publish(); return false; }
     const replyRun = reply.run;
     const playbackGeneration = playbackEpoch;
     const isCurrentPlayback = () => replyRun === activeRun && playbackGeneration === playbackEpoch && call.status === 'connected';
@@ -419,25 +406,33 @@ export function createVoiceService(deps) {
     let speakerGateToken = null;
     reply.status = 'synthesizing';
     try {
-      for (const sentence of sentences) {
-        if (!isCurrentPlayback() || !playbackState.enabled || (!manual && reply.suppressed) || (!manual && reply.epoch < epoch) || outputBlocked()) return false;
-        if (speakerMode && !speakerGateToken) { speakerGateToken = { run: replyRun, generation: playbackGeneration }; activeSpeakerGate = speakerGateToken; captureState.status = 'gated'; await capture.gate(true); }
-        if (!isCurrentPlayback()) return false;
-        const operation = op('synthesize'); activeSynthesisOperation = operation;
-        try {
-          playbackState.status = 'synthesizing'; playbackState.replyId = reply.replyId; publish();
-          const synthesized = await synthesis.synthesize(sentence, config.tts, { operation });
-          if (activeSynthesisOperation === operation) activeSynthesisOperation = null;
-          const clipRef = synthesized?.clipRef || synthesized;
-          try {
-            if (!isCurrentPlayback() || !playbackState.enabled || (!manual && reply.suppressed) || (!manual && reply.epoch < epoch) || outputBlocked()) return false;
-            playbackState.status = 'playing'; playbackState.replyId = reply.replyId; publish();
-            const played = await playback.play(clipRef, { operation: op('play'), onStarted: () => { reply.started = true; }, onEnded: noop, onError: noop });
-            if (!isCurrentPlayback() || played?.stopped) { reply.status = 'stopped'; return false; }
-            playbackState.status = 'idle'; playbackState.replyId = null;
-          } finally { await synthesis.release?.(clipRef); }
-        } catch (e) { if (activeSynthesisOperation === operation) activeSynthesisOperation = null; if (!isCurrentPlayback() || operation.signal.aborted) return false; playbackState.status = 'failed'; playbackState.replyId = reply.replyId; reply.status = 'failed'; error = errorView(e, 'playback'); publish(); return false; }
-      }
+      if (speakerMode) { speakerGateToken = { run: replyRun, generation: playbackGeneration }; activeSpeakerGate = speakerGateToken; captureState.status = 'gated'; await capture.gate(true); }
+      if (!isCurrentPlayback() || outputBlocked()) return false;
+      const operation = op('synthesize'); activeSynthesisOperation = operation;
+      try {
+        playbackState.status = 'synthesizing'; playbackState.replyId = reply.replyId; publish();
+        const stream = synthesis.synthesizeReply({ source: reply.source, voice: config.tts }, { operation });
+        const playbackOperation = op('play');
+        let output = null, format = null, audioSeen = false, completeSeen = false;
+        for await (const item of stream) {
+          if (!isCurrentPlayback() || !playbackState.enabled || reply.suppressed || reply.epoch < epoch || outputBlocked() || operation.signal.aborted) { operation.cancel('reply-stale'); return false; }
+          if (item?.type === 'audio') {
+            if (completeSeen || !(item.data instanceof Uint8Array) || !item.data.length || !item.format) throw Object.assign(new Error('Invalid synthesized audio event'), { code: 'VOICE_TTS_INVALID' });
+            if (!format) {
+              format = item.format;
+              output = playback.openStream({ format, operation: playbackOperation, onStarted: () => { reply.started = true; playbackState.status = 'playing'; publish(); } });
+            } else if (JSON.stringify(format) !== JSON.stringify(item.format)) throw Object.assign(new Error('Audio format changed during synthesis'), { code: 'VOICE_AUDIO_FORMAT_CHANGED' });
+            await output.append(item.data); audioSeen = true;
+          } else if (item?.type === 'complete' && !completeSeen) completeSeen = true;
+          else throw Object.assign(new Error('Invalid synthesis event'), { code: 'VOICE_TTS_INVALID' });
+        }
+        if (!audioSeen || !completeSeen || !output) throw Object.assign(new Error('Synthesis ended without a complete audio reply'), { code: 'VOICE_TTS_INCOMPLETE' });
+        output.endInput();
+        const played = await output.finished;
+        if (!isCurrentPlayback() || played?.stopped) { reply.status = 'stopped'; return false; }
+        playbackState.status = 'idle'; playbackState.replyId = null;
+      } catch (e) { if (activeSynthesisOperation === operation) activeSynthesisOperation = null; if (!isCurrentPlayback() || operation.signal.aborted) return false; playbackState.status = 'failed'; playbackState.replyId = reply.replyId; reply.status = 'failed'; error = errorView(e, 'playback'); publish(); return false; }
+      finally { if (activeSynthesisOperation === operation) activeSynthesisOperation = null; }
       if (!isCurrentPlayback()) return false;
       reply.status = 'played'; publish(); return true;
     } finally {
@@ -453,14 +448,35 @@ export function createVoiceService(deps) {
       }
     }
   }
-  async function replayReply(replyId) {
-    const reply = replies.get(replyId);
-    if (!reply || reply.run !== activeRun || !reply.ended || !reply.eligibleTurn || !['local', 'autonomous'].includes(reply.origin)) throw Object.assign(new Error('Reply is not eligible for replay'), { code: 'VOICE_REPLY_NOT_REPLAYABLE' });
+  async function playStoredAudio({ format, data, operation = op('stored-audio') } = {}) {
+    if (disposed) throw Object.assign(new Error('Voice service is disposed'), { code: 'VOICE_SERVICE_DISPOSED' });
     if (!playbackState.enabled) throw Object.assign(new Error('Reply audio is disabled'), { code: 'VOICE_OUTPUT_DISABLED' });
-    if (call.status !== 'connected' || outputBlocked()) throw Object.assign(new Error('Reply replay is blocked by current call activity'), { code: 'VOICE_REPLY_REPLAY_BLOCKED' });
-    if (['playing', 'synthesizing'].includes(playbackState.status)) throw Object.assign(new Error('Another reply is already playing'), { code: 'VOICE_PLAYBACK_BUSY' });
-    reply.suppressed = false; reply.epoch = epoch; reply.status = 'available';
-    const result = await queueReply(reply, { manual: true }); publish(); return result;
+    if (!(data instanceof Uint8Array) || !data.length || !format) throw Object.assign(new Error('Stored reply audio is invalid'), { code: 'VOICE_AUDIO_INVALID' });
+    if (outputBlocked() || ['playing', 'synthesizing', 'stopping'].includes(playbackState.status)) throw Object.assign(new Error('Reply playback is blocked by current call activity'), { code: 'VOICE_PLAYBACK_BUSY' });
+    const generation = playbackEpoch, run = activeRun;
+    const current = () => generation === playbackEpoch && run === activeRun && (!run || call.status === 'connected');
+    let gateToken = null;
+    if (run?.inputEnabled && config.duplexPreference === 'speaker-turn-taking') { gateToken = { run, generation }; activeSpeakerGate = gateToken; captureState.status = 'gated'; await capture.gate(true); }
+    activeSynthesisOperation = operation;
+    const output = playback.openStream({ format, operation, onStarted: () => { playbackState.status = 'playing'; playbackState.replyId = null; publish(); } });
+    try {
+      if (!current()) throw Object.assign(new Error('Stored reply playback was interrupted'), { code: 'VOICE_PLAYBACK_STOPPED' });
+      playbackState.status = 'synthesizing'; publish();
+      await output.append(data); output.endInput();
+      const result = await output.finished;
+      if (!current() || result?.stopped) return false;
+      playbackState.status = 'idle'; playbackState.replyId = null; publish(); return true;
+    } catch (cause) {
+      if (current() && !operation.signal?.aborted) { playbackState.status = 'failed'; error = errorView(cause, 'stored-playback'); publish(); }
+      throw cause;
+    } finally {
+      if (activeSynthesisOperation === operation) activeSynthesisOperation = null;
+      if (current() && playbackState.status !== 'failed') { playbackState.status = 'idle'; playbackState.replyId = null; publish(); }
+      if (gateToken) {
+        await new Promise(resolve => clock.schedule(resolve, VOICE_LIMITS.speakerGateTailMs));
+        if (activeSpeakerGate === gateToken && run === activeRun && call.status === 'connected' && !captureState.muted && captureState.status === 'gated') { activeSpeakerGate = null; await capture.gate(false); captureState.status = 'listening'; publish(); }
+      }
+    }
   }
   function trimHistory() {
     const terminal = inputs.filter((x) => ['accepted', 'discarded'].includes(x.admission) && (x.turnEnded || x.admission === 'discarded'));
@@ -490,7 +506,7 @@ export function createVoiceService(deps) {
     playbackState.status = 'idle'; playbackState.replyId = null;
     const generation = ++startGeneration; accepting = false; error = null;
     const callId = ids.createId('call');
-    const run = { callId, scopeId: callId, generation, inputEnabled, ref: clone(ref), selection: undefined, captureGeneration: ++captureGeneration, retained: false, leaseHeld: false, stopFollow: noop, leaseTimer: null, leaseDeadline: Infinity, draining: false, submittedInFlight: false, released: false, submissionEpochs: new Map(), consumedSubmissions: new Map(), segmentTurns: new Set() };
+    const run = { callId, scopeId: callId, generation, inputEnabled, ref: clone(ref), selection: undefined, captureGeneration: ++captureGeneration, retained: false, leaseHeld: false, stopFollow: noop, leaseTimer: null, leaseDeadline: Infinity, draining: false, submittedInFlight: false, released: false, submissionEpochs: new Map(), consumedSubmissions: new Map() };
     activeRun = run;
     call = { status: 'preparing', id: run.callId, conversationRef: clone(run.ref), inputEnabled }; publish();
     const current = () => activeRun === run && startGeneration === run.generation && !disposed;
@@ -629,8 +645,8 @@ export function createVoiceService(deps) {
   async function hangup({ abandonPending = false, preservePlayback = false } = {}) {
     if (typeof abandonPending !== 'boolean') throw new TypeError('abandonPending must be boolean');
     if (typeof preservePlayback !== 'boolean') throw new TypeError('preservePlayback must be boolean');
-    if (call.status === 'idle') return snapshot();
-    if (call.status === 'ended') { await cleanupPromise; return snapshot(); }
+    if (call.status === 'idle') { if (['playing', 'synthesizing'].includes(playbackState.status)) await stopPlayback('call-ended'); return snapshot(); }
+    if (call.status === 'ended') { await cleanupPromise; if (['playing', 'synthesizing'].includes(playbackState.status)) await stopPlayback('call-ended'); return snapshot(); }
     accepting = false; call.status = 'ending'; captureState.status = 'stopping'; ++startGeneration;
     ++captureGeneration; turn.reset();
     ++playbackEpoch; activeSynthesisOperation?.cancel('call-ended'); activeSynthesisOperation = null; activeSpeakerGate = null;
@@ -705,5 +721,5 @@ export function createVoiceService(deps) {
     listeners.clear(); for (const input of inputs) if (!['accepted', 'discarded'].includes(input.admission)) await releaseInputAudio(input);
     try { await playback.release?.(); } catch {}
   }
-  return { start, mute, unmute, setOutputEnabled, hangup, continueCall, retryInput, editInput, submitHeld, discardInput, retryUnknown, replayReply, getSnapshot: snapshot, subscribe(fn) { listeners.add(fn); fn(snapshot()); return () => listeners.delete(fn); }, dispose };
+  return { start, mute, unmute, setOutputEnabled, hangup, continueCall, retryInput, editInput, submitHeld, discardInput, retryUnknown, playStoredAudio, getSnapshot: snapshot, subscribe(fn) { listeners.add(fn); fn(snapshot()); return () => listeners.delete(fn); }, dispose };
 }

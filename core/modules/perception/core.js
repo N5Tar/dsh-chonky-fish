@@ -31,6 +31,58 @@ export function classifyApp(app) {
     : 'missing';
 }
 
+/**
+ * Incremental, run-scoped work evidence. The tracker counts only adjacent,
+ * positively observed development samples; it deliberately does not infer
+ * work from wall-clock gaps, idle duration, or the raw-sample retention window.
+ */
+export function createWorkStreakTracker({ config: overrides } = {}) {
+  const config = resolveConfig(overrides)
+  let previous = null
+  let streak = null
+
+  function reset() { previous = null; streak = null }
+  function observe(sample) {
+    const qualifies = sample && classifyApp(sample.foregroundApp) === 'development'
+      && sample.sessionState !== 'locked'
+      && Number.isFinite(sample.idleSeconds) && sample.idleSeconds >= 0 && sample.idleSeconds <= 60
+      && Number.isFinite(sample.observedAtMs) && Number.isFinite(sample.receivedAtMs)
+      && Number.isFinite(sample.monotonicMs)
+      && typeof sample.runId === 'string' && sample.runId.length > 0
+    if (!qualifies) { reset(); return null }
+
+    const observed = previous
+    const wallDelta = observed ? sample.observedAtMs - observed.observedAtMs : 0
+    const monotonicDelta = observed ? sample.monotonicMs - observed.monotonicMs : 0
+    const receivedDelta = observed ? sample.receivedAtMs - observed.receivedAtMs : 0
+    if (observed && (wallDelta <= 0 || receivedDelta <= 0 || (sample.runId === observed.runId && monotonicDelta <= 0))) {
+      reset()
+      return null
+    }
+    const continuous = observed
+      && sample.runId === observed.runId
+      && sample.continuityBreak !== true
+      && sample.seq > observed.seq
+      && wallDelta > 0 && wallDelta <= config.maxGapMs
+      && monotonicDelta > 0 && monotonicDelta <= config.maxGapMs
+      && receivedDelta > 0
+      && Math.abs(wallDelta - monotonicDelta) <= config.clockToleranceMs
+    if (!continuous) streak = { id: `${sample.runId}:${sample.seq}`, startedAt: sample.observedAtMs, observedThrough: sample.observedAtMs, durationMs: 0 }
+    else {
+      streak.durationMs += monotonicDelta
+      streak.observedThrough = sample.observedAtMs
+    }
+    previous = sample
+    return snapshot()
+  }
+  function snapshot({ nowMs, sampleStaleMs = config.sampleStaleMs } = {}) {
+    if (nowMs === undefined) nowMs = previous?.receivedAtMs ?? Date.now()
+    if (!streak || !previous || !Number.isFinite(nowMs) || nowMs < previous.receivedAtMs || nowMs - previous.receivedAtMs > sampleStaleMs) return null
+    return { id: streak.id, startedAt: new Date(streak.startedAt).toISOString(), observedThrough: new Date(streak.observedThrough).toISOString(), workMinutes: Math.floor(streak.durationMs / 60000) }
+  }
+  return { observe, snapshot, reset }
+}
+
 // Input order is receive order, not wall-clock order: sorting by observedAt
 // would hide clock rollback and manufacture continuity.
 export function computeWindowStats(samples, { nowMs, windowMs, config: overrides } = {}) {

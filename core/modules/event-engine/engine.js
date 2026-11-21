@@ -64,7 +64,7 @@ export function createEventEngine({
     throw new TypeError('createEventEngine: pathSemantics is required')
   }
   if (typeof createTurnCollector !== 'function') throw new TypeError('createEventEngine: createTurnCollector is required')
-  const requiredPersistence = ['openEventDatabase', 'recoverExpiredLeases', 'insertAudit', 'enqueueJob', 'writeCursor', 'claimJobs', 'finishJob', 'insertEvents', 'countJobs', 'countAudits', 'countEvents', 'readCursor', 'listEvents', 'readConsumerCursor', 'writeConsumerCursor']
+  const requiredPersistence = ['openEventDatabase', 'recoverExpiredLeases', 'insertAudit', 'enqueueJob', 'writeCursor', 'claimJobs', 'finishJob', 'insertEvents', 'countJobs', 'countAudits', 'countEvents', 'summarizeEvents', 'listEventsInWindow', 'countEventsInWindow', 'maxEventSeqInWindow', 'readCursor', 'listEvents', 'readConsumerCursor', 'writeConsumerCursor']
   if (!persistence || requiredPersistence.some(method => typeof persistence[method] !== 'function')) throw new TypeError('createEventEngine: complete persistence adapter is required')
   const root = resolve(workspaceRoot)
   const db = persistence.openEventDatabase(file)
@@ -251,6 +251,10 @@ export function createEventEngine({
     stats,
     getCursor: (sessionId) => persistence.readCursor(db, String(sessionId)),
     listEvents: (query) => persistence.listEvents(db, query),
+    summarizeEvents: (window) => persistence.summarizeEvents(db, window),
+    listEventsInWindow: (query) => persistence.listEventsInWindow(db, query),
+    countEventsInWindow: (query) => persistence.countEventsInWindow(db, query),
+    maxEventSeqInWindow: (query) => persistence.maxEventSeqInWindow(db, query),
     getConsumerCursor: (consumerId) => persistence.readConsumerCursor(db, consumerId),
     setConsumerCursor: (consumerId, seq) => persistence.writeConsumerCursor(db, consumerId, seq),
     close() {

@@ -9,7 +9,7 @@ const fail = (code, message = code) => { throw Object.assign(new Error(message),
 
 export const MIGRATION_FORMAT = 'chonkyfish-fishpack'
 export const MIGRATION_VERSION = 1
-export const MIGRATION_SECTIONS = Object.freeze(['identity', 'wallet', 'profile', 'diaries', 'skills', 'preferences'])
+export const MIGRATION_SECTIONS = Object.freeze(['identity', 'wallet', 'profile', 'diaries', 'skills', 'preferences', 'memory'])
 
 export function projectPreferences(config) {
   const source = object(config)
@@ -148,6 +148,15 @@ export function mergeMigrationPreferences(current, incoming) {
   next.abs = { ...oldAbs, ...newAbs, mode: 'shadow' }
   next.proactive = { ...(object(target.proactive) || {}), enabled: false }
   return next
+}
+
+/** 已整理记忆的相对路径。根上的 sessions 是本机索引，不能当记忆迁入。 */
+export function validateMemoryRelative(name) {
+  if (typeof name !== 'string' || name.length === 0 || name.length > 1024 || name.includes('\\') || name.includes('\0')) fail('UNSAFE_PATH')
+  const parts = name.split('/')
+  if (parts.some(part => !part || part === '.' || part === '..' || part.startsWith('.'))) fail('UNSAFE_PATH')
+  if (parts[0].toLowerCase() === 'sessions') fail('UNSAFE_PATH')
+  return name
 }
 
 export function validateDiaryPath(name) {

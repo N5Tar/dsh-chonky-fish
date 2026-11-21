@@ -135,7 +135,7 @@ active 模式下，一次到期的审查通过 `followup` 以 `role: 'user'` 进
 
 ## 本机管理接口
 
-单一路由 `/chonkyfish/abs`，无插件私有鉴权、无需 `x-chonkyfish-token`。DSH 宿主认证仍由宿主管理；可达此接口即能执行以下操作，请勿无保护地对公网开放。目标会话绑定、active 确认、每日休息与输入/体积校验均保留：
+ABS 控制路由 `/chonkyfish/abs` 与内心活动路由 `/chonkyfish/abs/activities` 均使用 DSH 本机路由，无插件私有鉴权、无需 `x-chonkyfish-token`。DSH 宿主认证仍由宿主管理；可达这些接口即能查看状态或执行控制操作，请勿无保护地对公网开放。目标会话绑定、active 确认、每日休息与输入/体积校验均保留：
 
 - `GET/HEAD`：状态（含当前审查预览）、感知条件、最近 100 条审计。
 - `POST {action:"preview"}`：只返回审查文本，不投递、不改状态。
@@ -147,6 +147,12 @@ active 模式下，一次到期的审查通过 `followup` 以 `role: 'user'` 进
 - `POST {action:"export"}`：最多 1000 条近期审计的 JSONL。
 - 不提供任意 Observation/回执注入、任意会话执行或直接发送接口。
 
+内心活动路由 `GET /chonkyfish/abs/activities` 默认读取 UTC+8 当日，支持 `date` 或 `from`/`to`、`limit`、`outcome` 过滤和分页快照。后续页通过 `beforeWakeAt` + `beforeEpisodeId` 续页，游标由 `page.nextCursor:{wakeAt,episodeId}` 返回；顺序是不可变 `(wake_at, episode_id)` 降序键，`snapshotSeq` 固定分页成员。筛选结果在请求间改变时，游标仍避免重复或偏移；重新加载会获取新快照。摘要保持完整日期的全量统计。覆盖区间仅延伸至已观察的当前时刻，`window.to` / `observedThrough` 不会把当天未来时间报作缺口；运行时重启前的未覆盖间隔仍保留为 gap。`POST {action:"annotate",activityId,label,active}` 只维护允许的观察标签，不改变满足度或行为策略。每条行记录将模型自报选择、Host 工具尝试/结果和输入/轮次状态分开展示；明确暂缓只在纯 ABS、正常结束且没有任何工具尝试时成立。
+
+active ABS turn 可选调用 `abs_report_activity` 提交短的公开选择/暂缓摘要及兴趣更新。它不会强制调用，不含隐藏推理，也不算作工具活动结果或满足度反馈。Host 只在精确 ABS review 消息已被 claim、提交为 `user/message` 并进入当前 step 时开放这项能力；混合来源或来源不明时拒绝。
+
+ABS review 使用当前绑定大肥鱼 agent 的普通 `followup`，沿用同一会话的模型与 provider 配置，不单独切换渠道。`runtime-context` / `time-context` 是 DSH 合成上下文，不计作额外输入来源。仅在纯 ABS 输入已提交且真实 step 已开始后观察到模型 `error`，并且没有更强的 Host 工具证据时，活动结果才记为失败；已验证工具证据优先，混合输入及待验证/未验证工具证据仍为未知。turn 诊断只保存有限枚举阶段和错误码，不保存原始错误文本；取消、中断、阻止及无 step 的轮次不当作已执行失败。旧记录没有可信诊断码时保持未知，不回填推断。
+
 ## 持久化与恢复
 
 `$DSH_HOME/chonkyfish/abs/state.json` 是状态、反馈去重键、审查记录与时钟的权威；`audit.jsonl` 是有界诊断记录，最终一致，不实现跨库强事务。写入串行、原子替换并 fsync；损坏状态拒绝启动，不静默清空。
@@ -154,6 +160,8 @@ active 模式下，一次到期的审查通过 `followup` 以 `role: 'user'` 进
 升级迁移：旧版 `motivations` / `executions` / `proposalIds` / `history` 会归档为一条 `StateMigrated` 审计并清空；需求数值、反馈去重键和时钟保留。旧版执行不再有“未决执行重试”语义。
 
 仅支持同一目录单进程写入。审计保留最近 2000 条 / 8MiB；观察记录 200 条；反馈去重键 10000 条，达到上限失败关闭而不驱逐。
+
+内心活动使用 `$DSH_HOME/chonkyfish/abs/activities.db` 保存规范化的唤醒片段、工具尝试/结果元数据、模型自报选择、兴趣更新和观察标注；没有 JSON 列，不保存对话正文、工具参数/回执正文或图片内容。schema v2 以一个事务从 v1 增加可空 turn 诊断列，保留旧记录；旧 `failed` 状态没有可信诊断码时仍分类为未知，不回填历史会话。这个库的 activity/event/evidence 表只记录上线后的真实观察；片段保留 180 天，依赖记录随片段删除。运行时覆盖以 60 秒心跳记录，崩溃恢复时覆盖止于最后心跳并显示间隔。分页使用 SQLite 单调插入高水位固定成员；摘要和覆盖统计仍读取所选日的全量记录。ABS 主状态仍由上面的 state.json/audit.jsonl 管理；活动 SQLite 不改变其数值和调度权威。
 
 ## 尚未接入
 
@@ -169,4 +177,4 @@ active 模式下，一次到期的审查通过 `followup` 以 `role: 'user'` 进
 npm run test:abs
 ```
 
-覆盖：时钟 10 组、状态与反馈 5 组、审查文本 7 组、宿主投递与观察 9 组、服务/HTTP 24 组、客户端 1 组，另有休息时段的边界/跨日/禁用/配置校验测试。`npm test` 包含其余模块回归。`node build.mjs` 重新生成客户端。
+覆盖：时钟、状态与反馈、审查文本、Host 投递与事件关联、归一化 activity SQLite、exact-turn 报告边界、混合归因/恢复、分页快照、覆盖间隔、活动 HTTP/API、主 UI 与详情页、事件抽取列表。离线测试不证明真实模型已调用报告工具，也不证明未适配工具的执行结果已验证。`npm test` 包含其余模块回归。`node build.mjs` 重新生成客户端。

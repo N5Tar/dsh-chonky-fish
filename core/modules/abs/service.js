@@ -4,7 +4,8 @@ import { createState, updateState, nextReviewAt, applyFeedback, CORE_LIMITS } fr
 import { sanitizeAbsConfig } from './config.js'
 import { createAbsClock } from './clock.js'
 import { restWindow, nextAwakeTime } from './rest.js'
-import { renderSelfReview, driveDemand } from './review.js'
+import { renderActionPrompt, driveDemand } from './review.js'
+import { selectAbsAction } from './selector.js'
 
 const clone = (value) => structuredClone(value)
 const minute = 60000
@@ -18,7 +19,9 @@ const iso = (value) => new Date(value).toISOString()
  * renders a natural-language self-review and (in active mode) hands that review
  * to the fish's existing conversation. Feedback comes only from observed facts.
  */
-export async function createAbsService({ store, host, getConfig, now = Date.now, logger = console, timers = { setTimeout, clearTimeout } }) {
+export async function createAbsService({ store, activityStore, host, getConfig, readWorkStreak = () => null, now = Date.now, logger = console, timers = { setTimeout, clearTimeout } }) {
+  if (!activityStore || ['recordWake','recordEvidence','recordTurn','query','startRuntime','touchRuntime','closeRuntime','recoverOpen','prune','setAnnotation','recordActionSelection','resolveActionSelection','actionContext','markActionVisible','close'].some(name => typeof activityStore[name] !== 'function')) throw new TypeError('ABS activity repository is required')
+  if (typeof host.subscribeActivity !== 'function' || typeof host.subscribeObservation !== 'function' || typeof host.boundSessionId !== 'function' || typeof host.surfaceAction !== 'function' || typeof host.setActionSelectionLookup !== 'function') throw new TypeError('ABS host action contract is required')
   const restored = store.read()
   const initialReal = now()
   let state = restored ?? createState(iso(initialReal), { ...sanitizeAbsConfig(getConfig()), mode: 'shadow' })
@@ -57,8 +60,42 @@ export async function createAbsService({ store, host, getConfig, now = Date.now,
   state.nextWakeAt ??= null
   delete state.lastInternalProposalAt
   state.clock = clock.snapshot()
+  const boundOwnerSession = host.boundSessionId()
+  if (boundOwnerSession) {
+    try {
+      const records = await store.records({ limit: 2000 })
+      const ownerRows = records.filter(row => row?.type === 'Observation' && row.observation?.kind === 'owner_message'
+        && row.observation?.sessionId === boundOwnerSession && Number.isFinite(Date.parse(row.realAt)))
+      ownerRows.sort((a,b) => Date.parse(a.realAt) - Date.parse(b.realAt))
+      const latest = ownerRows.at(-1)
+      if (latest && (!state.lastOwnerMessage || state.lastOwnerMessage.sessionId !== boundOwnerSession
+          || Date.parse(latest.realAt) > Date.parse(state.lastOwnerMessage.realAt ?? ''))) {
+        state.lastOwnerMessage = { at: latest.at, realAt: latest.realAt, sessionId: boundOwnerSession,
+          seq: latest.observation.seq, sourceKind: 'user' }
+      }
+    } catch (error) { logger.warn?.('[abs] could not hydrate bound-session owner interaction from audit metadata', error) }
+  }
   startupRecords.push({ type: 'Recovery', at: iso(clock.now()), realAt: iso(clock.realNow()), mode: state.mode })
   await store.commit(state, startupRecords)
+  activityStore.recoverOpen()
+  host.setActionSelectionLookup({ find: key => activityStore.findActionSelection(key) })
+  const activityRuntimeId = activityStore.startRuntime({ at: iso(initialReal) })
+  activityStore.prune({ before: iso(initialReal - 180 * 86400000) })
+  let lastActivityPruneDay = iso(initialReal).slice(0, 10)
+  const activityHeartbeat = setInterval(() => {
+    if (closed) return
+    try {
+      const realAt = clock.realNow()
+      activityStore.touchRuntime({ runtimeId: activityRuntimeId, at: iso(realAt) })
+      const day = iso(realAt).slice(0, 10)
+      if (day !== lastActivityPruneDay) {
+        activityStore.prune({ before: iso(realAt - 180 * 86400000) })
+        lastActivityPruneDay = day
+      }
+    }
+    catch (error) { logger.warn?.('[abs] activity coverage heartbeat failed', error) }
+  }, 60000)
+  activityHeartbeat.unref?.()
 
   function serial(fn) {
     const result = queue.then(() => { if (closed) throw new Error('ABS_CLOSED'); if (poisoned) throw new Error('ABS_STORAGE_UNCERTAIN'); return fn() })
@@ -131,9 +168,10 @@ export async function createAbsService({ store, host, getConfig, now = Date.now,
   }
   function reviewGate(at, cfg, manual) {
     if (restWindow(clock.realNow(), cfg.restHours).resting) return { due: false, reason: 'REST_HOURS' }
-    if (cfg.mode !== 'active') return { due: false, reason: cfg.mode === 'shadow' ? 'SHADOW_PREVIEW_ONLY' : 'ABS_OFF' }
-    if (state.activationAllowedAt && Date.parse(state.activationAllowedAt) > Date.parse(at)) return { due: false, reason: 'ACTIVATION_COOLDOWN' }
+    if (cfg.mode === 'off') return { due: false, reason: 'ABS_OFF' }
     if (!manual && state.nextWakeAt && Date.parse(state.nextWakeAt) > Date.parse(at)) return { due: false, reason: 'NOT_DUE' }
+    if (cfg.mode === 'shadow') return { due: false, previewDue: true, reason: 'SHADOW_PREVIEW_ONLY' }
+    if (state.activationAllowedAt && Date.parse(state.activationAllowedAt) > Date.parse(at)) return { due: false, reason: 'ACTIVATION_COOLDOWN' }
     return { due: true, reason: 'DUE' }
   }
   function arm() {
@@ -155,8 +193,15 @@ export async function createAbsService({ store, host, getConfig, now = Date.now,
     }, delay)
     timer?.unref?.()
   }
-  function preview() {
-    return { realAt: iso(clock.realNow()), text: renderSelfReview({ state }), demand: reviewDemand() }
+  function selectAction({ mode = config().mode, realAt = clock.realNow(), sessionId = host.boundSessionId() } = {}) {
+    const context = sessionId ? activityStore.actionContext() : { remindedWorkStreakIds: [] }
+    let workStreak = null
+    try { workStreak = readWorkStreak() } catch (error) { logger.warn?.('[abs] work streak unavailable', error) }
+    return selectAbsAction({ now: realAt, mode,
+      currentSessionId: sessionId,
+      ownerInteraction: state.lastOwnerMessage?.sourceKind === 'user' ? state.lastOwnerMessage : null,
+      socialGap: reviewDemand().social, curiosityGap: reviewDemand().curiosity,
+      workStreak, remindedWorkStreakIds: context.remindedWorkStreakIds })
   }
   async function ingestObservation(observation) {
     return serial(async () => {
@@ -171,7 +216,7 @@ export async function createAbsService({ store, host, getConfig, now = Date.now,
       const before = state.drives[driveId].satisfaction
       let feedback = null, reason = observation.result ?? observation.kind
       if (observation.kind === 'owner_message') {
-        state.lastOwnerMessage = { at, realAt }
+        state.lastOwnerMessage = { at, realAt, sessionId: observation.sessionId, seq: observation.seq, sourceKind: 'user' }
         feedback = applyFeedback(state, { driveId: 'social', delta: cfg.feedback.ownerMessageGain, key, at, config: cfg })
       } else if (observation.kind === 'exploration') {
         if (observation.result !== 'unverified_activity') state.lastExploration = { resultKind: observation.result, at, realAt, sources: observation.sources ?? 0, activity: observation.activity }
@@ -202,8 +247,35 @@ export async function createAbsService({ store, host, getConfig, now = Date.now,
       return true
     }).finally(arm)
   }
-  const unsubscribeObservation = host.subscribeObservation?.((observation) => {
+  async function ingestActivity(activity) {
+    return serial(async () => {
+      if (activity.kind === 'activity_visible' && activity.reviewId && activity.sessionId && activity.selectionId) {
+        await activityStore.markActionVisible({ selectionId: activity.selectionId, reviewId: activity.reviewId, sessionId: activity.sessionId, turn: activity.turn, at: activity.at })
+      }
+      if (activity.kind === 'activity_turn' && activity.reviewId && activity.sessionId) {
+      await activityStore.recordTurn({ reviewId: activity.reviewId, sessionId: activity.sessionId, turn: activity.turn,
+          status: activity.turnStatus ?? 'pending', claimStatus: activity.claimStatus ?? 'unknown', inputStatus: activity.inputStatus ?? 'unknown',
+          attribution: activity.attribution ?? 'unlinked', diagnostic: activity.turnDiagnostic ?? null })
+      }
+      if (activity.kind === 'activity_attempt' && activity.reviewId && activity.attribution && activity.sessionId) {
+        await activityStore.recordAttempt({ evidenceId: activity.sessionId + ':' + activity.seq, reviewId: activity.reviewId,
+          sessionId: activity.sessionId, turn: activity.turn, seq: activity.seq, callId: activity.callId,
+          activity: activity.activity, at: activity.at, attribution: activity.attribution })
+      }
+      if (activity.kind === 'exploration' && activity.reviewId && activity.attribution && activity.sessionId) {
+        const status = activity.result === 'failed' ? 'failed'
+          : ['unverified_activity','explore_no_usable_content'].includes(activity.result) ? 'unverified' : 'verified'
+        await activityStore.recordEvidence({ evidenceId: activity.sessionId + ':' + activity.callSeq, reviewId: activity.reviewId,
+          sessionId: activity.sessionId, turn: activity.turn, seq: activity.callSeq, callSeq: activity.callSeq, resultSeq: activity.resultSeq, callId: activity.callId,
+          activity: activity.activity ?? 'tool', status, at: activity.at, attribution: activity.attribution, sources: activity.sources ?? 0 })
+      }
+    })
+  }
+  const unsubscribeObservation = host.subscribeObservation((observation) => {
     void ingestObservation(observation).catch((error) => logger.warn?.('[abs] observation failed', error))
+  })
+  const unsubscribeActivity = host.subscribeActivity((activity) => {
+    void ingestActivity(activity).catch((error) => logger.warn?.('[abs] activity record failed', error))
   })
 
   const service = {
@@ -212,14 +284,13 @@ export async function createAbsService({ store, host, getConfig, now = Date.now,
         ...clone(state),
         clock: clock.snapshot(),
         clockView: clockView(),
-        reviewPreview: renderSelfReview({ state }),
         storageUncertain: poisoned,
         running: !closed,
         config: config(),
-        permissionMode: 'existing-full-access',
       }
     },
-    preview,
+    activities: ({ from, to, limit = 100, offset = 0, snapshotAt, snapshotSeq, outcome } = {}) => activityStore.query({ from, to, limit, offset, snapshotAt, snapshotSeq, outcome, now: clock.realNow() }),
+    annotateActivity: input => activityStore.setAnnotation({ ...input, at: iso(clock.realNow()) }),
     environment: () => host.environment(),
     syncClock() { return serial(async () => { await synchronizeClock(); return clockView() }).finally(arm) },
     async records(limit = 200) { return store.records({ limit: Math.min(1000, Math.max(1, Number(limit) || 200)) }) },
@@ -229,60 +300,102 @@ export async function createAbsService({ store, host, getConfig, now = Date.now,
         let at = iso(clock.now()), realAt = iso(clock.realNow())
         const cfg = config(), wakeId = id()
         await syncMode(at, cfg)
-        if (cfg.mode === 'off') return { wakeId, mode: 'off', reason: 'ABS_OFF' }
-        if (paused()) return { wakeId, mode: cfg.mode, reason: 'TIME_PAUSED' }
+        if (cfg.mode === 'off') {
+          await activityStore.recordWake({ episodeId: wakeId, wakeAt: realAt, cause, mode: 'off', gateReason: 'ABS_OFF', reviewStatus: 'not_due',
+            stateAtWake: { social: state.drives.social.satisfaction, curiosity: state.drives.curiosity.satisfaction } })
+          return { wakeId, mode: 'off', reason: 'ABS_OFF' }
+        }
+        if (paused()) {
+          await activityStore.recordWake({ episodeId: wakeId, wakeAt: realAt, cause, mode: cfg.mode, gateReason: 'TIME_PAUSED', reviewStatus: 'skipped',
+            stateAtWake: { social: state.drives.social.satisfaction, curiosity: state.drives.curiosity.satisfaction } })
+          return { wakeId, mode: cfg.mode, reason: 'TIME_PAUSED' }
+        }
         updateWithLedger(at, cfg)
         at = iso(clock.now()); realAt = iso(clock.realNow())
         const manual = cause === 'manual'
         const gate = reviewGate(at, config(), manual)
         const records = [{ type: 'WakeRecord', wakeId, cause, at, mode: cfg.mode, gate: gate.reason }]
         let result = { wakeId, mode: cfg.mode, delivered: false, reason: gate.reason }
-        if (gate.due) {
-          const reviewId = id()
-          const reviewText = renderSelfReview({ state })
-          // Re-check pause/mode after rendering and before the real model turn.
-          if (paused() || config().mode !== 'active') {
-            records.push({ type: 'ReviewSkipped', at: iso(clock.now()), wakeId, reason: paused() ? 'TIME_PAUSED' : 'MODE_NOT_ACTIVE' })
-            result = { wakeId, reviewId, delivered: false, reason: paused() ? 'TIME_PAUSED' : 'MODE_NOT_ACTIVE' }
+        let activityEpisode = { episodeId: wakeId, wakeAt: realAt, cause, mode: cfg.mode, gateReason: gate.reason,
+          reviewStatus: gate.due ? 'pending' : 'not_due', turnStatus: 'unknown', claimedStatus: gate.due ? 'pending' : 'not_claimed',
+          inputStatus: gate.due ? 'pending' : 'not_appended', attribution: 'unlinked',
+          stateAtWake: { social: state.drives.social.satisfaction, curiosity: state.drives.curiosity.satisfaction } }
+        if (gate.due || gate.previewDue) {
+          const selectionId = id(), sessionId = host.boundSessionId()
+          const selection = selectAction({ mode: cfg.mode, realAt: clock.realNow(), sessionId })
+          const reviewId = gate.due && selection.intent ? id() : null
+          const messageId = gate.due && selection.intent ? id() : null
+          activityEpisode = { ...activityEpisode, reviewId, sessionId, messageId,
+            reviewStatus: gate.due && selection.intent ? 'pending' : 'not_due',
+            claimedStatus: gate.due && selection.intent ? 'pending' : 'not_claimed',
+            inputStatus: gate.due && selection.intent ? 'pending' : 'not_appended' }
+          await activityStore.recordWake(activityEpisode)
+          const persistedSelection = await activityStore.recordActionSelection({ selectionId, episodeId: wakeId, reviewId, sessionId, messageId,
+            intent: selection.intent, reason: selection.reason, score: selection.score, workStreakId: selection.workStreakId,
+            mode: cfg.mode, at: realAt })
+          const actionDispatch = gate.due && cfg.mode === 'active' && selection.intent
+            && persistedSelection.dispatchStatus === 'reserved'
+          if (!actionDispatch) {
+            const reason = persistedSelection.dispatchStatus === 'suppressed' ? persistedSelection.reason
+              : gate.due ? selection.reason : gate.reason
+            const gateReason = String(reason || gate.reason).toUpperCase().slice(0,64)
+            activityEpisode = { ...activityEpisode, gateReason, reviewStatus: 'skipped', claimedStatus: 'not_claimed', inputStatus: 'not_appended' }
+            records.push({ type: 'ActionSelectionRecorded', at, realAt, wakeId, selectionId, intent: selection.intent, reason,
+              score: selection.score, dispatchStatus: persistedSelection.dispatchStatus })
+            result = { wakeId, delivered: false, reason, actionSelection: persistedSelection }
           } else {
-            // Host checks again after async session resolution, immediately before followup.
-            const canDeliver = () => paused() ? 'TIME_PAUSED' : config().mode !== 'active' ? 'MODE_NOT_ACTIVE' : restWindow(clock.realNow(), config().restHours).resting ? 'REST_HOURS' : null
+            // Re-check all ABS gates after asynchronous session resolution and immediately before followup.
+            const canDeliver = () => paused() ? 'TIME_PAUSED'
+              : config().mode !== 'active' ? 'MODE_NOT_ACTIVE'
+                : restWindow(clock.realNow(), config().restHours).resting ? 'REST_HOURS'
+                  : host.boundSessionId() !== sessionId ? 'SESSION_BINDING_CHANGED' : null
+            let acceptance
             const blocked = canDeliver()
-            const acceptance = blocked ? { accepted: false, reason: blocked } : await host.surfaceReview({ text: reviewText, reviewId, canDeliver })
+            try {
+              acceptance = blocked ? { accepted: false, definitive: true, status: 'rejected', reason: blocked }
+                : await host.surfaceAction({ text: renderActionPrompt({ intent: selection.intent,
+                  currentSessionId: sessionId, socialGap: reviewDemand().social, previousSocialGap: state.lastReview?.demand?.social,
+                  ownerInteraction: state.lastOwnerMessage, workMinutes: selection.workMinutes }),
+                  intent: selection.intent, selectionId, reviewId, messageId, expectedSessionId: sessionId, canDeliver })
+            } catch (error) {
+              acceptance = { accepted: false, definitive: false, status: 'unknown', reason: 'enqueue-outcome-unknown' }
+              logger.warn?.('[abs] action enqueue outcome is ambiguous', error)
+            }
             await synchronizeClock()
             at = iso(clock.now()); realAt = iso(clock.realNow())
-            const delivered = acceptance.accepted === true
-            state.lastReview = {
-              reviewId, at, realAt, status: delivered ? 'delivered' : 'failed',
-              sessionId: acceptance.sessionId ?? null,
-              messageId: acceptance.messageId ?? null,
-              reason: acceptance.reason ?? null,
-              demand: reviewDemand(),
-              text: reviewText.slice(0, 8000),
-            }
-            records.push({
-              type: delivered ? 'ReviewDelivered' : 'ReviewFailed',
-              at, realAt, reviewId, acceptance,
-              text: reviewText.slice(0, 2000),
-            })
-            result = { wakeId, reviewId, delivered, reason: delivered ? 'DELIVERED' : acceptance.reason ?? 'REVIEW_NOT_ACCEPTED' }
+            const dispatchStatus = acceptance.definitive === true && acceptance.accepted !== true ? 'released'
+              : acceptance.status === 'accepted' ? 'enqueued' : 'unknown'
+            const resolvedSelection = await activityStore.resolveActionSelection({ selectionId, dispatchStatus, at: realAt, reason: acceptance.reason ?? null })
+            activityEpisode = { ...activityEpisode, sessionId, messageId,
+              reviewStatus: dispatchStatus === 'enqueued' ? 'accepted' : dispatchStatus === 'unknown' ? 'reconcile' : 'failed',
+              gateReason: dispatchStatus === 'released' ? String(acceptance.reason ?? 'ENQUEUE_REJECTED').toUpperCase().slice(0,64) : 'DUE',
+              claimedStatus: 'pending', inputStatus: 'pending' }
+            state.lastReview = { reviewId, at, realAt, status: dispatchStatus === 'enqueued' ? 'delivered' : dispatchStatus === 'unknown' ? 'reconcile' : 'failed',
+              sessionId, messageId, reason: acceptance.reason ?? null, demand: reviewDemand(), actionSelectionId: selectionId, intent: selection.intent }
+            records.push({ type: 'ActionDispatch', at, realAt, reviewId, selectionId, intent: selection.intent, dispatchStatus, reason: acceptance.reason ?? null })
+            result = { wakeId, reviewId, delivered: dispatchStatus === 'enqueued', reason: acceptance.reason ?? dispatchStatus, actionSelection: resolvedSelection ?? persistedSelection }
           }
         }
         state.nextWakeAt = gate.reason === 'REST_HOURS' ? state.nextWakeAt ?? at : computeNextWake(at, config())
         records[0].nextWakeAt = state.nextWakeAt
         records[0].nextWakeRealAt = clockView().nextWakeRealAt
         await save(records)
+        await activityStore.recordWake(activityEpisode)
         return result
       }).finally(arm)
     },
     start() { started = true; arm() },
     async close() {
       timers.clearTimeout(timer)
+      clearInterval(activityHeartbeat)
       started = false
       closed = true
       unsubscribeObservation?.()
+      unsubscribeActivity?.()
       await queue
+      if (activityRuntimeId) activityStore.closeRuntime({ runtimeId: activityRuntimeId, at: iso(clock.realNow()) })
       await host.close?.()
+      await activityStore.close()
       await store.close()
     },
   }

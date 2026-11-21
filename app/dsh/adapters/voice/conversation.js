@@ -75,8 +75,9 @@ function rememberBounded(set, value, limit = MAX_LOCAL_REQUESTS) {
 }
 
 /** Maps this plugin's current DSH Session to the voice core's opaque conversation contract. */
-export function createDshConversation({ ctx, chat, foreground } = {}) {
+export function createDshConversation({ ctx, chat, foreground, registerVoiceSource, releaseVoiceSource } = {}) {
   if (!chat?.getVoiceBinding || !chat?.getVoiceTarget || !chat?.retainVoiceBinding) throw new TypeError('Strict chat voice accessors and independent retain are required')
+  if (typeof registerVoiceSource !== 'function' || typeof releaseVoiceSource !== 'function') throw new TypeError('Lease-scoped voice source registration and release are required')
   const retained = new Map(), prepared = new Map(), rejections = new Map(), listeners = new Set()
   let disposed = false
 
@@ -112,7 +113,10 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
     if (data.outcome === 'canceled') for (const message of removed) {
       const rpcId = message?.source?.rpcId
       const item = typeof rpcId === 'string' ? submissionByRequest(record, rpcId) : null
-      if (item?.accepted) events.push({ type: 'input.removed', submissionId: item.requestId, reason: 'host-removed' })
+      if (item?.accepted) {
+        events.push({ type: 'input.removed', submissionId: item.requestId, reason: 'host-removed' })
+        if (item.sourceRegistered) void Promise.resolve(releaseVoiceSource?.({ conversationRef: record.ref, submissionId: item.requestId })).catch(() => {})
+      }
     }
     return events
   }
@@ -124,6 +128,7 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
   function retireRejected(item, code) {
     item.rejectionCode = code
     try { item.abandon() } catch {}
+    if (item.sourceRegistered) void Promise.resolve(releaseVoiceSource?.({ conversationRef: item.conversationRef, submissionId: item.requestId })).catch(() => {})
     item.retired = true
     prepared.delete(item.requestId)
     rejections.set(item.requestId, { recordKey: item.recordKey, scopeId: item.scopeId, code })
@@ -190,6 +195,7 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
         const item = submissionByRequest(record, source.rpcId)
         if (item) {
           markAccepted(item, 'session-message')
+          void Promise.resolve(releaseVoiceSource?.({ conversationRef: record.ref, submissionId: item.requestId })).catch(() => {})
           let turn = Number.isSafeInteger(data.turn) ? record.turns.get(String(data.turn)) : record.currentTurn
           const consumed = { item, messageId: String(seq) }
           if (!turn) pushBounded(record.pendingConsumed, consumed)
@@ -229,14 +235,14 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
         const step = Number.isSafeInteger(data.step) ? data.step : turn?.activeStep
         const consumed = Number.isSafeInteger(step) ? turn?.inputsByStep?.get(step) : null
         const origin = replyOrigin(consumed?.origins)
-        const segment = turn && !turn.baseline && text && consumed?.submissionIds.length && ['local', 'owned-task', 'mixed'].includes(origin)
-          ? { type: 'reply.segment', replyId: `${turn.id}:reply:${seq}`, conversationTurnId: turn.id, responseId: `${turn.id}:response:${step}`, stepId: `${turn.id}:step:${step}`, inputIds: [...consumed.inputIds], submissionIds: [...consumed.submissionIds], origin, text, surfaceRevision: seq }
+        const message = turn && !turn.baseline && !data.interrupted && text && consumed?.submissionIds.length && ['local', 'owned-task', 'mixed'].includes(origin)
+          ? { type: 'reply.message', replyId: `${turn.id}:message:${seq}`, conversationTurnId: turn.id, responseId: `${turn.id}:response:${step}`, stepId: `${turn.id}:step:${step}`, inputIds: [...consumed.inputIds], submissionIds: [...consumed.submissionIds], origin, text, source: { sessionId: record.ref.conversationId, seq }, surfaceRevision: seq }
           : null
-        record.surface.set(seq, { seq, turn: number, text, ...(segment ? { segment } : {}) })
-        if (segment) events.push(segment)
+        record.surface.set(seq, { seq, turn: number, text, ...(message ? { message } : {}) })
+        if (message) events.push(message)
       } else if (op && typeof op === 'object' && op.op === 'replace' && Number.isSafeInteger(op.startSeq) && Number.isSafeInteger(op.endSeq) && op.endSeq >= op.startSeq) {
         for (const [existingSeq, entry] of record.surface) if (existingSeq >= op.startSeq && existingSeq <= op.endSeq) {
-          if (entry.segment) events.push({ type: 'reply.revoked', replyId: entry.segment.replyId, conversationTurnId: entry.segment.conversationTurnId, responseId: entry.segment.responseId, stepId: entry.segment.stepId, surfaceRevision: entry.segment.surfaceRevision })
+          if (entry.message) events.push({ type: 'reply.revoked', replyId: entry.message.replyId, conversationTurnId: entry.message.conversationTurnId, responseId: entry.message.responseId, stepId: entry.message.stepId, source: entry.message.source, surfaceRevision: entry.message.surfaceRevision })
           record.surface.delete(existingSeq)
         }
         record.surface.set(seq, { seq, turn: Number.isSafeInteger(data.turn) ? String(data.turn) : record.currentTurn ? String(record.currentTurn.number) : null, text: plainText(data.message?.content) })
@@ -247,10 +253,6 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
         const reason = data.reason && typeof data.reason === 'object' ? data.reason : null
         const outcome = reason?.kind === 'completed' ? 'completed' : reason?.kind === 'aborted' ? 'cancelled' : 'failed'
         const origin = turn.originKinds.size > 1 ? 'mixed' : turn.originKinds.has('local') ? 'local' : turn.originKinds.has('autonomous') ? 'autonomous' : turn.originKinds.has('external') ? 'external' : 'unknown'
-        if (outcome === 'completed' && !turn.baseline) {
-          const text = [...record.surface.values()].filter(entry => entry.turn === number && entry.text).sort((a, b) => a.seq - b.seq).map(entry => entry.text).join('\n').trim()
-          if (text) events.push({ type: 'reply.final', replyId: `${turn.id}:reply:${seq}`, conversationTurnId: turn.id, text, origin, inputSubmissionIds: [...(turn.submissionIds || [])] })
-        }
         const error = normalizeTurnError(reason)
         events.push({ type: 'turn.ended', conversationTurnId: turn.id, outcome, ...(error ? { error } : {}) })
         record.turns.delete(number)
@@ -286,7 +288,8 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
     turn.originKinds.add(origin === 'owned-task' ? 'local' : origin)
     addStepOrigin(turn, origin)
     item.turnId = turn.id
-    events.push({ type: 'input.consumed', inputId: item.inputId ?? null, submissionId: item.requestId, messageId: consumed.messageId, conversationTurnId: turn.id, stepId: Number.isSafeInteger(step) ? `${turn.id}:step:${step}` : null, origin, ...(item.sourceInputId ? { sourceInputId: item.sourceInputId } : {}), ...(item.taskId ? { taskId: item.taskId, taskVersion: item.taskVersion } : {}) })
+    const inputSource = item.origin === 'owned-task' ? 'background' : item.local ? 'typed' : item.inputId ? 'voice' : 'unknown'
+    events.push({ type: 'input.consumed', inputId: item.inputId ?? null, submissionId: item.requestId, messageId: consumed.messageId, conversationTurnId: turn.id, stepId: Number.isSafeInteger(step) ? `${turn.id}:step:${step}` : null, origin, inputSource, ...(item.sourceInputId ? { sourceInputId: item.sourceInputId } : {}), ...(item.taskId ? { taskId: item.taskId, taskVersion: item.taskVersion } : {}) })
   }
 
   async function inspect(ref) {
@@ -376,7 +379,7 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
       const ownerScope = scopeIdFor(conversationRef, scopeId, retainedValue?.owners || new Map())
       const owner = retainedValue?.owners.get(ownerScope)
       if (!owner) throw Object.assign(new Error('Voice Session owner was released before submission'), { code: 'VOICE_TARGET_STALE', outcome: 'not_applied' })
-      const item = { inputId, requestId: null, abandon: null, recordKey: refKey(conversationRef), scopeId: ownerScope, owner, accepted: false, retired: false, rejectionCode: null }
+      const item = { inputId, text, conversationRef, requestId: null, abandon: null, recordKey: refKey(conversationRef), scopeId: ownerScope, owner, accepted: false, retired: false, rejectionCode: null, sourceRegistered: false }
       let foregroundState = null
       try { if (typeof foreground?.inspect === 'function') foregroundState = await foreground.inspect(conversationRef) } catch { foregroundState = { available: false, reason: 'foreground-inspection-failed' } }
       const submission = binding.session.beginSubmission({ text, mode: 'steer', onAccept: () => markAccepted(item, 'prompt-receipt'), onRetire: () => { item.retired = true } })
@@ -387,6 +390,19 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
       item.foregroundExpected = foregroundState?.available === true ? foregroundState.expected : null
       item.abandon = submission.abandon
       prepared.set(item.requestId, item)
+      try {
+        if (operation?.signal?.aborted) throw Object.assign(new Error('Voice source registration was cancelled'), { code: 'VOICE_PREPARE_CANCELLED', outcome: 'not_applied' })
+        const result = await registerVoiceSource({ conversationRef, inputId, submissionId: item.requestId, text, operation })
+        if (result?.registered !== true) throw Object.assign(new Error('Voice input source registration was not confirmed'), { code: 'VOICE_SOURCE_REGISTRATION_FAILED', outcome: 'not_applied' })
+        item.sourceRegistered = true
+        if (operation?.signal?.aborted) throw Object.assign(new Error('Voice source registration was cancelled'), { code: 'VOICE_PREPARE_CANCELLED', outcome: 'not_applied' })
+      } catch (error) {
+        try { item.abandon() } catch {}
+        item.retired = true
+        prepared.delete(item.requestId)
+        try { await releaseVoiceSource?.({ conversationRef, submissionId: item.requestId }) } catch {}
+        throw Object.assign(error, { outcome: 'not_applied' })
+      }
       return { submissionId: item.requestId }
     },
     async abandonSubmission({ submissionId, conversationRef, scopeId }) {
@@ -399,6 +415,7 @@ export function createDshConversation({ ctx, chat, foreground } = {}) {
         item.abandon()
         item.retired = true
         prepared.delete(item.requestId)
+        if (item.sourceRegistered) { try { await releaseVoiceSource?.({ conversationRef, submissionId }) } catch {} }
         return true
       } catch { return false }
     },

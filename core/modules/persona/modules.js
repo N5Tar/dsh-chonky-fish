@@ -3,12 +3,17 @@ import { profilePrompt } from './profile-prompt.js'
 import { perceptionPrompt } from '../perception/persona.js'
 import { diaryPrompt } from '../diary/persona.js'
 import { socialPrompt } from '../social/persona.js'
+import { memoryPrompt } from '../memory/persona.js'
 import { skillsPrompt } from '../skills/persona.js'
 
 export const MODULES_VARIABLE = 'chonkyfish_modules'
+const voiceExpressionPrompt = Object.freeze({
+  id: 'voice-expression', title: '本次语音表达', order: 60,
+  render: context => context.voiceExpression || '',
+})
 // Add new module contributions here. ABS intentionally contributes no persona prose.
 export const DEFAULT_PROMPT_MODULES = Object.freeze([
-  profilePrompt, perceptionPrompt, diaryPrompt, socialPrompt, skillsPrompt,
+  profilePrompt, perceptionPrompt, diaryPrompt, memoryPrompt, socialPrompt, skillsPrompt, voiceExpressionPrompt,
 ])
 
 const INTRO = '## 能力说明\n\n我不只是等主人说话、再回答的鱼。我也有自己留意的事情、经历过的日子、想去逛的地方，还有一点点摸索出来的本事。下面这些都是我平时会用到的能力，不用等主人每次提醒，想起来、用得上，就可以自己去看看、做做。'
@@ -22,8 +27,8 @@ export function createModulePrompt({ readContext, modules = DEFAULT_PROMPT_MODUL
     ids.add(module.id)
     return { ...module }
   }).sort((a, b) => a.order - b.order || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-  function read() {
-    const context = readContext()
+  function read(promptContext) {
+    const context = readContext(promptContext)
     const sections = ordered.flatMap(module => {
       const text = module.render(context)
       if (text == null || text === '') return []

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createTurnState } from '../turns.js';
 import { DEFAULT_VOICE_CONFIG, validateVoiceConfig } from '../config.js';
-import { speechToText, splitSpeechSentences } from '../speech-text.js';
+import { parseSpeechReply } from '../speech-text.js';
 import { VOICE_LIMITS } from '../limits.js';
 
 let groups = 0;
@@ -51,14 +51,24 @@ test('short speech seals at the configured sample-clock silence threshold', () =
   assert.deepEqual(turns.advance(26800), [{ type: 'seal', startSample: 5200, endSample: 14000, reason: 'silence' }]);
 });
 
-test('speech-to-text filters code and links then caps and splits sentences', () => {
-  const text = speechToText('# 你好\n\n点[这里](https://example.com)。\n```js\nsecret()\n```');
+test('speech conversion cleans Markdown, keeps full replies, and handles provider tags', () => {
+  const text = parseSpeechReply('# 你好\n\n点[这里](https://example.com)。\n```js\nsecret()\n```').synthesisText;
   assert.ok(text.includes('你好'));
   assert.ok(text.includes('这里'));
   assert.ok(!text.includes('example.com'));
   assert.ok(!text.includes('secret'));
-  assert.ok(splitSpeechSentences('好。'.repeat(140)).every((x) => x.length <= 120));
+  assert.equal(parseSpeechReply('好。'.repeat(140)).synthesisText, '好。'.repeat(140));
+  const controlled = parseSpeechReply('你好 [happy] [unknown] ` [sad] `', { allowedTags: ['happy', 'sad'], maxChars: 100 });
+  assert.equal(controlled.plainText, '你好 [unknown] ` [sad] `');
+  assert.ok(controlled.synthesisText.includes('[happy]'));
+  assert.ok(controlled.synthesisText.includes('方括号 unknown'));
+  assert.equal(controlled.controls.length, 1);
+  assert.equal(parseSpeechReply('好'.repeat(121), { maxChars: 120 }).overLimit, true);
+  const link = parseSpeechReply('[link](https://example.com) [happy](https://example.com)', { allowedTags: ['happy'] });
+  assert.equal(link.synthesisText, 'link happy');
+  assert.equal(link.controls.length, 0, 'a Markdown link label is not a provider tag');
   assert.equal(VOICE_LIMITS.unresolvedInputs, 8);
+  assert.equal('replySentenceChars' in VOICE_LIMITS, false);
 });
 
 console.log(`voice core: ${groups} groups passed`);

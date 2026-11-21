@@ -29,14 +29,15 @@ export function createDshVoiceController({ ctx, chat, routes }) {
   if (!ctx || !chat || !routes) throw new TypeError('Voice bootstrap requires DSH context, chat bridge, and routes')
   const audio = createMemoryAudioStore()
   const playback = createWebPlayback({ audioStore: audio })
-  const host = createDshHostVoice({ routes, audioStore: audio })
+  const host = createDshHostVoice({ routes })
   let speechContext = null
   const speech = createDshSpeech({ getRemote: () => speechContext, audioStore: audio })
   const listeners = new Set()
-  let service = null, capture = null, speechStatus = null, hostStatus = null, assetURLs = null, config = null;
+  let service = null, capture = null, speechStatus = null, hostStatus = null, assetURLs = null, config = null, voiceSettings = null;
   let setupPromise = null, disposed = false, prepController = null, snapshot = null, localFailure = null, remoteInjection = null, startGeneration = 0, removeVoiceReset = null, resetInProgress = false
   let startupPending = false, startPromise = null
   let replyAudioPromise = null
+  let previewOperation = null, storedAudioOperation = null
   let configRevision = null
 
   // Optional DSH services must be acquired through Cordis injection. The overlay
@@ -116,12 +117,8 @@ export function createDshVoiceController({ ctx, chat, routes }) {
     setupPromise = (async () => {
       hostStatus = await host.capabilities()
       if (disposed) throw Object.assign(new Error('语音控制器已关闭'), { code: 'VOICE_CONTROLLER_DISPOSED', outcome: 'not_applied' })
-      if (hostStatus?.host?.local !== true || hostStatus.host.os !== 'win32' || hostStatus.host.arch !== 'x64') {
-        throw Object.assign(new Error('语音通话需要与本机 Client 同一 Windows x64 DSH Host'), { code: 'VOICE_HOST_UNSUPPORTED' })
-      }
-      if (!hostStatus?.ownership || !hostStatus?.synthesis?.supported) {
-        throw Object.assign(new Error(hostStatus?.synthesis?.reason || '本机 Windows 语音合成能力不可用'), { code: hostStatus?.synthesis?.reason || 'VOICE_TTS_UNSUPPORTED' })
-      }
+      if (!hostStatus?.ownership) throw Object.assign(new Error('本机语音运行环境不可用'), { code: 'VOICE_HOST_UNSUPPORTED' })
+      voiceSettings = await host.readVoiceSettings()
       const endpoint = hostStatus?.assets?.endpoint || routes.voiceAssets
       const manifestEndpoint = new URL(endpoint, globalThis.location?.href)
       manifestEndpoint.searchParams.set('key', 'manifest.json')
@@ -132,7 +129,7 @@ export function createDshVoiceController({ ctx, chat, routes }) {
       assetURLs = resolveVoiceAssets(endpoint, manifest)
       const configResponse = await requestJson(routes.config)
       if (disposed) throw Object.assign(new Error('语音控制器已关闭'), { code: 'VOICE_CONTROLLER_DISPOSED', outcome: 'not_applied' })
-      config = validateVoiceConfig(configResponse?.config?.voice || DEFAULT_VOICE_CONFIG)
+      config = validateVoiceConfig({ ...(configResponse?.config?.voice || DEFAULT_VOICE_CONFIG), tts: voiceSettings?.tts || configResponse?.config?.voice?.tts || DEFAULT_VOICE_CONFIG.tts })
       // Old settings used half duplex. The single phone button always uses the
       // new capture path; start will reject a missing actual AEC track.
       if (config.duplexPreference === 'speaker-turn-taking') config = { ...config, duplexPreference: 'speaker-duplex' }
@@ -146,7 +143,7 @@ export function createDshVoiceController({ ctx, chat, routes }) {
         workletUrl: assetURLs.workletUrl,
         vadWorkerUrl: assetURLs.workerUrl,
       })
-      const conversation = createDshConversation({ chat, foreground: host.foreground })
+      const conversation = createDshConversation({ chat, foreground: host.foreground, registerVoiceSource: host.registerVoiceSource, releaseVoiceSource: host.releaseVoiceSource })
       service = createVoiceService({
         capture,
         recognition: speech.recognition,
@@ -191,6 +188,9 @@ export function createDshVoiceController({ ctx, chat, routes }) {
       if (generation !== startGeneration) throw Object.assign(new Error('语音启动已取消'), { code: 'VOICE_START_CANCELLED', outcome: 'not_applied' })
       const serviceGeneration = ready.hostStatus?.ownership?.serviceGeneration
       if (typeof serviceGeneration !== 'string' || !serviceGeneration) throw Object.assign(new Error('本机 DSH Host 未提供有效运行时身份'), { code: 'VOICE_RUNTIME_ID_UNAVAILABLE', outcome: 'not_applied' })
+      if (ready.config?.tts?.providerId === 'windows-system-speech' && (ready.hostStatus?.host?.local !== true || ready.hostStatus.host.os !== 'win32' || ready.hostStatus.host.arch !== 'x64')) {
+        throw Object.assign(new Error('系统语音只在本机 Windows x64 DSH Host 可用'), { code: 'VOICE_HOST_UNSUPPORTED', outcome: 'not_applied' })
+      }
       const current = chat.getVoiceTarget(`dsh:${serviceGeneration}`)
       if (!current) throw Object.assign(new Error('当前大肥鱼会话不属于规范小鱼塘工作区，语音不会发送到其他工作区'), { code: 'VOICE_TARGET_NOT_CANONICAL', outcome: 'not_applied' })
       // The Host may reclaim an idle ASR worker after a previous call. Setup is
@@ -334,6 +334,109 @@ export function createDshVoiceController({ ctx, chat, routes }) {
     return { config, revision: configRevision }
   }
 
+  function operation(kind) {
+    const controller = new AbortController()
+    return { operationId: makeId(kind), signal: controller.signal, cancel() { controller.abort() } }
+  }
+  async function readVoiceSettings() {
+    try { hostStatus = await host.capabilities() } catch {}
+    voiceSettings = await host.readVoiceSettings()
+    return voiceSettings
+  }
+  async function updateVoiceSettings(tts) {
+    if (service && ['connected', 'connecting', 'starting', 'reconnecting'].includes(service.getSnapshot()?.call?.status)) {
+      throw Object.assign(new Error('请先结束语音通话，再更改语音设置'), { code: 'VOICE_CONFIG_CALL_ACTIVE', outcome: 'not_applied' })
+    }
+    stopVoicePreview()
+    voiceSettings = await host.updateVoiceSettings(tts)
+    config = validateVoiceConfig({ ...(config || DEFAULT_VOICE_CONFIG), tts: voiceSettings?.tts || tts })
+    if (service) { await service.dispose(); service = null; capture = null; setupPromise = null }
+    publish()
+    return voiceSettings
+  }
+  function getVoicePreviewCatalog(binding) { return host.getVoicePreviewCatalog(binding) }
+  async function playVoicePreview({ binding, voiceId, text, rate = voiceSettings?.tts?.rate ?? 0, emotionTag } = {}) {
+    const savedTts = voiceSettings?.tts
+    const draftBinding = binding !== undefined
+    const previewVoiceId = draftBinding ? voiceId : (voiceId ?? savedTts?.voiceId)
+    if (draftBinding) {
+      if (!binding || typeof binding !== 'object' || Array.isArray(binding) || typeof binding.providerId !== 'string' || !binding.providerId || typeof previewVoiceId !== 'string' || !previewVoiceId) throw Object.assign(new Error('试听配置需要提供厂商绑定和音色'), { code: 'VOICE_PREVIEW_SETTINGS_UNAVAILABLE', outcome: 'not_applied' })
+    } else if (savedTts?.providerId !== 'aliyun-qwen-tts' || !savedTts?.voiceId || savedTts?.credentialRef !== 'DASHSCOPE_API_KEY') {
+      throw Object.assign(new Error('请先保存可用的云端语音设置，再开始试听'), { code: 'VOICE_PREVIEW_SETTINGS_UNAVAILABLE', outcome: 'not_applied' })
+    }
+    if (!Number.isInteger(rate) || rate < -10 || rate > 10) throw Object.assign(new TypeError('试听语速需为 -10 到 10 的整数'), { code: 'VOICE_PREVIEW_RATE_INVALID', outcome: 'not_applied' })
+    if (service?.getSnapshot?.().call?.status === 'connected') throw Object.assign(new Error('请先结束语音通话，再试听音色'), { code: 'VOICE_PLAYBACK_BUSY' })
+    if (playback.inspect().playing && !previewOperation) throw Object.assign(new Error('另一段语音正在播放'), { code: 'VOICE_PLAYBACK_BUSY' })
+    stopVoicePreview()
+    const op = operation('voice-preview')
+    previewOperation = op
+    const unlock = playback.unlock()
+    let output = null, format = null, audioSeen = false, completeSeen = false, receipt = null
+    try {
+      const unlockResult = await unlock
+      if (!unlockResult.ready) throw Object.assign(new Error('当前浏览器无法播放语音'), { code: unlockResult.code || 'VOICE_PLAYBACK_UNSUPPORTED' })
+      for await (const item of host.synthesizeVoicePreview({ operationId: op.operationId, binding, text, voiceId: previewVoiceId, rate, emotionTag }, { operation: op })) {
+        if (op.signal.aborted) throw Object.assign(new Error('试听已取消'), { code: 'TTS_CANCELLED' })
+        if (item.type === 'audio') {
+          if (!output) { format = item.format; output = playback.openStream({ format, operation: op }) }
+          else if (JSON.stringify(format) !== JSON.stringify(item.format)) throw Object.assign(new Error('音频格式发生变化'), { code: 'VOICE_AUDIO_FORMAT_CHANGED' })
+          await output.append(item.data); audioSeen = true
+        } else if (item.type === 'complete') { completeSeen = true; receipt = item.receipt }
+      }
+      if (!audioSeen || !completeSeen || !output) throw Object.assign(new Error('试听未返回完整音频'), { code: 'VOICE_TTS_INCOMPLETE' })
+      output.endInput()
+      const result = await output.finished
+      return { played: result?.ended === true, receipt }
+    } catch (error) {
+      if (output && !op.signal.aborted) playback.stop()
+      throw error
+    } finally { if (previewOperation === op) previewOperation = null }
+  }
+  function stopVoicePreview() {
+    if (!previewOperation) return false
+    previewOperation.cancel('preview-stopped')
+    previewOperation = null
+    return true
+  }
+  async function listStoredAudio(sessionId, seqs, options) { return host.listStoredAudio(sessionId, seqs, options) }
+  async function playStoredReply(summary) {
+    const source = summary?.source
+    if (typeof summary?.audioId !== 'string' || typeof source?.sessionId !== 'string' || !Number.isSafeInteger(source.seq)) throw Object.assign(new TypeError('Reply audio summary is invalid'), { code: 'VOICE_AUDIO_INVALID' })
+    stopVoicePreview()
+    stopStoredReply()
+    const op = operation('stored-audio')
+    storedAudioOperation = op
+    const unlock = playback.unlock()
+    let output = null
+    try {
+      const unlockResult = await unlock
+      if (!unlockResult.ready) throw Object.assign(new Error('当前浏览器无法播放语音'), { code: unlockResult.code || 'VOICE_PLAYBACK_UNSUPPORTED' })
+      const stored = await host.getStoredAudio(summary.audioId, source.sessionId, { signal: op.signal })
+      if (op.signal.aborted) throw Object.assign(new Error('语音回放已取消'), { code: 'VOICE_PLAYBACK_STOPPED' })
+      const format = { codec: 'wav', sampleRate: summary.format?.sampleRate, channels: summary.format?.channels }
+      if (service?.getSnapshot?.().call?.status === 'connected') {
+        if (typeof service.playStoredAudio !== 'function') throw Object.assign(new Error('当前语音服务暂不支持文件回放'), { code: 'VOICE_PLAYBACK_UNAVAILABLE' })
+        return await service.playStoredAudio({ format, data: stored.data, operation: op })
+      }
+      output = playback.openStream({ format, operation: op })
+      await output.append(stored.data)
+      output.endInput()
+      const result = await output.finished
+      return result?.ended === true
+    } finally { if (storedAudioOperation === op) storedAudioOperation = null }
+  }
+  function stopStoredReply() {
+    if (!storedAudioOperation) return false
+    storedAudioOperation.cancel('stored-playback-stopped')
+    storedAudioOperation = null
+    return true
+  }
+  function stopReplyPlayback() {
+    stopVoicePreview()
+    stopStoredReply()
+    playback.stop()
+  }
+
   return {
     foreground: host.foreground,
     async foregroundTarget() {
@@ -368,6 +471,15 @@ export function createDshVoiceController({ ctx, chat, routes }) {
     cancelPreparation,
     readVoiceConfig,
     updateVoiceConfig,
+    readVoiceSettings,
+    updateVoiceSettings,
+    getVoicePreviewCatalog,
+    playVoicePreview,
+    stopVoicePreview,
+    listStoredAudio,
+    playStoredReply,
+    stopStoredReply,
+    stopReplyPlayback,
     getVoiceVoices() { return hostStatus?.synthesis?.voices || [] },
     modelReady() { return speechStatus?.available === true },
     capabilityText() {
@@ -397,7 +509,6 @@ export function createDshVoiceController({ ctx, chat, routes }) {
     },
     retryInput: id => service?.retryInput(id), editInput: (id, text) => service?.editInput(id, text),
     retryUnknown: id => service?.retryUnknown(id), submitHeld: id => service?.submitHeld(id), discardInput: id => service?.discardInput(id),
-    replayReply: id => service?.replayReply(id),
     async dispose() {
       if (disposed) return
       disposed = true

@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict'
+import { realpathSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { readFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import vm from 'node:vm'
 
 import { installAbs } from '../../../../app/dsh/adapters/abs/index.js'
+import { createAbsStore } from '../store.js'
+import { platform } from '../../../../app/shared/platform/index.js'
 
 const source = await readFile(new URL('../../../../app/dsh/ui/abs/lab.js', import.meta.url), 'utf8')
 async function request(response, bootstrap = { routes: {} }, body) {
@@ -62,7 +68,27 @@ for (const token of [undefined, 'bad']) {
 await module.close()
 assert.equal(removed, true)
 
-const display = vm.createContext({ MODULE_SURFACE: await readFile(new URL('../../../../app/dsh/ui/module-surface.css', import.meta.url), 'utf8'), ICON_SENSE: 'sense-icon' })
+const startupDirectory = await mkdtemp(join(realpathSync(tmpdir()), 'abs-detached-startup-'))
+let releaseSqlite, sqliteLoading
+const loadingSqlite = new Promise(resolve => { sqliteLoading = resolve })
+const sqliteModule = new Promise(resolve => { releaseSqlite = resolve })
+const startup = installAbs({ webServer: { register() { return () => {} } } }, {
+  resources: { paths: { abs: startupDirectory, absActivityDatabase: join(startupDirectory, 'activities.db') }, routes: { abs: '/abs', absActivities: '/abs/activities' } },
+  ready: Promise.resolve({}),
+  loadSqlite: () => { sqliteLoading(); return sqliteModule },
+})
+await loadingSqlite
+const closingStartup = startup.close()
+releaseSqlite({ DatabaseSync: class {} })
+await closingStartup
+const recoveredStore = await createAbsStore({ directory: startupDirectory, syncDirectory: platform.syncDirectory })
+await recoveredStore.close()
+await rm(startupDirectory, { recursive: true, force: true })
+console.log('ABS install: detached startup releases no store lock')
+
+const absPopListeners = new Map(), absScrollRoot = { scrollTop: 42 }
+let absFocusCount = 0
+const display = vm.createContext({ URL, MODULE_SURFACE: await readFile(new URL('../../../../app/dsh/ui/module-surface.css', import.meta.url), 'utf8'), ICON_SENSE: 'sense-icon', window: { location: { href: 'http://localhost/lab?keep=1' }, history: { state: null, pushState() {}, replaceState() {}, back() {} }, addEventListener(name, fn) { absPopListeners.set(name, fn) }, removeEventListener(name) { absPopListeners.delete(name) } }, document: { querySelector() { return absScrollRoot }, getElementById() { return { focus() { absFocusCount++ } } } }, setInterval() { return 1 }, clearInterval() {} })
 vm.runInContext(source, display)
 assert.equal(display.formatAbsTime('2026-11-07T03:34:11.000Z'), '2026-11-07 11:34:11 UTC+8')
 assert.equal(display.formatAbsTime('2026-11-07T16:00:00Z'), '2026-11-08 00:00:00 UTC+8')
@@ -110,25 +136,17 @@ assert.equal(display.describeAbsNeeds({})[0].demand, null)
 assert.equal(display.describeAbsNeeds({ drives: { social: { satisfaction: .8, setpoint: .75 } } })[0].demand, 0)
 
 display.h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat() })
-const reviewState = {
+const panelState = {
   mode: 'shadow',
-  reviewPreview: { text: '【大肥鱼的内心独白 · 非主人发言】\n\n唔……我有一点想和主人说说话。' },
-  lastReview: { status: 'delivered', at: '2026-11-07T03:00:00Z', reason: null },
   clockView: { timeScale: 1, paused: false },
   drives: { social: { satisfaction: .55, setpoint: .75 }, curiosity: { satisfaction: .35, setpoint: .7 } },
   config: { timeScale: 1 },
   observations: [{ kind: 'owner_message', realAt: '2026-11-07T03:00:00Z', at: '2026-11-07T03:00:00Z' }, { kind: 'exploration', resultKind: 'explore_content_found', realAt: '2026-11-07T02:00:00Z' }],
 }
-const reviewTree = JSON.stringify(display.AbsReviewPanel({ state: reviewState, busy: false, onAction() {} }))
-assert.match(reviewTree, /自身精神状态审查/)
-assert.match(reviewTree, /大肥鱼的内心独白/)
-assert.match(reviewTree, /唔……我有一点想和主人说说话/)
-assert.match(reviewTree, /接纳不等于已经行动/)
-assert.match(reviewTree, /手动运行一次审查/)
-const observationsTree = JSON.stringify(display.AbsObservationsPanel({ state: reviewState }))
+const observationsTree = JSON.stringify(display.AbsObservationsPanel({ state: panelState }))
 assert.match(observationsTree, /主人真实发言/)
 assert.match(observationsTree, /搜索工具结果/)
-const needsTree = JSON.stringify(display.AbsNeedsPanel({ state: reviewState }))
+const needsTree = JSON.stringify(display.AbsNeedsPanel({ state: panelState }))
 assert.match(needsTree, /不代表真实情绪/)
 assert.match(needsTree, /不构成行动命令/)
 assert.ok(!needsTree.includes('动机'))
@@ -144,12 +162,11 @@ assert.equal(findDetails(tree).length, 2)
 assert.ok(findDetails(tree).every((node) => !node.props.open), 'raw JSON must be collapsed by default')
 assert.match(JSON.stringify(display.AbsAuditTimeline({ records: [] })), /还没有审计记录/)
 display.React = { useState: (value) => [value, () => {}] }
-const clockTree = JSON.stringify(display.AbsClockPanel({ state: { ...reviewState, nextWakeAt: '2030-01-01T00:00:00Z', clockView: { timeScale: 60, realNow: '2026-11-07T03:00:00Z', virtualNow: '2030-01-01T00:00:00Z', nextWakeRealAt: '2026-11-07T03:02:00Z', realWaitMs: 120000 } } }))
+const clockTree = JSON.stringify(display.AbsClockPanel({ state: { ...panelState, nextWakeAt: '2030-01-01T00:00:00Z', clockView: { timeScale: 60, realNow: '2026-11-07T03:00:00Z', virtualNow: '2030-01-01T00:00:00Z', nextWakeRealAt: '2026-11-07T03:02:00Z', realWaitMs: 120000 } } }))
 assert.match(clockTree, /2026-11-07 11:02:00 UTC\+8/)
 assert.doesNotMatch(clockTree, /2030|ABS 时间|下次审查（ABS）/)
 assert.equal(display.describeAbsAudit({ type: 'Recovery', at: '2030-01-01T00:00:00Z', realAt: '2026-11-07T03:00:00Z' }).time, '2026-11-07 11:00:00 UTC+8')
 assert.equal(display.describeAbsAudit({ type: 'Recovery', at: '2030-01-01T00:00:00Z' }).time, '—')
-assert.match(JSON.stringify(display.AbsReviewPanel({ state: { reviewPreview: '单一现实时间审查文本' } })), /单一现实时间审查文本/)
 const ledgerTree = JSON.stringify(display.AbsChangeLedger({ state: { changeLedger: [
   { realAt: '2026-11-07T03:00:00Z', driveId: 'curiosity', before: 0, after: .15, delta: .15, reason: 'local_content_found', activity: 'read' },
   { realAt: '2026-11-07T03:10:00Z', driveId: 'curiosity', before: .15, after: .07, delta: -.08, reason: 'natural_decay', timeScale: 120 },
@@ -160,36 +177,51 @@ assert.match(ledgerTree, /-8\.00 个百分点/)
 assert.match(ledgerTree, /不重复加分/)
 assert.match(ledgerTree, /2026-11-07 11:10:00 UTC\+8/)
 assert.match(JSON.stringify(display.AbsChangeLedger({ state: {} })), /暂无变化记录/)
-const restingState = { ...reviewState, mode: 'active', clockView: { rest: { enabled: true, start: '23:00', end: '08:00', resting: true, resumeAt: '2026-11-08T00:00:00Z' } } }
+const restingState = { ...panelState, mode: 'active', clockView: { rest: { enabled: true, start: '23:00', end: '08:00', resting: true, resumeAt: '2026-11-08T00:00:00Z' } } }
 const restTree = JSON.stringify(display.AbsRestPanel({ state: restingState }))
 assert.match(restTree, /23:00–08:00/)
 assert.match(restTree, /正在休息/)
 assert.match(restTree, /2026-11-08 08:00:00 UTC\+8/)
 assert.match(restTree, /不控制其他定时任务/)
-const restingReview = display.AbsReviewPanel({ state: restingState })
 function buttons(node) { return node && typeof node === 'object' ? [...(node.type === 'button' ? [node] : []), ...(node.children || []).flatMap(buttons)] : [] }
-assert.equal(buttons(restingReview).find((button) => button.children.includes('手动投递审查')).props.disabled, true)
-assert.equal(buttons(restingReview).find((button) => button.children.includes('刷新预览')).props.disabled, undefined)
 assert.match(display.absAuditWord('REST_HOURS'), /不唤醒/)
 // The integrated page mounts both states, folded time settings, and real event extraction.
 display.AbsOwnerStatePanel = function AbsOwnerStatePanel() {}
+display.AbsActivityPanel = function AbsActivityPanel() {}
 display.AbsEventsPanel = function AbsEventsPanel() {}
 let pageHook = 0
 const effects = []
+const pageValues = [{ state: panelState, audit: rows }, '', false, 'overview']
 display.React = {
   Fragment: 'fragment',
-  useState(value) { return [pageHook++ === 0 ? { state: reviewState } : value, () => {}] },
+  useState(value) { const index = pageHook++; return [pageValues[index] === undefined ? value : pageValues[index], next => { pageValues[index] = typeof next === 'function' ? next(pageValues[index]) : next }] },
   useRef(value) { return { current: value } },
   useEffect(fn) { effects.push(fn) },
 }
 const page = display.AbsLabPage()
 function allNodes(node) { return node && typeof node === 'object' ? [node, ...(node.children || []).flatMap(allNodes)] : [] }
 const panels = allNodes(page).filter(node => typeof node.type === 'function').map(node => node.type)
-assert.deepEqual(panels, [display.AbsOwnerStatePanel, display.AbsNeedsPanel, display.AbsClockPanel, display.AbsRestPanel, display.AbsEventsPanel])
+assert.deepEqual(panels, [display.AbsOwnerStatePanel, display.AbsNeedsPanel, display.AbsClockPanel, display.AbsRestPanel, display.AbsActivityPanel, display.AbsEventsPanel, display.AbsObservationsPanel, display.AbsAuditTimeline, display.AbsChangeLedger])
 assert.doesNotMatch(JSON.stringify(page), /运行状态|开始投递审查|隔离回放|导出近期审计|近期活动与决策|上次操作结果/)
 assert.equal(buttons(page).length, 0, 'page must not expose mode, wake, replay or export actions')
 assert.match(needsTree, /大肥鱼状态/)
-assert.equal(findDetails(page).length, 1)
-assert.ok(!findDetails(page)[0].props.open, 'time settings collapsed by default')
-console.log('PASS ABS integrated states, folded time settings and event panel')
-console.log('ABS client/startup: PASS (responses, startup, review UI, needs, observations, audit timeline, real-time-only display, change ledger, rest hours)')
+assert.equal(findDetails(page).length, 2)
+assert.ok(findDetails(page).every(node => !node.props.open), 'time settings and debug drawer collapsed by default')
+assert.equal(display.absLabViewFromUrl(), 'overview')
+display.window.location.href = 'http://localhost/lab?keep=1&absView=events#external-anchor'
+assert.equal(display.absLabViewFromUrl(), 'events', 'direct detail deep links resolve from the namespaced query')
+assert.equal(display.absLabUrlForView('overview'), '/lab?keep=1#external-anchor', 'back links preserve unrelated query params and hashes')
+pageValues[3] = 'events'; pageHook = 0; effects.length = 0
+const directPage = display.AbsLabPage()
+assert.deepEqual(allNodes(directPage).filter(node => typeof node.type === 'function').map(node => node.type), [display.AbsEventsPanel])
+const cleanupNav = effects[0]()
+effects[1]()
+assert.equal(absScrollRoot.scrollTop, 0)
+assert.equal(absFocusCount, 1, 'detail heading receives focus after a direct load')
+display.window.location.href = 'http://localhost/lab?keep=1&absView=inner#external-anchor'
+absPopListeners.get('popstate')()
+assert.equal(pageValues[3], 'inner', 'browser back/forward state follows namespaced subpage URLs')
+cleanupNav()
+assert.equal(absPopListeners.size, 0, 'unmount removes the popstate listener')
+console.log('PASS ABS integrated home cards, debug drawer and detail routing')
+console.log('ABS client/startup: PASS (responses, startup, needs, observations, audit timeline, real-time-only display, change ledger, rest hours, lab page routing)')

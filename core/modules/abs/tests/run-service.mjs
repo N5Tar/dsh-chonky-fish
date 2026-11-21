@@ -9,9 +9,14 @@ import { sanitizeAbsConfig, mergeAbsConfig } from '../config.js'
 const start = Date.parse('2026-11-07T00:00:00Z')
 const noDecay = { drives: { social: { decayPerHour: 0 }, curiosity: { decayPerHour: 0 } } }
 
+async function armCuriosity(f) {
+  // gap >= 0.65: (0.7 - s)/0.7 >= 0.65 => s <= 0.245
+  f.state.drives.curiosity.satisfaction = 0.2
+}
+
 async function setup(overrides = {}, seed, options = {}) {
   let clock = options.realStart ?? start, cfg = sanitizeAbsConfig(overrides), saved = seed ? structuredClone(seed) : null, callback
-  const records = [], deliveries = []
+  const records = [], deliveries = [], activityRows = new Map(), activityEvents = []
   let acceptance = () => ({ accepted: true, status: 'accepted', sessionId: 'fish', messageId: 'msg-' + deliveries.length })
   const store = {
     read: () => structuredClone(saved),
@@ -19,16 +24,50 @@ async function setup(overrides = {}, seed, options = {}) {
     records: ({ limit }) => records.slice(-limit),
     async close() {},
   }
+  const actionSelections = new Map()
+  const activityStore = {
+    recoverOpen() {}, startRuntime() { return 'runtime-test' }, touchRuntime() {}, closeRuntime() {}, prune() {}, close() {},
+    recordWake(row) { activityRows.set(row.episodeId, structuredClone(row)); return true },
+    recordEvidence(row) { activityEvents.push(structuredClone(row)); return true }, recordTurn(row) { activityEvents.push(structuredClone(row)); return true },
+    setAnnotation: async row => row, reportChoice: async row => row,
+    query: ({ from, to, limit = 100, offset = 0 }) => ({ window: { from, to, timeZone: 'Asia/Shanghai', complete: false, runtimeWindows: [], gaps: [] }, summary: { episodes: 0, opportunities: 0, totalWakes: 0, notStarted: 0, verified: 0, deferred: 0, failed: 0, unknown: 0 }, episodes: [], interests: [], page: { limit, offset, total: 0, hasMore: false } }),
+    recordActionSelection(row) {
+      const dispatchStatus = row.intent == null ? 'suppressed' : row.mode === 'shadow' ? 'preview' : 'reserved'
+      const persisted = { ...structuredClone(row), dispatchStatus, created: true, reason: row.reason ?? (row.intent == null ? 'no_candidate' : 'selected') }
+      actionSelections.set(row.selectionId, persisted)
+      return structuredClone(persisted)
+    },
+    resolveActionSelection({ selectionId, dispatchStatus, at, reason }) {
+      const prior = actionSelections.get(selectionId) ?? { selectionId }
+      const resolved = { ...prior, dispatchStatus, at, ...(reason != null ? { reason } : {}) }
+      actionSelections.set(selectionId, resolved)
+      return structuredClone(resolved)
+    },
+    actionContext() { return { remindedWorkStreakIds: [] } },
+    findActionSelection(key) { return actionSelections.get(key?.selectionId) ?? null },
+    markActionVisible() { return true },
+    recordAttempt() {},
+  }
   const host = {
     async environment() { return { ownerSession: { available: true, sessionId: 'fish' }, search: { available: true } } },
-    async surfaceReview({ canDeliver, ...payload }) { const reason = canDeliver?.(); if (reason) return { accepted: false, reason }; deliveries.push(structuredClone(payload)); return acceptance() },
+    async surfaceAction({ canDeliver, ...payload }) {
+      const block = canDeliver?.()
+      if (block) return { accepted: false, definitive: true, status: 'rejected', reason: block }
+      const outcome = acceptance()
+      if (outcome.accepted === false && outcome.definitive !== false) outcome.definitive = true
+      if (outcome.accepted !== false) deliveries.push(structuredClone(payload))
+      return outcome
+    },
+    setActionSelectionLookup() {},
     subscribeObservation(fn) { callback = fn; return () => { callback = null } },
+    subscribeActivity(fn) { activityEvents.push(fn); return () => {} }, activityReportScope() { return null }, boundSessionId() { return 'fish' },
     close() {},
   }
-  const service = await createAbsService({ store, host, getConfig: () => cfg, now: () => clock, logger: { warn() {} }, ...(options.timers ? { timers: options.timers } : {}) })
+  const service = await createAbsService({ store, activityStore, host, getConfig: () => cfg, now: () => clock, logger: { warn() {} }, ...(options.timers ? { timers: options.timers } : {}) })
   return {
     service, records, deliveries,
     get state() { return saved },
+    get activityRows() { return activityRows },
     now: () => clock,
     advanceMinutes: (minutes) => { clock += minutes * 60000 },
     advanceMs: (ms) => { clock += ms },
@@ -57,6 +96,7 @@ await test('rest blocks timer/manual/activation at 120x and resumes once at 08:0
   const g = await setup({ mode: 'active', timeScale: 120, activationCooldownMinutes: 0 }, seed, { realStart: realStart + 8 * 3600000 })
   assert.equal((await g.service.wake('manual')).reason, 'REST_HOURS')
   g.advanceMinutes(60)
+  await armCuriosity(g)
   assert.equal((await g.service.wake('timer')).delivered, true)
   assert.equal((await g.service.wake('timer')).reason, 'NOT_DUE')
   assert.equal(g.deliveries.length, 1)
@@ -64,12 +104,13 @@ await test('rest blocks timer/manual/activation at 120x and resumes once at 08:0
 })
 
 await test('future deadlines inside rest are shown at morning and disabling rest takes effect', async () => {
-  const f = await setup({ mode: 'active', activationCooldownMinutes: 0 }, null, { realStart: Date.parse('2026-11-07T22:00:00+08:00') })
+  const f = await setup({ mode: 'active', activationCooldownMinutes: 0, drives: { curiosity: { initialSatisfaction: 0.2 } } }, null, { realStart: Date.parse('2026-11-07T22:00:00+08:00') })
   assert.equal((await f.service.wake('timer')).delivered, true)
   assert.equal(f.service.inspect().clockView.nextWakeRealAt, '2026-11-08T00:00:00.000Z')
   f.advanceMinutes(120)
   assert.equal((await f.service.wake('manual')).reason, 'REST_HOURS')
   f.configure({ restHours: { enabled: false } })
+  await armCuriosity(f)
   assert.equal((await f.service.wake('timer')).delivered, true)
   await f.close()
 })
@@ -90,58 +131,59 @@ await test('rest timer polls configuration without repeated wakes or audit write
 })
 
 await test('shadow computes and previews without delivering anything', async () => {
-  const f = await setup()
+  const f = await setup({ drives: { curiosity: { initialSatisfaction: 0.2 } } })
   const result = await f.service.wake('timer')
   assert.equal(result.delivered, false)
   assert.equal(result.reason, 'SHADOW_PREVIEW_ONLY')
   assert.equal(f.deliveries.length, 0)
   assert.equal(f.state.lastReview, null)
   assert.ok(f.state.nextWakeAt)
-  assert.ok(f.service.inspect().reviewPreview.includes('大肥鱼的内心独白'))
+  assert.ok(result.actionSelection)
+  assert.equal(result.actionSelection.intent, 'continue_interest')
+  assert.equal(result.actionSelection.dispatchStatus, 'preview')
   assert.equal(f.records.find((row) => row.type === 'WakeRecord').gate, 'SHADOW_PREVIEW_ONLY')
-  const before = JSON.stringify(f.state)
-  const preview = f.service.preview()
-  assert.ok(preview.text.includes('大肥鱼的内心独白'))
-  assert.equal(JSON.stringify(f.state), before)
   await f.close()
 })
 
 await test('active delivers one review only after activation cooldown', async () => {
-  const f = await setup({ mode: 'active' })
-  const first = await f.service.wake('timer')
+  const f = await setup({ mode: 'active', drives: { curiosity: { initialSatisfaction: 0.2 } } })
+  const first = await f.service.wake('manual')
   assert.equal(first.delivered, false)
   assert.equal(first.reason, 'ACTIVATION_COOLDOWN')
   assert.equal(f.deliveries.length, 0)
   f.advanceMinutes(121)
+  await armCuriosity(f)
   const second = await f.service.wake('timer')
   assert.equal(second.delivered, true)
   assert.equal(f.deliveries.length, 1)
   const review = f.deliveries[0]
-  assert.ok(review.text.includes('大肥鱼的内心独白'))
+  assert.ok(review.text.includes('很想接触些新东西'))
   for (const word of ['web_search', '目标', '任务', '请']) assert.ok(!review.text.includes(word))
   assert.equal(f.state.lastReview.status, 'delivered')
-  assert.equal(f.state.lastReview.messageId, 'msg-1')
-  assert.ok(f.records.some((row) => row.type === 'ReviewDelivered'))
+  assert.equal(f.state.lastReview.messageId, f.deliveries[0].messageId)
+  assert.ok(f.records.some((row) => row.type === 'ActionDispatch'))
   assert.equal(f.state.nextWakeAt, new Date(Date.parse(f.state.lastReview.at) + 120 * 60000).toISOString())
   await f.close()
 })
 
 await test('scheduled reviews respect the interval; manual review bypasses the schedule', async () => {
-  const f = await setup({ mode: 'active' })
-  await f.service.wake('timer'); f.advanceMinutes(121); await f.service.wake('timer')
+  const f = await setup({ mode: 'active', drives: { curiosity: { initialSatisfaction: 0.2 } } })
+  await f.service.wake('timer'); f.advanceMinutes(121); await armCuriosity(f); await f.service.wake('timer')
   assert.equal(f.deliveries.length, 1)
   f.advanceMinutes(5)
   assert.equal((await f.service.wake('timer')).reason, 'NOT_DUE')
   assert.equal(f.deliveries.length, 1)
+  await armCuriosity(f)
   assert.equal((await f.service.wake('manual')).delivered, true)
   assert.equal(f.deliveries.length, 2)
   await f.close()
 })
 
 await test('real-time minimum gap prevents flooding under acceleration', async () => {
-  const f = await setup({ mode: 'active', timeScale: 60, reviewIntervalMinutes: 10 })
+  const f = await setup({ mode: 'active', timeScale: 60, reviewIntervalMinutes: 10, drives: { curiosity: { initialSatisfaction: 0.2 } } })
   await f.service.wake('timer')
   f.advanceMinutes(1) // 60 ABS minutes, past activation
+  await armCuriosity(f)
   assert.equal((await f.service.wake('timer')).delivered, true)
   assert.equal(f.deliveries.length, 1)
   const next = Date.parse(f.state.nextWakeAt)
@@ -150,12 +192,13 @@ await test('real-time minimum gap prevents flooding under acceleration', async (
   assert.equal((await f.service.wake('timer')).reason, 'NOT_DUE')
   assert.equal(f.deliveries.length, 1)
   f.advanceMinutes(10)
+  await armCuriosity(f)
   assert.equal((await f.service.wake('timer')).delivered, true)
   await f.close()
 })
 
 await test('pause blocks delivery and keeps state frozen', async () => {
-  const f = await setup({ mode: 'active' })
+  const f = await setup({ mode: 'active', drives: { curiosity: { initialSatisfaction: 0.2 } } })
   await f.service.wake('timer'); f.advanceMinutes(121)
   f.configure({ timeScale: 0 }); await f.service.syncClock()
   const frozen = f.service.inspect().clockView.virtualNow
@@ -167,14 +210,16 @@ await test('pause blocks delivery and keeps state frozen', async () => {
 })
 
 await test('delivery failure is recorded without inventing success', async () => {
-  const f = await setup({ mode: 'active' })
-  f.setAcceptance(() => ({ accepted: false, status: 'rejected', reason: 'agent-busy' }))
+  const f = await setup({ mode: 'active', drives: { curiosity: { initialSatisfaction: 0.2 } } })
+  f.setAcceptance(() => ({ accepted: false, status: 'rejected', reason: 'agent-busy', definitive: true }))
   await f.service.wake('timer'); f.advanceMinutes(121)
+  await armCuriosity(f)
   const result = await f.service.wake('timer')
   assert.equal(result.delivered, false)
   assert.equal(result.reason, 'agent-busy')
   assert.equal(f.state.lastReview.status, 'failed')
-  assert.ok(f.records.some((row) => row.type === 'ReviewFailed'))
+  assert.ok(f.records.some((row) => row.type === 'ActionDispatch'))
+  assert.ok(!f.records.some((row) => row.type === 'ReviewFailed'))
   await f.close()
 })
 
@@ -245,8 +290,8 @@ await test('ledger records actual clamped gain and accelerated decay with real t
 })
 
 await test('a review turn that yields a search result feeds back through observation', async () => {
-  const f = await setup({ mode: 'active' })
-  await f.service.wake('timer'); f.advanceMinutes(121); await f.service.wake('timer')
+  const f = await setup({ mode: 'active', drives: { curiosity: { initialSatisfaction: 0.2 } } })
+  await f.service.wake('timer'); f.advanceMinutes(121); await armCuriosity(f); await f.service.wake('timer')
   const before = f.state.drives.curiosity.satisfaction
   f.observe({ kind: 'exploration', result: 'explore_content_found', sessionId: 'fish', seq: 30, at: new Date(f.now()).toISOString(), sources: 2 })
   await f.service.syncClock()
@@ -256,8 +301,8 @@ await test('a review turn that yields a search result feeds back through observa
 })
 
 await test('restart keeps state and does not replay missed reviews', async () => {
-  const f = await setup({ mode: 'active' })
-  await f.service.wake('timer'); f.advanceMinutes(121); await f.service.wake('timer')
+  const f = await setup({ mode: 'active', drives: { curiosity: { initialSatisfaction: 0.2 } } })
+  await f.service.wake('timer'); f.advanceMinutes(121); await armCuriosity(f); await f.service.wake('timer')
   const snapshot = structuredClone(f.state)
   await f.close()
   const g = await setup({ mode: 'active' }, snapshot, { realStart: start + 600000 })
@@ -286,8 +331,9 @@ await test('legacy motivations and executions are archived, drives and clock sur
 })
 
 await test('60x and 1x produce identical internal state for the same ABS elapsed time', async () => {
-  const normal = await setup(noDecay)
-  const fast = await setup({ ...noDecay, timeScale: 60 })
+  const curiosityLow = { drives: { social: { decayPerHour: 0 }, curiosity: { decayPerHour: 0, initialSatisfaction: 0.2 } } }
+  const normal = await setup(curiosityLow)
+  const fast = await setup({ ...curiosityLow, timeScale: 60 })
   await normal.service.wake('timer')
   await fast.service.wake('timer')
   normal.advanceMinutes(120)
@@ -296,14 +342,13 @@ await test('60x and 1x produce identical internal state for the same ABS elapsed
   await fast.service.wake('timer')
   assert.deepEqual(normal.state.drives, fast.state.drives)
   assert.equal(normal.state.nextWakeAt, fast.state.nextWakeAt)
-  assert.equal(normal.service.inspect().reviewPreview, fast.service.inspect().reviewPreview)
   assert.equal(fast.service.inspect().clockView.nextWakeRealAt, new Date(start + 4 * 60000).toISOString())
   await normal.close(); await fast.close()
 })
 
 await test('clock scale changes are persisted without delivering', async () => {
-  const f = await setup({ mode: 'active' })
-  await f.service.wake('timer'); f.advanceMinutes(121); await f.service.wake('timer')
+  const f = await setup({ mode: 'active', drives: { curiosity: { initialSatisfaction: 0.2 } } })
+  await f.service.wake('timer'); f.advanceMinutes(121); await armCuriosity(f); await f.service.wake('timer')
   const deliveries = f.deliveries.length
   f.configure({ timeScale: 60 })
   await f.service.syncClock()
@@ -322,18 +367,17 @@ async function request(handler, method, body, token) {
   return result
 }
 
-await test('HTTP exposes state/environment and preview without side effects', async () => {
+await test('HTTP exposes state/environment without delivery side effects', async () => {
   const f = await setup()
   const handler = createAbsHttpHandler({ service: f.service, resources: { async updateConfig() {} }, token: 'token' })
   assert.equal((await request(handler, 'GET', undefined, 'bad')).status, 200)
   const current = await request(handler, 'GET')
   assert.equal(current.status, 200)
-  assert.ok(current.body.state.reviewPreview.includes('大肥鱼的内心独白'))
+  assert.ok(current.body.state.drives)
+  assert.equal(current.body.state.lastReview, null)
   assert.equal(current.body.environment.ownerSession.available, true)
   const before = JSON.stringify(f.state), deliveries = f.deliveries.length
-  const preview = await request(handler, 'POST', { action: 'preview' })
-  assert.equal(preview.status, 200)
-  assert.ok(preview.body.result.text.includes('大肥鱼的内心独白'))
+  assert.equal((await request(handler, 'POST', { action: 'export' })).status, 200)
   assert.equal(JSON.stringify(f.state), before)
   assert.equal(f.deliveries.length, deliveries)
   assert.equal((await request(handler, 'POST', { action: 'report', satisfactionDelta: 1 })).status, 400)
@@ -348,8 +392,8 @@ await test('HTTP without tokens preserves method, payload and input validation',
   assert.equal((await request(handler, 'DELETE')).status, 405)
   assert.equal((await request(handler, 'POST')).status, 400)
   assert.equal((await request(handler, 'POST', [])).status, 400)
-  assert.equal((await request(handler, 'POST', { action: 'preview', x: 1 })).status, 409)
-  assert.equal((await request(handler, 'POST', { action: 'preview', padding: 'x'.repeat(33) })).status, 413)
+  assert.equal((await request(handler, 'POST', { action: 'wake', x: 1 })).status, 409)
+  assert.equal((await request(handler, 'POST', { action: 'export', padding: 'x'.repeat(33) })).status, 413)
   await f.close()
 })
 
@@ -363,7 +407,7 @@ await test('HTTP mode activation requires confirmation and isolated replay stays
   assert.equal(replay.status, 200)
   assert.equal(replay.body.result.isolated, true)
   assert.equal(Date.parse(replay.body.result.at), Date.parse(virtualNow) + 72 * 3600000)
-  assert.ok(replay.body.result.review.includes('大肥鱼的内心独白'))
+  assert.equal(replay.body.result.review, undefined)
   assert.equal(f.deliveries.length, 0)
   const activated = await request(handler, 'POST', { action: 'mode', mode: 'active', confirmActive: true })
   assert.equal(activated.status, 200)

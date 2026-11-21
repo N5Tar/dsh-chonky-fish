@@ -26,13 +26,16 @@ const ctx = {
 }
 const originalFetch = globalThis.fetch
 globalThis.fetch = async endpoint => {
-  assert.equal(endpoint, 'voice-capabilities')
-  capabilitiesRequested()
-  await capabilitiesResponse
-  return { ok: true, status: 200, async json() { return { ok: true, data: { host: { local: false } } } } }
+  if (endpoint === 'voice-capabilities') {
+    capabilitiesRequested()
+    await capabilitiesResponse
+    return { ok: true, status: 200, async json() { return { ok: true, data: { host: { local: false } } } } }
+  }
+  if (endpoint === 'voice-settings') return { ok: true, status: 200, async json() { return { ok: true, data: { tts: {}, credentialConfigured: false, capabilities: {} } } } }
+  throw new Error(`Unexpected request ${endpoint}`)
 }
 try {
-  const controller = createDshVoiceController({ ctx, chat, routes: { voiceCapabilities: 'voice-capabilities' } })
+  const controller = createDshVoiceController({ ctx, chat, routes: { voiceCapabilities: 'voice-capabilities', voiceSettings: 'voice-settings' } })
   assert.equal(typeof resetHandler, 'function', 'bootstrap subscribes to the chat reset lifecycle')
   const pendingSetup = controller.prepareModel().then(() => null, error => error)
   await capabilitiesReady

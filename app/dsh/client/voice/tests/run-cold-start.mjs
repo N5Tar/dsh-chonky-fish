@@ -30,6 +30,7 @@ const originalFetch = globalThis.fetch
 globalThis.fetch = async (endpoint, options = {}) => {
   const url = new URL(endpoint, 'http://localhost/')
   if (url.pathname === '/caps') return { ok: true, status: 200, async json() { return { ok: true, data: { host: { local: true, os: 'win32', arch: 'x64' }, ownership: { serviceGeneration: 'host-boot-1' }, synthesis: { supported: true, voices: [] }, assets: { endpoint: '/chonkyfish/voice/assets' } } } } }
+  if (url.pathname === '/voice-settings') return { ok: true, status: 200, async json() { return { ok: true, data: { tts: DEFAULT_VOICE_CONFIG.tts, credentialConfigured: false, capabilities: { emotionSupported: false, emotionTags: [], audioOutput: 'complete', conversationEmotionEnabled: false } } } } }
   if (url.pathname === '/config') return { ok: true, status: 200, async json() { return { ok: true, config: { voice: DEFAULT_VOICE_CONFIG }, configRevision: 'a'.repeat(64) } } }
   if (url.pathname === '/chonkyfish/voice/assets' && url.searchParams.get('key') === 'manifest.json') return { ok: true, status: 200, async json() { return manifest } }
   throw new Error(`Unexpected request ${options.method || 'GET'} ${url.href}`)
@@ -56,7 +57,7 @@ const streamCtx = {
     return injection
   },
 }
-const createController = () => createDshVoiceController({ ctx: streamCtx, chat, routes: { voiceCapabilities: '/caps', config: '/config', voiceAssets: '/chonkyfish/voice/assets' } })
+const createController = () => createDshVoiceController({ ctx: streamCtx, chat, routes: { voiceCapabilities: '/caps', voiceSettings: '/voice-settings', config: '/config', voiceAssets: '/chonkyfish/voice/assets', voiceCalls: '/calls', voiceSources: '/voice-sources', voiceSynthesis: '/voice-synthesis', voicePreview: '/voice-preview', voiceAudio: '/voice-audio', voiceCancel: '/voice-cancel' } })
 const second = createController()
 try {
   const pendingStart = second.start()

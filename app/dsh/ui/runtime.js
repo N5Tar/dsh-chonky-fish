@@ -29,6 +29,16 @@ function mountChonkyFishPage(wrap, chat, options) {
   var realStatus = { phase: realChat ? 'idle' : 'disabled', error: null }
   var realUnsubscribe = null
   var voiceControl = null
+  var voiceController = null
+  var voiceControllerUnsubscribe = null
+  var voiceSnapshotUnsubscribe = null
+  var voicePlaybackStatus = 'idle'
+  var audioSummaries = new Map()
+  var audioSummaryQueries = new Set()
+  var audioSummaryPending = new Set()
+  var audioSummaryRequestTokens = new Map()
+  var audioSummaryRequestSerial = 0
+  var playingAudioKey = ''
   var lastChatSignature = ''
   var busy = false
 
@@ -1440,7 +1450,10 @@ function mountChonkyFishPage(wrap, chat, options) {
   var typingElement = null
 
   function messageKey(message) {
-    return message.role + '|' + (message.time || '') + '|' + message.text
+    var source = message && message.sourceRef
+    var key = source && typeof source.sessionId === 'string' && Number.isSafeInteger(source.seq) ? source.sessionId + ':' + source.seq : ''
+    var summary = key ? audioSummaries.get(key) : null
+    return message.role + '|' + (message.time || '') + '|' + message.text + '|' + key + '|' + (summary?.audioId || '')
   }
   function clearTyping() {
     if (typingElement && typingElement.parentNode) typingElement.parentNode.removeChild(typingElement)
@@ -1468,7 +1481,82 @@ function mountChonkyFishPage(wrap, chat, options) {
     }
     return state.messages
   }
-  function appendMessage(role, text, time) {
+  function messageSource(message) {
+    var source = message && message.sourceRef
+    return source && typeof source.sessionId === 'string' && Number.isSafeInteger(source.seq) && source.seq >= 0 ? source : null
+  }
+  function audioSummaryKey(source) { return source ? source.sessionId + ':' + source.seq : '' }
+  function audioSummaryFor(message) {
+    var source = messageSource(message)
+    return source ? audioSummaries.get(audioSummaryKey(source)) || null : null
+  }
+  function loadAudioSummaries(messages, force) {
+    if (!voiceController || !realChat || !realMode || typeof voiceController.listStoredAudio !== 'function') return
+    var grouped = new Map()
+    messages.forEach(function (message) {
+      if (message.role !== 'fish') return
+      var source = messageSource(message)
+      if (!source) return
+      var seqs = grouped.get(source.sessionId) || new Set()
+      seqs.add(source.seq); grouped.set(source.sessionId, seqs)
+    })
+    grouped.forEach(function (seqSet, sessionId) {
+      var seqs = Array.from(seqSet).sort(function (a, b) { return a - b })
+      var queryKey = sessionId + ':' + seqs.join(',')
+      if (audioSummaryPending.has(queryKey) && !force || !force && audioSummaryQueries.has(queryKey)) return
+      var requestToken = ++audioSummaryRequestSerial
+      audioSummaryRequestTokens.set(queryKey, requestToken)
+      audioSummaryPending.add(queryKey)
+      var controllerAtRequest = voiceController
+      voiceController.listStoredAudio(sessionId, seqs).then(function (result) {
+        if (audioSummaryRequestTokens.get(queryKey) !== requestToken || voiceController !== controllerAtRequest) return
+        if (!Array.isArray(result?.items)) throw new Error('Invalid stored audio summary response')
+        var currentSources = new Set()
+        displayedMessages().forEach(function (message) {
+          var source = messageSource(message)
+          if (source) currentSources.add(audioSummaryKey(source))
+        })
+        if (!seqs.every(function (seq) { return currentSources.has(sessionId + ':' + seq) })) return
+        var changed = false
+        var returned = new Set()
+        var items = result.items
+        items.forEach(function (item) {
+          if (!item || typeof item.audioId !== 'string' || item.source?.sessionId !== sessionId || !Number.isSafeInteger(item.source?.seq) || !seqSet.has(item.source.seq)) return
+          var key = audioSummaryKey(item.source)
+          returned.add(key)
+          var old = audioSummaries.get(key)
+          if (!old || old.audioId !== item.audioId || old.durationMs !== item.durationMs) changed = true
+          audioSummaries.set(key, item)
+        })
+        seqs.forEach(function (seq) {
+          var key = sessionId + ':' + seq
+          if (!returned.has(key) && audioSummaries.delete(key)) changed = true
+        })
+        audioSummaryQueries.add(queryKey)
+        if (audioSummaryRequestTokens.get(queryKey) === requestToken) audioSummaryPending.delete(queryKey)
+        if (changed) renderChat(true)
+      }).catch(function () {
+        if (audioSummaryRequestTokens.get(queryKey) === requestToken) audioSummaryPending.delete(queryKey)
+      })
+    })
+  }
+  function setVoiceController(next) {
+    if (voiceSnapshotUnsubscribe) { try { voiceSnapshotUnsubscribe() } catch (error) {} voiceSnapshotUnsubscribe = null }
+    voiceController = next || null
+    voicePlaybackStatus = 'idle'
+    if (voiceController && typeof voiceController.subscribe === 'function') {
+      voiceSnapshotUnsubscribe = voiceController.subscribe(function (snapshot) {
+        var current = snapshot?.playback?.status || 'idle'
+        var finished = ['playing', 'synthesizing', 'stopping'].includes(voicePlaybackStatus) && !['playing', 'synthesizing', 'stopping'].includes(current)
+        voicePlaybackStatus = current
+        if (finished) loadAudioSummaries(displayedMessages(), true)
+      })
+    }
+    loadAudioSummaries(displayedMessages(), true)
+    renderChat(true)
+  }
+  function appendMessage(message) {
+    var role = message.role, text = message.text, time = message.time
     var container = $('messages')
     if (!container) return
     var msg = document.createElement('div')
@@ -1489,6 +1577,37 @@ function mountChonkyFishPage(wrap, chat, options) {
     bubble.className = 'msg-bubble'
     bubble.textContent = text
     box.append(meta, bubble)
+    var audioSummary = role === 'fish' ? audioSummaryFor(message) : null
+    if (audioSummary && voiceController) {
+      var audioButton = document.createElement('button')
+      var audioKey = audioSummaryKey(audioSummary.source)
+      var isPlaying = playingAudioKey === audioKey
+      audioButton.type = 'button'
+      audioButton.className = 'reply-audio-button'
+      audioButton.setAttribute('aria-label', isPlaying ? '停止语音回复' : '播放语音回复')
+      audioButton.textContent = isPlaying ? '停止语音' : '播放语音'
+      audioButton.addEventListener('click', function () {
+        if (playingAudioKey === audioKey) {
+          voiceController.stopStoredReply?.()
+          playingAudioKey = ''
+          renderChat(true)
+          return
+        }
+        if (playingAudioKey) voiceController.stopStoredReply?.()
+        playingAudioKey = audioKey
+        renderChat(true)
+        voiceController.playStoredReply(audioSummary).then(function (played) {
+          playingAudioKey = ''
+          if (played === false) return
+          renderChat(true)
+        }).catch(function (error) {
+          playingAudioKey = ''
+          toast(error?.message || '语音回复暂时无法播放')
+          renderChat(true)
+        })
+      })
+      box.append(audioButton)
+    }
     msg.append(box)
     container.append(msg)
     container.scrollTop = container.scrollHeight
@@ -1498,6 +1617,7 @@ function mountChonkyFishPage(wrap, chat, options) {
     if (!container) return
     var mode = realMode && realChat ? 'real' : 'demo'
     var list = displayedMessages().slice(-80)
+    loadAudioSummaries(list, false)
     var rebuild = force === true || mode !== renderedMode || container !== renderedConversation
     var start = 0
     if (!rebuild) {
@@ -1531,7 +1651,7 @@ function mountChonkyFishPage(wrap, chat, options) {
     }
     var appended = false
     for (var index = start; index < list.length; index += 1) {
-      appendMessage(list[index].role, list[index].text, list[index].time)
+      appendMessage(list[index])
       appended = true
     }
     renderedMessages = list.slice()
@@ -2005,6 +2125,9 @@ function mountChonkyFishPage(wrap, chat, options) {
   }
 
   if (realChat) {
+    if (typeof realChat.onVoiceController === 'function') {
+      voiceControllerUnsubscribe = realChat.onVoiceController(setVoiceController)
+    }
     realUnsubscribe = realChat.onChange(handleChatChange)
     handleChatChange()
     realChat.ensure().catch(function () {
@@ -2036,6 +2159,14 @@ function mountChonkyFishPage(wrap, chat, options) {
     if (realUnsubscribe) {
       realUnsubscribe()
       realUnsubscribe = null
+    }
+    if (voiceControllerUnsubscribe) {
+      voiceControllerUnsubscribe()
+      voiceControllerUnsubscribe = null
+    }
+    if (voiceSnapshotUnsubscribe) {
+      voiceSnapshotUnsubscribe()
+      voiceSnapshotUnsubscribe = null
     }
     if (voiceControl) { voiceControl.dispose(); voiceControl = null }
     if (confirmResolve) {

@@ -42,6 +42,11 @@ var ABS_LAB_SURFACE = `
 .cf-abs-lab *{box-sizing:border-box}.cf-abs-lab .abs-shell{max-width:1260px;margin:auto;padding:36px 40px 48px}.cf-abs-lab h1{font-size:28px;margin:0}.cf-abs-lab h2{font-size:17px;margin:0}.cf-abs-lab h3{font-size:14px;font-weight:500;margin:0}.cf-abs-lab p{margin:8px 0}.cf-abs-lab .abs-muted{color:var(--dsw-alias-label-secondary);font-size:12px}.cf-abs-lab .abs-header{margin-bottom:28px}.cf-abs-lab .abs-states{display:grid;grid-template-columns:.85fr 1.4fr;gap:20px}.cf-abs-lab .abs-panel{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:24px 26px;min-width:0}.cf-abs-lab .abs-panel-heading,.cf-abs-lab .abs-panel-footer{display:flex;justify-content:space-between;align-items:center;gap:12px}.cf-abs-lab .abs-panel-footer{border-top:1px solid var(--dsw-alias-border-l1);padding-top:18px;color:var(--dsw-alias-label-secondary);font-size:12px;flex-wrap:wrap}.cf-abs-lab .abs-owner-body{min-height:178px;display:flex;justify-content:center;flex-direction:column}.cf-abs-lab .activity{font-size:40px;font-weight:600;line-height:1.3}.cf-abs-lab .abs-drives{display:grid;grid-template-columns:1fr 1fr;gap:28px;padding:28px 0}.cf-abs-lab .abs-drive+.abs-drive{border-left:1px solid var(--dsw-alias-border-l1);padding-left:28px}.cf-abs-lab .abs-value{font-size:36px;line-height:1.4;margin:8px 0}.cf-abs-lab meter{width:100%;height:10px;accent-color:var(--dsw-alias-brand-primary)}.cf-abs-lab meter::-webkit-meter-bar{background:var(--dsw-alias-bg-layer-2);border:0;border-radius:2px}.cf-abs-lab meter::-webkit-meter-optimum-value{background:var(--dsw-alias-brand-primary)}.cf-abs-lab meter::-moz-meter-bar{background:var(--dsw-alias-brand-primary)}.cf-abs-lab button,.cf-abs-lab input,.cf-abs-lab select{font:inherit;color:inherit;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:8px 12px;max-width:100%}.cf-abs-lab button{cursor:pointer;white-space:nowrap}.cf-abs-lab button:disabled{opacity:.5;cursor:default}.cf-abs-lab :focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:3px}.cf-abs-lab .abs-actions{display:flex;gap:8px}.cf-abs-lab .abs-actions button{font-size:12px;padding:5px 10px}.cf-abs-lab .abs-settings{margin-top:24px;padding:0}.cf-abs-lab .abs-settings>summary{cursor:pointer;padding:20px 26px;font-weight:600}.cf-abs-lab .abs-settings-summary{font-size:12px;font-weight:400;color:var(--dsw-alias-label-secondary);margin-left:20px}.cf-abs-lab .abs-time-grid{display:grid;grid-template-columns:1fr 1fr;gap:30px;padding:0 26px 20px;border-top:1px solid var(--dsw-alias-border-l1)}.cf-abs-lab .abs-error{padding:12px 16px;border-left:3px solid var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-1)}
 @container(max-width:960px){.cf-abs-lab .abs-shell{padding:28px 24px}.cf-abs-lab .abs-states{grid-template-columns:1fr}.cf-abs-lab .abs-time-grid{grid-template-columns:1fr;gap:0}}@container(max-width:600px){.cf-abs-lab .abs-shell{padding:20px 16px}.cf-abs-lab .abs-panel{padding:20px}.cf-abs-lab .abs-settings{padding:0}.cf-abs-lab .abs-settings-summary{display:block;margin:8px 0 0}.cf-abs-lab .abs-value{font-size:28px}.cf-abs-lab .abs-drives{gap:16px}.cf-abs-lab .abs-drive+.abs-drive{padding-left:16px}.cf-abs-lab .activity{font-size:32px}}
 `
+var ABS_ACTIVITY_STYLE = `
+.cf-abs-lab .abs-observation-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px}.cf-abs-lab .abs-observation-entry{display:block;color:inherit;text-decoration:none;background:#fff;border:1px solid var(--cf-border);border-radius:20px;padding:21px 23px;box-shadow:0 18px 46px #87b2e01a;min-width:0}.cf-abs-lab .abs-observation-entry:hover{border-color:#b4d2f1;background:#fcfdff}.cf-abs-lab .abs-observation-entry:focus-visible{outline:2px solid var(--cf-accent);outline-offset:3px}.cf-abs-lab .abs-entry-heading{display:flex;justify-content:space-between;align-items:center;gap:12px}.cf-abs-lab .abs-entry-heading h2{margin:0}.cf-abs-lab .abs-observation-entry>p{font-size:12px;color:var(--cf-muted);margin:7px 0 0}.cf-abs-lab .abs-entry-sample{margin:18px 0 14px;padding:12px 14px;border-radius:12px;background:var(--cf-soft);min-height:68px;overflow-wrap:anywhere}.cf-abs-lab .abs-entry-sample small{display:block;color:var(--cf-muted);font-size:11px;margin-top:5px}.cf-abs-lab .abs-entry-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;color:var(--cf-muted);font-size:11px}.cf-abs-lab .abs-entry-foot strong{color:var(--cf-accent);font-weight:600}.cf-abs-lab .abs-back-link{display:inline-block;color:var(--cf-accent);text-decoration:none;margin:0 0 18px}.cf-abs-lab .abs-detail-title{margin:0 0 18px}.cf-abs-lab .abs-detail-title h1{font-size:25px}.cf-abs-lab .abs-detail-title p{color:var(--cf-muted);font-size:12px;margin-top:4px}.cf-abs-lab .abs-events-summary,.cf-abs-lab .abs-activity-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;background:#fff;border:1px solid var(--cf-border);border-radius:18px;padding:18px 20px;margin:0 0 14px}.cf-abs-lab .abs-events-summary span,.cf-abs-lab .abs-activity-summary span{display:block;font-size:11px;color:var(--cf-muted)}.cf-abs-lab .abs-events-summary strong,.cf-abs-lab .abs-activity-summary strong{display:block;font-size:23px;color:#22456b}.cf-abs-lab .abs-events-summary+.cf-abs-events-note{font-size:11px;color:var(--cf-muted);margin:0 0 16px}.cf-abs-lab .cf-abs-events{margin:0}.cf-abs-lab .cf-abs-events .cf-abs-events-head{margin:0 0 14px}.cf-abs-lab .abs-activity-page{min-width:0}.cf-abs-lab .abs-activity-error{margin-bottom:14px}.cf-abs-lab .abs-activity-coverage{font-size:11px;color:var(--cf-muted);margin:0 0 18px}.cf-abs-lab .abs-activity-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0 10px}.cf-abs-lab .abs-activity-head h2{margin:0}.cf-abs-lab .abs-activity-layout{display:grid;grid-template-columns:minmax(0,1fr) 230px;gap:16px;align-items:start}.cf-abs-lab .abs-activity-list{min-width:0}.cf-abs-lab .abs-activity-record{padding:19px 20px;background:#fff;border:1px solid var(--cf-border);border-radius:18px;margin-bottom:10px;overflow-wrap:anywhere}.cf-abs-lab .abs-activity-heading{display:flex;justify-content:space-between;align-items:start;gap:12px}.cf-abs-lab .abs-activity-heading h3{font-size:14px;margin:0}.cf-abs-lab .abs-status,.cf-abs-lab .abs-source-tag{font-size:10px;white-space:nowrap;padding:2px 8px;border-radius:99px;background:#eaf4fb;color:#316da9}.cf-abs-lab .abs-status-failed{background:#fff0ee;color:#a14e43}.cf-abs-lab .abs-status-unknown{background:#f7f1e5;color:#81621f}.cf-abs-lab .abs-activity-record>p{font-size:11px;margin:6px 0}.cf-abs-lab .abs-activity-record details{font-size:12px;margin-top:12px}.cf-abs-lab .abs-activity-record summary{cursor:pointer;color:var(--cf-accent)}.cf-abs-lab .abs-activity-trail{list-style:none;padding:0;margin:12px 0 0 7px;border-left:2px solid #d4e3ee}.cf-abs-lab .abs-activity-trail>li{position:relative;padding:0 0 15px 14px}.cf-abs-lab .abs-activity-trail>li:before{content:'';position:absolute;left:-5px;top:7px;width:8px;height:8px;border-radius:50%;background:#8fb5cc}.cf-abs-lab .abs-activity-trail strong{font-weight:600}.cf-abs-lab .abs-activity-trail p,.cf-abs-lab .abs-activity-trail ul{margin:4px 0;color:var(--cf-muted);font-size:11px;line-height:1.7}.cf-abs-lab .abs-evidence-ref{margin-top:9px;padding:8px 12px;border-left:2px solid #b8cbd8;background:var(--cf-soft);overflow-wrap:anywhere}.cf-abs-lab .abs-evidence-ref p{font-size:11px;margin:5px 0}.cf-abs-lab .abs-annotations{display:flex;align-items:center;gap:7px;flex-wrap:wrap;border-top:1px solid var(--cf-border);padding-top:12px;margin-top:13px;color:var(--cf-muted);font-size:11px}.cf-abs-lab .abs-annotations button{font-size:10px;min-height:30px;padding:4px 9px}.cf-abs-lab .abs-annotations button[aria-pressed=true]{color:var(--cf-accent);background:#edf5ff;border-color:#b4d2f1}.cf-abs-lab .abs-interest-panel{padding:18px}.cf-abs-lab .abs-interest-panel h2{margin:0}.cf-abs-lab .abs-interest-panel article{border-top:1px solid var(--cf-border);padding:12px 0 0;margin-top:12px}.cf-abs-lab .abs-interest-panel article h3{font-size:12px;margin:0}.cf-abs-lab .abs-interest-panel article p,.cf-abs-lab .abs-interest-panel>p{font-size:11px;color:var(--cf-muted);margin:5px 0}.cf-abs-lab .abs-debug-drawer{margin-top:18px}.cf-abs-lab .abs-debug-drawer>summary{cursor:pointer;color:var(--cf-muted);font-size:12px}.cf-abs-lab .abs-debug-section{padding:16px 0;border-top:1px solid var(--cf-border);overflow-wrap:anywhere}
+.cf-abs-lab .abs-activity-summary{grid-template-columns:repeat(3,minmax(0,1fr))}.cf-abs-lab .abs-activity-pagination{display:flex;justify-content:center;align-items:center;gap:12px;margin:16px 0;font-size:11px;color:var(--cf-muted)}.cf-abs-lab .abs-activity-coverage details{margin:7px 0}.cf-abs-lab .abs-activity-coverage summary{cursor:pointer;color:var(--cf-accent)}.cf-abs-lab .abs-activity-coverage p{margin:5px 0}
+@container(max-width:760px){.cf-abs-lab .abs-observation-grid,.cf-abs-lab .abs-activity-layout{grid-template-columns:1fr}.cf-abs-lab .abs-interest-panel{order:2}}@container(max-width:520px){.cf-abs-lab .abs-observation-grid{grid-template-columns:1fr}.cf-abs-lab .abs-events-summary,.cf-abs-lab .abs-activity-summary{grid-template-columns:1fr 1fr;padding:15px}.cf-abs-lab .abs-observation-entry{padding:17px}.cf-abs-lab .abs-entry-foot{align-items:start;flex-direction:column}.cf-abs-lab .abs-activity-record{padding:15px}.cf-abs-lab .abs-activity-heading{flex-wrap:wrap}.cf-abs-lab .abs-activity-pagination{flex-wrap:wrap}}
+`
 var ABS_AUDIT_WORDS = {
   off: '已关闭', shadow: '观察模式', active: '投递模式',
   timer: '定时审查', manual: '手动审查', transition: '模式切换',
@@ -238,21 +243,6 @@ function AbsRestPanel(props) {
     h('p', null, '按现实时间执行，不受倍率影响。休息时不由 ABS 唤醒，手动投递也不绕过；结束后只恢复正常调度，不补发夜间积压。'),
     h('p', { style: { fontSize: 12, opacity: .75 } }, '不会中断正在进行的任务，也不阻止主人聊天。满足度自然衰减与真实事件反馈保持原规则；此设置只约束 ABS，不控制其他定时任务。'))
 }
-function AbsReviewPanel(props) {
-  var state = props.state || {}, last = state.lastReview
-  var statusText = !last ? '尚未投递过审查。'
-    : last.status === 'delivered' ? '上次投递：已提交给大肥鱼（' + formatAbsTime(last.realAt) + '）。接纳不等于已经行动，也不等于主人已读。'
-      : '上次投递未成功：' + absAuditWord(last.reason) + '（' + formatAbsTime(last.realAt) + '）。'
-  return h('section', { 'aria-label': '自身精神状态审查', style: { margin: '24px 0' } },
-    h('h2', null, '自身精神状态审查'),
-    h('p', { style: { fontSize: 12, opacity: .75, lineHeight: 1.7 } }, '这是当前会交给大肥鱼的文本：只描述内部状态与真实观察，不包含任务、渠道或行动要求。'),
-    h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.8, padding: '16px 18px', margin: '12px 0', background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-2,#f5faff) 70%, transparent)', border: '1px solid var(--dsw-alias-border-l2,#9aa8b555)', borderRadius: 12, fontFamily: 'inherit', fontSize: 14 } }, (typeof state.reviewPreview === 'string' ? state.reviewPreview : state.reviewPreview && state.reviewPreview.text) || '状态审查暂不可用。'),
-    h('p', null, statusText),
-    h('div', null,
-      h('button', { type: 'button', disabled: props.busy, onClick: function () { props.onAction({ action: 'preview' }) }, style: { padding: '8px 12px', marginRight: 8 } }, '刷新预览'),
-      h('button', { type: 'button', disabled: props.busy || !state.mode || state.mode === 'off' || (state.clockView && (state.clockView.paused || (state.clockView.rest && state.clockView.rest.resting))), onClick: function () { props.onAction({ action: 'wake' }) }, style: { padding: '8px 12px' } }, state.mode === 'active' ? '手动投递审查' : '手动运行一次审查')),
-    h('p', { style: { fontSize: 12, opacity: .75 } }, '手动运行同样遵守模式、暂停与休息时段；观察模式下只记录，不投递。'))
-}
 function AbsEnvironmentPanel(props) {
   var environment = props.environment || {}, owner = environment.ownerSession || {}, search = environment.search || {}
   return h('section', { 'aria-label': '感知条件', style: { margin: '24px 0' } },
@@ -291,11 +281,22 @@ function AbsChangeLedger(props) {
         h('div', null, percent(row.before) + ' → ' + percent(row.after) + '；' + (row.delta > 0 ? '+' : '') + (row.delta * 100).toFixed(2) + ' 个百分点' + (row.timeScale !== undefined ? ' · ' + row.timeScale + '×' : '')))
     })) : h('p', null, '暂无变化记录；新版启用后的变化会从这里开始记录。'))
 }
+function absLabViewFromUrl() {
+  var value = new URL(window.location.href).searchParams.get('absView')
+  return value === 'inner' || value === 'events' ? value : 'overview'
+}
+function absLabUrlForView(view) {
+  var url = new URL(window.location.href)
+  if (view === 'overview') url.searchParams.delete('absView')
+  else url.searchParams.set('absView', view)
+  return url.pathname + url.search + url.hash
+}
 function AbsLabPage() {
   var dataState = React.useState(null), data = dataState[0], setData = dataState[1]
   var errorState = React.useState(''), error = errorState[0], setError = errorState[1]
   var busyState = React.useState(false), busy = busyState[0], setBusy = busyState[1]
   var mounted = React.useRef(false)
+  var pageState = React.useState(absLabViewFromUrl()), page = pageState[0], setPage = pageState[1]
   var request = requestAbsLab
   async function refresh() {
     try { var value = await request(); if (mounted.current) { setData(value); setError('') } }
@@ -305,8 +306,29 @@ function AbsLabPage() {
     mounted.current = true
     refresh()
     var timer = setInterval(refresh, 15000)
-    return function () { mounted.current = false; clearInterval(timer) }
+    function syncPage() { setPage(absLabViewFromUrl()) }
+    window.addEventListener('popstate', syncPage)
+    return function () { mounted.current = false; clearInterval(timer); window.removeEventListener('popstate', syncPage) }
   }, [])
+  React.useEffect(function () {
+    var root = document.querySelector && document.querySelector('.cf-abs-lab')
+    if (root) root.scrollTop = 0
+    if (page !== 'overview') {
+      var heading = document.getElementById && document.getElementById('cf-abs-page-title')
+      if (heading && typeof heading.focus === 'function') heading.focus()
+    }
+  }, [page])
+  function navigate(event, next) {
+    if (event && (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0)) return
+    if (event) event.preventDefault()
+    window.history.pushState({ ...(window.history.state || {}), __chonkyfishAbsSubpage: true, absSubpage: next }, '', absLabUrlForView(next))
+    setPage(next)
+  }
+  function backToOverview(event) {
+    if (event) event.preventDefault()
+    if (page !== 'overview' && window.history.state && window.history.state.__chonkyfishAbsSubpage === true && window.history.state.absSubpage === page) window.history.back()
+    else { window.history.replaceState(window.history.state || {}, '', absLabUrlForView('overview')); setPage('overview') }
+  }
   async function action(body) {
     setBusy(true); setError('')
     try {
@@ -320,11 +342,20 @@ function AbsLabPage() {
   var state = data && data.state
   var clock = state && state.clockView, rest = clock && clock.rest
   var timeSummary = clock ? '变化速度 '+clock.timeScale+'× · '+(rest && rest.enabled?'每日休息 '+rest.start+'–'+rest.end:rest?'每日休息关闭':'休息设置待加载')+' · UTC+8' : '等待时钟数据'
-  return h('main', { className: 'cf-abs-lab cf-module' },h('style',null,ABS_LAB_SURFACE + MODULE_SURFACE),h('div',{className:'abs-shell module-shell'},
-    h('header',{className:'abs-header module-head'},h('span',{className:'module-icon','aria-hidden':true},h(ICON_SENSE)),h('div',null,h('h1',null,'ABS 实验台'),h('p',{className:'module-sub'},'主人的当下，大肥鱼的内部状态。'))),
-    error ? h('p',{role:'alert',className:'abs-error'},error) : null,
-    h('div',{className:'abs-states'},h(AbsOwnerStatePanel),h(AbsNeedsPanel,{state:state,stale:Boolean(error)})),
-    h('details',{className:'abs-panel abs-settings'},h('summary',null,'时间设置',h('span',{className:'abs-settings-summary'},timeSummary)),
+  return h('main', { className: 'cf-abs-lab cf-module' },h('style',null,ABS_LAB_SURFACE + ABS_ACTIVITY_STYLE + MODULE_SURFACE),h('div',{className:'abs-shell module-shell'},
+    page === 'overview' ? h(React.Fragment, null,
+      h('header',{className:'abs-header module-head'},h('span',{className:'module-icon','aria-hidden':true},h(ICON_SENSE)),h('div',null,h('h1',null,'ABS 实验台'),h('p',{className:'module-sub'},'主人的当下，大肥鱼的内部状态。'))),
+      error ? h('p',{role:'alert',className:'abs-error'},error) : null,
+      h('div',{className:'abs-states'},h(AbsOwnerStatePanel),h(AbsNeedsPanel,{state:state,stale:Boolean(error)})),
+      h('details',{className:'abs-panel abs-settings'},h('summary',null,'时间设置',h('span',{className:'abs-settings-summary'},timeSummary)),
       state?h('div',{className:'abs-time-grid'},h(AbsClockPanel,{state:state,busy:busy,onAction:action}),h(AbsRestPanel,{state:state,busy:busy,onAction:action})):h('p',null,'正在读取时间设置…')),
-    h(AbsEventsPanel)))
+      h('section', { className: 'abs-observation-grid', 'aria-label': '观察入口' },
+        h(AbsActivityPanel, { view: 'overview', href: absLabUrlForView('inner'), onNavigate: function (event) { navigate(event, 'inner') } }),
+        h(AbsEventsPanel, { view: 'overview', href: absLabUrlForView('events'), onNavigate: function (event) { navigate(event, 'events') } })),
+      h('details', { className: 'abs-debug-drawer' }, h('summary', null, '调试抽屉 · 原始事件、审计与满足度账本'),
+        h('section', { className: 'abs-debug-section' }, h(AbsObservationsPanel, { state: state })),
+        h('section', { className: 'abs-debug-section' }, h('h2', null, '审计记录'), data ? h(AbsAuditTimeline, { records: data.audit }) : h('p', null, '正在读取审计记录…')),
+        h('section', { className: 'abs-debug-section' }, data ? h(AbsChangeLedger, { state: data.state }) : h('p', null, '正在读取满足度变化…'))))
+      : page === 'inner' ? h(AbsActivityPanel, { view: 'detail', overviewHref: absLabUrlForView('overview'), onNavigate: backToOverview })
+      : h(AbsEventsPanel, { view: 'detail', overviewHref: absLabUrlForView('overview'), onNavigate: backToOverview })))
 }

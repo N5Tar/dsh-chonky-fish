@@ -207,6 +207,47 @@ export function countEvents(db) {
   return Number(row.n)
 }
 
+// Aggregate by the normalized timestamp and category columns. The caller passes
+// an exact UTC window so the query never needs to inspect JSON payloads.
+export function summarizeEvents(db, { observedSince, observedBefore }) {
+  if (typeof observedSince !== 'string' || typeof observedBefore !== 'string' || observedSince >= observedBefore) {
+    throw new TypeError('summarizeEvents: valid observed-time window required')
+  }
+  const rows = db.prepare(
+    `SELECT category, COUNT(*) AS n FROM semantic_events
+     WHERE observed_at >= ? AND observed_at < ? GROUP BY category`,
+  ).all(observedSince, observedBefore)
+  const categories = Object.fromEntries(rows.map(row => [row.category, Number(row.n)]))
+  return { total: rows.reduce((sum, row) => sum + Number(row.n), 0), categories }
+}
+
+export function listEventsInWindow(db, { observedSince, observedBefore, category = null, evidenceStatus = null, snapshotSeq = null, limit = 30, offset = 0 }) {
+  if (typeof observedSince !== 'string' || typeof observedBefore !== 'string' || observedSince >= observedBefore) throw new TypeError('listEventsInWindow: valid observed-time window required')
+  const boundedLimit = Math.min(200, Math.max(1, Number.isSafeInteger(limit) ? limit : 30))
+  const boundedOffset = Math.min(1_000_000, Math.max(0, Number.isSafeInteger(offset) ? offset : 0))
+  const where = ['observed_at >= ?', 'observed_at < ?'], values = [observedSince, observedBefore]
+  if (category) { where.push('category = ?'); values.push(category) }
+  if (evidenceStatus) { where.push('evidence_status = ?'); values.push(evidenceStatus) }
+  if (snapshotSeq !== null) { where.push('event_seq <= ?'); values.push(snapshotSeq) }
+  const rows = db.prepare(`SELECT * FROM semantic_events WHERE ${where.join(' AND ')} ORDER BY observed_at DESC, event_seq DESC LIMIT ? OFFSET ?`).all(...values, boundedLimit, boundedOffset)
+  return rows.map(mapEventRow)
+}
+
+export function countEventsInWindow(db, { observedSince, observedBefore, category = null, evidenceStatus = null, snapshotSeq = null }) {
+  if (typeof observedSince !== 'string' || typeof observedBefore !== 'string' || observedSince >= observedBefore) throw new TypeError('countEventsInWindow: valid observed-time window required')
+  const where = ['observed_at >= ?', 'observed_at < ?'], values = [observedSince, observedBefore]
+  if (category) { where.push('category = ?'); values.push(category) }
+  if (evidenceStatus) { where.push('evidence_status = ?'); values.push(evidenceStatus) }
+  if (snapshotSeq !== null) { where.push('event_seq <= ?'); values.push(snapshotSeq) }
+  return Number(db.prepare(`SELECT COUNT(*) AS n FROM semantic_events WHERE ${where.join(' AND ')}`).get(...values).n)
+}
+
+export function maxEventSeqInWindow(db, { observedSince, observedBefore }) {
+  if (typeof observedSince !== 'string' || typeof observedBefore !== 'string' || observedSince >= observedBefore) throw new TypeError('maxEventSeqInWindow: valid observed-time window required')
+  const row = db.prepare('SELECT MAX(event_seq) AS n FROM semantic_events WHERE observed_at >= ? AND observed_at < ?').get(observedSince, observedBefore)
+  return Number(row.n || 0)
+}
+
 export function listEvents(db, { sessionId = null, limit = 50, sinceSeq = 0, latest = false } = {}) {
   const order = latest === true ? 'DESC' : 'ASC'
   const boundedLimit = Math.min(200, Math.max(1, Number.isSafeInteger(limit) ? limit : 50))

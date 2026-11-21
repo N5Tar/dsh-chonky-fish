@@ -132,6 +132,7 @@ ${moduleSurface}
 const runtime = readFileSync(join(ui, 'runtime.js'), 'utf8')
 const absLab = readFileSync(join(ui, 'abs/lab.js'), 'utf8')
 const absEventsPanel = readFileSync(join(ui, 'abs/events-panel.js'), 'utf8')
+const absActivityPanel = readFileSync(join(ui, 'abs/activity-panel.js'), 'utf8')
 const helloPanel = readFileSync(join(ui, 'hello/panel.js'), 'utf8')
 const skillsPanel = readFileSync(join(ui, 'skills/panel.js'), 'utf8')
 const perceptionPanel = readFileSync(join(ui, 'perception/client.js'), 'utf8')
@@ -336,6 +337,7 @@ window.__ModuleLoader__.load({
 ${runtime}
 var MODULE_SURFACE = ${JSON.stringify(moduleSurface)}
 ${absEventsPanel}
+${absActivityPanel}
 ${absLab}
 ${skillsPanel}
 ${helloPanel}
@@ -647,6 +649,12 @@ ${avatarWidget}
           var entry = windowSnapshot.entries[i]
           var event = entry && entry.event
           if (!event) continue
+          var surfaceReplacement = false
+          if (event.type === 'assistant/message' && event.surfaceOp && typeof event.surfaceOp === 'object' && event.surfaceOp.op === 'replace'
+            && Number.isSafeInteger(event.surfaceOp.startSeq) && Number.isSafeInteger(event.surfaceOp.endSeq)) {
+            out = out.filter(function (message) { return !(message._surfaceSeq >= event.surfaceOp.startSeq && message._surfaceSeq <= event.surfaceOp.endSeq) })
+            surfaceReplacement = true
+          }
           var role
           var raw
           if (event.type === 'user/message') {
@@ -661,11 +669,20 @@ ${avatarWidget}
             continue
           }
           if (!raw) continue
-          if (event.surfaceOp !== undefined && event.surfaceOp !== 'append') continue
-          out.push({ role: role, text: displayText(role, raw), time: timeOf(event.time) })
+          if (event.surfaceOp !== undefined && event.surfaceOp !== 'append' && !surfaceReplacement) continue
+          var projected = { role: role, text: displayText(role, raw), time: timeOf(event.time), _surfaceSeq: event.seq }
+          if (role === 'fish' && !surfaceReplacement && typeof bindingSessionId === 'string' && Number.isSafeInteger(event.seq) && event.seq >= 0) {
+            projected.sourceRef = { sessionId: bindingSessionId, seq: event.seq }
+          }
+          out.push(projected)
         }
-        messageCache = { revision: windowSnapshot.revision, list: out }
-        return out
+        var visible = out.map(function (message) {
+          var projected = { role: message.role, text: message.text, time: message.time }
+          if (message.sourceRef) projected.sourceRef = message.sourceRef
+          return projected
+        })
+        messageCache = { revision: windowSnapshot.revision, list: visible }
+        return visible
       }
       function isRunning() {
         if (!binding) return false

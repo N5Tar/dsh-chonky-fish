@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { assertSkillArchive, MIGRATION_FORMAT, MIGRATION_SECTIONS, MIGRATION_VERSION, mergeMigrationPreferences, projectPreferences, validateDiaryPath, validateIdentity, validatePreferences, validateWallet, migrationFail } from './policy.js'
+import { assertSkillArchive, MIGRATION_FORMAT, MIGRATION_SECTIONS, MIGRATION_VERSION, mergeMigrationPreferences, projectPreferences, validateDiaryPath, validateIdentity, validateMemoryRelative, validatePreferences, validateWallet, migrationFail } from './policy.js'
 
 const json = value => Buffer.from(JSON.stringify(value, null, 2) + '\n')
 const isObject = value => value && typeof value === 'object' && !Array.isArray(value)
@@ -11,7 +11,11 @@ function validateArchive(entries, pluginVersion, archiveCodec) {
   if (manifestBytes.length > 4 * 1024 * 1024) error('LIMIT_EXCEEDED')
   const manifest = archiveCodec.parseJson(manifestBytes)
   if (!isObject(manifest) || manifest.format !== MIGRATION_FORMAT || manifest.version !== MIGRATION_VERSION) error(manifest?.format === MIGRATION_FORMAT ? 'UNSUPPORTED_VERSION' : 'INVALID_ARCHIVE')
-  if (!isObject(manifest.sections) || MIGRATION_SECTIONS.some(key => !Number.isSafeInteger(manifest.sections[key]) || manifest.sections[key] < 0)) error('INVALID_ARCHIVE')
+  if (!isObject(manifest.sections)) error('INVALID_ARCHIVE')
+  for (const key of MIGRATION_SECTIONS) {
+    if (key === 'memory' && !Object.hasOwn(manifest.sections, key)) continue
+    if (!Number.isSafeInteger(manifest.sections[key]) || manifest.sections[key] < 0) error('INVALID_ARCHIVE')
+  }
   if (!Array.isArray(manifest.files)) error('INVALID_ARCHIVE')
   const listed = new Map()
   for (const item of manifest.files) {
@@ -29,7 +33,7 @@ function validateArchive(entries, pluginVersion, archiveCodec) {
   const identity = validateIdentity(archiveCodec.parseJson(entries.get('identity.json')))
   const wallet = validateWallet(archiveCodec.parseJson(entries.get('wallet.json')))
   const preferences = validatePreferences(archiveCodec.parseJson(entries.get('preferences.json')))
-  const profile = new Map(), diaries = new Map(), skills = new Map()
+  const profile = new Map(), diaries = new Map(), skills = new Map(), memory = new Map()
   for (const [path, buffer] of entries) {
     if (path === 'manifest.json') continue
     if (buffer.length > 16 * 1024 * 1024) error('LIMIT_EXCEEDED')
@@ -46,14 +50,19 @@ function validateArchive(entries, pluginVersion, archiveCodec) {
       const skill = assertSkillArchive(archiveCodec.parseJson(buffer))
       if (skill.skillId + '.json' !== name) error('INVALID_DATA')
       skills.set(name, buffer)
+    } else if (path.startsWith('memory/')) {
+      const name = path.slice('memory/'.length)
+      validateMemoryRelative(name)
+      memory.set(name, buffer)
     } else if (!required.includes(path)) error('INVALID_ARCHIVE')
   }
   if (skills.size > 128) error('LIMIT_EXCEEDED')
   for (const key of MIGRATION_SECTIONS) {
-    const actual = key === 'identity' || key === 'wallet' || key === 'preferences' ? 1 : key === 'profile' ? profile.size : key === 'diaries' ? diaries.size : skills.size
-    if (manifest.sections[key] !== actual) error('INVALID_ARCHIVE')
+    const actual = key === 'identity' || key === 'wallet' || key === 'preferences' ? 1 : key === 'profile' ? profile.size : key === 'diaries' ? diaries.size : key === 'skills' ? skills.size : memory.size
+    const declared = key === 'memory' && !Object.hasOwn(manifest.sections, key) ? 0 : manifest.sections[key]
+    if (declared !== actual) error('INVALID_ARCHIVE')
   }
-  return { manifest, identity, wallet, preferences, profile, diaries, skills, pluginVersion }
+  return { manifest, identity, wallet, preferences, profile, diaries, skills, memory, includeMemory: Object.hasOwn(manifest.sections, 'memory'), pluginVersion }
 }
 
 async function readRegular(file, maxBytes) {
@@ -99,7 +108,9 @@ export function createMigrationService({ resources, storage, archiveCodec, plugi
     for (const [name, bytes] of diaryFiles) { validateDiaryPath(name.slice(8)); payload.set(name, bytes) }
     const skillFiles = await storage.readDirectory(resources.paths.skills, 'skills', 128, /^[a-z][a-z0-9-]{0,63}\.json$/)
     for (const [name, bytes] of skillFiles) { assertSkillArchive(archiveCodec.parseJson(bytes)); payload.set(name, bytes) }
-    return { payload, stateWrap, config, counts: { identity: 1, wallet: 1, profile: files.size, diaries: diaryFiles.size, skills: skillFiles.size, preferences: 1 } }
+    const memoryFiles = await storage.readDirectory(resources.paths.memory, 'memory', 10000, null, name => name.toLowerCase() === 'sessions')
+    for (const [name, bytes] of memoryFiles) { validateMemoryRelative(name.slice('memory/'.length)); payload.set(name, bytes) }
+    return { payload, stateWrap, config, counts: { identity: 1, wallet: 1, profile: files.size, diaries: diaryFiles.size, skills: skillFiles.size, preferences: 1, memory: memoryFiles.size } }
   }
   async function prepareExport() {
     pruneExpired()

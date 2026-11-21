@@ -7,6 +7,8 @@
 
 export const DEFAULT_LIMIT = 30
 export const MAX_LIMIT = 200
+const EVENT_CATEGORIES = new Set(['interaction', 'preference', 'activity', 'environment', 'state', 'goal'])
+const EVENT_EVIDENCE = new Set(['reported', 'intent', 'hypothetical', 'negated', 'uncertain'])
 
 /** @param {string} url */
 export function parseEventsQuery(url) {
@@ -16,8 +18,31 @@ export function parseEventsQuery(url) {
   const rawSince = Number(parsed.searchParams.get('sinceSeq'))
   const sinceSeq = Number.isFinite(rawSince) && rawSince > 0 ? Math.floor(rawSince) : 0
   const sessionId = parsed.searchParams.get('sessionId')
+  const rawDay = parsed.searchParams.get('day')
+  const rawOffset = Number(parsed.searchParams.get('offset'))
+  const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? Math.min(rawOffset, 1_000_000) : 0
+  const rawSnapshot = parsed.searchParams.get('snapshotSeq')
+  const snapshotSeq = rawSnapshot === null ? null : Number(rawSnapshot)
+  if (rawSnapshot !== null && (!Number.isSafeInteger(snapshotSeq) || snapshotSeq < 0)) throw new TypeError('snapshotSeq is invalid')
+  const rawCategory = parsed.searchParams.get('category')
+  const rawEvidence = parsed.searchParams.get('evidenceStatus')
+  if (rawCategory && !EVENT_CATEGORIES.has(rawCategory)) throw new TypeError('category is invalid')
+  if (rawEvidence && !EVENT_EVIDENCE.has(rawEvidence)) throw new TypeError('evidenceStatus is invalid')
+  let summaryWindow
+  if (rawDay !== null) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDay)) throw new TypeError('day must be an ISO calendar date')
+    const start = new Date(rawDay + 'T00:00:00+08:00')
+    if (!Number.isFinite(start.getTime())) throw new TypeError('day must be a valid UTC+8 calendar date')
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(start)
+    const fields = Object.fromEntries(parts.map(part => [part.type, part.value]))
+    if (`${fields.year}-${fields.month}-${fields.day}` !== rawDay) throw new TypeError('day must be a valid UTC+8 calendar date')
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000)
+    summaryWindow = { observedSince: start.toISOString(), observedBefore: end.toISOString() }
+  }
   return { limit, sinceSeq, sessionId: sessionId && sessionId.length > 0 ? sessionId : null,
     ...(parsed.searchParams.get('latest') === 'true' ? { latest: true } : {}),
+    ...(summaryWindow ? { summaryWindow } : {}),
+    ...(summaryWindow ? { offset, category: rawCategory || null, evidenceStatus: rawEvidence || null, snapshotSeq } : {}),
   }
 }
 
@@ -45,6 +70,21 @@ function toWireEvent(event) {
  * @param {{ limit: number, sessionId: string | null, sinceSeq: number }} query
  */
 export function readEvents(engine, query) {
+  if (query.summaryWindow) {
+    const windowQuery = { ...query.summaryWindow, category: query.category, evidenceStatus: query.evidenceStatus,
+      snapshotSeq: query.snapshotSeq === null ? engine.maxEventSeqInWindow(query.summaryWindow) : query.snapshotSeq }
+    const page = { limit: query.limit, offset: query.offset }
+    const total = engine.countEventsInWindow(windowQuery)
+    const events = engine.listEventsInWindow({ ...windowQuery, ...page })
+    return {
+      ok: true,
+      events: events.map(toWireEvent),
+      count: events.length,
+      summary: engine.summarizeEvents(query.summaryWindow),
+      page: { ...page, total, hasMore: query.offset + events.length < total, snapshotSeq: windowQuery.snapshotSeq },
+      stats: engine.stats(),
+    }
+  }
   const events = engine.listEvents({
     sessionId: query.sessionId,
     limit: query.limit,
@@ -56,6 +96,7 @@ export function readEvents(engine, query) {
     events: events.map(toWireEvent),
     count: events.length,
     stats: engine.stats(),
+    ...(query.summaryWindow ? { summary: engine.summarizeEvents(query.summaryWindow) } : {}),
   }
 }
 
@@ -64,8 +105,13 @@ export function readEvents(engine, query) {
  * @returns {{ status: number, body: object }}
  */
 export function handleEventsRequest({ engine, url }) {
+  let query
   try {
-    const query = parseEventsQuery(url)
+    query = parseEventsQuery(url)
+  } catch (error) {
+    return { status: 400, body: { ok: false, error: String((error && error.message) || error) } }
+  }
+  try {
     return { status: 200, body: readEvents(engine, query) }
   } catch (error) {
     return { status: 500, body: { ok: false, error: String((error && error.message) || error) } }

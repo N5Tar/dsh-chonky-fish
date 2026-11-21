@@ -5,8 +5,8 @@ import { DEFAULT_VOICE_CONFIG } from '../../../../../core/modules/voice/config.j
 import { createMemoryAudioStore } from '../../../../shared/audio/clips.js'
 
 const ref = { runtimeId: 'dsh:host-1', conversationId: 'session-1', bindingRevision: 'attach-1' }
-let source, session, activeRef, submits, submissionModes, emitLocalInput, localListenerSet, submissionCounter, abandoned, nextPromptResult, acceptByRequest, retireByRequest, retainedReleaseCount, retainCalls
-function fixture({ foreground } = {}) {
+let source, session, activeRef, submits, submissionModes, emitLocalInput, localListenerSet, submissionCounter, abandoned, nextPromptResult, acceptByRequest, retireByRequest, retainedReleaseCount, retainCalls, sourceRegistrations
+function fixture({ foreground, registerVoiceSource, releaseVoiceSource } = {}) {
   const entries = [], callbacks = new Set(), localListeners = new Set()
   localListenerSet = localListeners
   source = {
@@ -19,6 +19,7 @@ function fixture({ foreground } = {}) {
   submissionModes = []
   retainedReleaseCount = 0
   retainCalls = 0
+  sourceRegistrations = new Map()
   submissionCounter = 0
   abandoned = []
   nextPromptResult = null
@@ -56,7 +57,10 @@ function fixture({ foreground } = {}) {
     onVoiceLocalInput(listener) { localListeners.add(listener); return () => localListeners.delete(listener) },
   }
   emitLocalInput = input => { for (const listener of localListeners) listener(input) }
-  return createDshConversation({ chat, foreground })
+  return createDshConversation({ chat, foreground,
+    async registerVoiceSource(payload) { sourceRegistrations.set(payload.submissionId, payload); return registerVoiceSource ? registerVoiceSource(payload) : { registered: true } },
+    async releaseVoiceSource(payload) { sourceRegistrations.delete(payload.submissionId); return releaseVoiceSource ? releaseVoiceSource(payload) : true },
+  })
 }
 
 const batches = []
@@ -66,6 +70,8 @@ const stop = await conversation.follow(ref, { onBatch: batch => batches.push(bat
 assert.equal(batches[0].reset, true)
 const prepared = await conversation.prepareSubmission({ inputId: 'input-1', conversationRef: ref, text: '你好' })
 assert.equal(prepared.submissionId, 'request-1')
+assert.equal(sourceRegistrations.get('request-1')?.inputId, 'input-1', 'voice source registration uses the existing beginSubmission request id')
+assert.equal(sourceRegistrations.get('request-1')?.text, '你好')
 assert.deepEqual(await conversation.submit({ inputId: 'input-1', submissionId: prepared.submissionId, conversationRef: ref, text: '你好' }), { accepted: true, evidence: 'prompt-receipt', foreground: { status: 'unavailable', reason: 'foreground-control-unavailable' } })
 assert.deepEqual(submissionModes.slice(0, 2), ['steer', 'steer'], 'prepare and submit use the same interject/steer policy')
 source.append({ seq: 0, type: 'turn/start', data: { turn: 4 } })
@@ -73,7 +79,7 @@ source.append({ seq: 1, type: 'step/start', data: { turn: 4, step: 1 } })
 source.append({ seq: 2, type: 'user/message', surfaceOp: 'append', data: { turn: 4, source: { kind: 'user', rpcId: 'request-1' }, content: [{ type: 'text', text: '你好' }] } })
 source.append({ seq: 3, type: 'assistant/message', surfaceOp: 'append', data: { turn: 4, step: 1, message: { content: [{ type: 'text', text: '你好呀。' }] } } })
 await new Promise(resolve => setTimeout(resolve, 0))
-assert.ok(batches.flatMap(batch => batch.events).some(event => event.type === 'reply.segment' && event.surfaceRevision === 3), 'assistant/message emits a committed segment before step/end and turn/end')
+assert.ok(batches.flatMap(batch => batch.events).some(event => event.type === 'reply.message' && event.surfaceRevision === 3 && event.source.sessionId === ref.conversationId && event.source.seq === 3), 'assistant/message emits one committed source message before step/end and turn/end')
 source.append({ seq: 4, type: 'step/end', data: { turn: 4, step: 1 } })
 source.append({ seq: 5, type: 'turn/end', data: { turn: 4, reason: { kind: 'completed' } } })
 source.append({ seq: 6, type: 'assistant/message', surfaceOp: { op: 'replace', startSeq: 3, endSeq: 3 }, data: { turn: 4, step: 1, message: { content: [{ type: 'text', text: '替换后的表面。' }] } } })
@@ -81,9 +87,9 @@ await new Promise(resolve => setTimeout(resolve, 0))
 const events = batches.flatMap(batch => batch.events)
 assert.ok(events.some(event => event.type === 'input.accepted' && event.submissionId === 'request-1'))
 assert.ok(events.some(event => event.type === 'input.consumed' && event.submissionId === 'request-1' && event.conversationTurnId.includes(':turn:4')))
-assert.ok(events.some(event => event.type === 'reply.segment' && event.text === '你好呀。' && event.responseId && event.stepId && event.surfaceRevision === 3 && event.inputIds.includes('input-1') && event.submissionIds.includes('request-1')), 'committed assistant surface text is eligible before turn/end with stable step and consumed input identities')
-assert.ok(events.some(event => event.type === 'reply.final' && event.text === '你好呀。' && event.origin === 'local' && event.inputSubmissionIds[0] === 'request-1'))
-assert.ok(events.some(event => event.type === 'reply.revoked' && event.replyId === `${ref.runtimeId}:${ref.conversationId}:turn:4:reply:3`), 'surface replacement revokes a previously published segment')
+assert.ok(events.some(event => event.type === 'reply.message' && event.text === '你好呀。' && event.responseId && event.stepId && event.surfaceRevision === 3 && event.inputIds.includes('input-1') && event.submissionIds.includes('request-1')), 'committed assistant surface text is eligible before turn/end with stable step and consumed input identities')
+assert.equal(events.filter(event => event.type === 'reply.message').length, 1, 'the turn does not create a duplicate aggregate reply')
+assert.ok(events.some(event => event.type === 'reply.revoked' && event.replyId === `${ref.runtimeId}:${ref.conversationId}:turn:4:message:3` && event.source?.seq === 3), 'surface replacement revokes the exact previously published message')
 assert.ok(events.some(event => event.type === 'turn.ended' && event.outcome === 'completed'))
 assert.equal(submits, 1)
 emitLocalInput({ sessionId: ref.conversationId, bindingRevision: ref.bindingRevision, requestId: 'keyboard-1' })
@@ -92,27 +98,28 @@ const keyboardReceiptEvents = batches.flatMap(batch => batch.events)
 assert.ok(keyboardReceiptEvents.some(event => event.type === 'input.accepted' && event.submissionId === 'keyboard-1' && event.evidence === 'prompt-receipt' && event.origin === 'local'))
 assert.ok(!keyboardReceiptEvents.some(event => event.type === 'input.consumed' && event.submissionId === 'keyboard-1'), 'prompt receipt is observed before the delayed Session user event')
 source.append({ seq: 7, type: 'turn/start', data: { turn: 5 } })
-source.append({ seq: 8, type: 'user/message', data: { turn: 5, source: { kind: 'user', rpcId: 'keyboard-1' } } })
-source.append({ seq: 9, type: 'assistant/message', data: { turn: 5, message: { content: [{ type: 'text', text: '键盘输入的回答。' }] } } })
-source.append({ seq: 10, type: 'turn/end', data: { turn: 5, reason: { kind: 'completed' } } })
-source.append({ seq: 11, type: 'turn/start', data: { turn: 6 } })
-source.append({ seq: 12, type: 'user/message', data: { turn: 6, source: { kind: 'chonkyfish-nudge', form: 'notice' } } })
-source.append({ seq: 13, type: 'assistant/message', data: { turn: 6, message: { content: [{ type: 'text', text: '主动提醒。' }] } } })
-source.append({ seq: 14, type: 'turn/end', data: { turn: 6, reason: { kind: 'completed' } } })
-source.append({ seq: 15, type: 'turn/start', data: { turn: 7 } })
-source.append({ seq: 16, type: 'user/message', data: { turn: 7, id: 'social-' + 'a'.repeat(64), source: { kind: 'chonkyfish-social' } } })
-source.append({ seq: 17, type: 'assistant/message', data: { turn: 7, message: { content: [{ type: 'text', text: '外部消息回答。' }] } } })
-source.append({ seq: 18, type: 'turn/end', data: { turn: 7, reason: { kind: 'completed' } } })
-source.append({ seq: 19, type: 'turn/start', data: { turn: 8 } })
-source.append({ seq: 20, type: 'user/message', data: { turn: 8, source: { kind: 'runtime-context' } } })
-source.append({ seq: 21, type: 'assistant/message', data: { turn: 8, message: { content: [{ type: 'text', text: '上下文消息后的回答。' }] } } })
-source.append({ seq: 22, type: 'turn/end', data: { turn: 8, reason: { kind: 'completed' } } })
+source.append({ seq: 8, type: 'step/start', data: { turn: 5, step: 1 } })
+source.append({ seq: 9, type: 'user/message', data: { turn: 5, source: { kind: 'user', rpcId: 'keyboard-1' } } })
+source.append({ seq: 10, type: 'assistant/message', data: { turn: 5, step: 1, message: { content: [{ type: 'text', text: '键盘输入的回答。' }] } } })
+source.append({ seq: 11, type: 'turn/end', data: { turn: 5, reason: { kind: 'completed' } } })
+source.append({ seq: 12, type: 'turn/start', data: { turn: 6 } })
+source.append({ seq: 13, type: 'user/message', data: { turn: 6, source: { kind: 'chonkyfish-nudge', form: 'notice' } } })
+source.append({ seq: 14, type: 'assistant/message', data: { turn: 6, message: { content: [{ type: 'text', text: '主动提醒。' }] } } })
+source.append({ seq: 15, type: 'turn/end', data: { turn: 6, reason: { kind: 'completed' } } })
+source.append({ seq: 16, type: 'turn/start', data: { turn: 7 } })
+source.append({ seq: 17, type: 'user/message', data: { turn: 7, id: 'social-' + 'a'.repeat(64), source: { kind: 'chonkyfish-social' } } })
+source.append({ seq: 18, type: 'assistant/message', data: { turn: 7, message: { content: [{ type: 'text', text: '外部消息回答。' }] } } })
+source.append({ seq: 19, type: 'turn/end', data: { turn: 7, reason: { kind: 'completed' } } })
+source.append({ seq: 20, type: 'turn/start', data: { turn: 8 } })
+source.append({ seq: 21, type: 'user/message', data: { turn: 8, source: { kind: 'runtime-context' } } })
+source.append({ seq: 22, type: 'assistant/message', data: { turn: 8, message: { content: [{ type: 'text', text: '上下文消息后的回答。' }] } } })
+source.append({ seq: 23, type: 'turn/end', data: { turn: 8, reason: { kind: 'completed' } } })
 await new Promise(resolve => setTimeout(resolve, 0))
 const laterEvents = batches.flatMap(batch => batch.events)
-assert.ok(laterEvents.some(event => event.type === 'reply.final' && event.conversationTurnId.endsWith(':turn:5') && event.origin === 'local'))
-assert.ok(laterEvents.some(event => event.type === 'reply.final' && event.conversationTurnId.endsWith(':turn:6') && event.origin === 'autonomous'))
-assert.ok(laterEvents.some(event => event.type === 'reply.final' && event.conversationTurnId.endsWith(':turn:7') && event.origin === 'external'))
-assert.ok(!laterEvents.some(event => event.type === 'reply.final' && event.conversationTurnId.endsWith(':turn:8') && event.origin === 'local'))
+assert.ok(laterEvents.some(event => event.type === 'reply.message' && event.conversationTurnId.endsWith(':turn:5') && event.origin === 'local'))
+assert.ok(!laterEvents.some(event => event.type === 'reply.message' && event.conversationTurnId.endsWith(':turn:6')), 'independent nudge output is not marked as a foreground voice reply')
+assert.ok(!laterEvents.some(event => event.type === 'reply.message' && event.conversationTurnId.endsWith(':turn:7')), 'external input is not marked as a foreground voice reply')
+assert.ok(!laterEvents.some(event => event.type === 'reply.message' && event.conversationTurnId.endsWith(':turn:8') && event.origin === 'local'))
 assert.ok(laterEvents.some(event => event.type === 'input.accepted' && event.submissionId === 'keyboard-1' && event.origin === 'local'))
 assert.ok(laterEvents.some(event => event.type === 'input.consumed' && event.submissionId === 'keyboard-1' && event.conversationTurnId.endsWith(':turn:5') && event.origin === 'local'))
 const op = new AbortController()
@@ -138,18 +145,19 @@ assert.equal((await conversation.inspectAdmission({ submissionId: rejectedSubmis
 nextPromptResult = null
 
 const inboxSubmission = await conversation.prepareSubmission({ inputId: 'input-inbox', conversationRef: ref, text: 'queued then removed' })
-source.append({ seq: 23, type: 'agent/inbox/spliced', data: { target: 'next-turn', start: 0, inserted: [{ content: [{ type: 'text', text: 'queued then removed' }], source: { kind: 'user', rpcId: inboxSubmission.submissionId } }] } })
-source.append({ seq: 24, type: 'agent/inbox/spliced', data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' } })
+source.append({ seq: 24, type: 'agent/inbox/spliced', data: { target: 'next-turn', start: 0, inserted: [{ content: [{ type: 'text', text: 'queued then removed' }], source: { kind: 'user', rpcId: inboxSubmission.submissionId } }] } })
+source.append({ seq: 25, type: 'agent/inbox/spliced', data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' } })
 await new Promise(resolve => setTimeout(resolve, 0))
 const inboxEvents = batches.flatMap(batch => batch.events)
 assert.ok(inboxEvents.some(event => event.type === 'input.accepted' && event.submissionId === inboxSubmission.submissionId && event.evidence === 'inbox-evidence'))
 assert.ok(inboxEvents.some(event => event.type === 'input.removed' && event.submissionId === inboxSubmission.submissionId))
+assert.equal(sourceRegistrations.has(inboxSubmission.submissionId), false, 'known canceled inbox input releases its unused voice source registration')
 const originalSetTimeout = globalThis.setTimeout, originalClearTimeout = globalThis.clearTimeout
 const localTimers = new Set()
 globalThis.setTimeout = (fn, delay, ...args) => { const timer = originalSetTimeout(fn, delay, ...args); localTimers.add(timer); return timer }
 globalThis.clearTimeout = timer => { localTimers.delete(timer); return originalClearTimeout(timer) }
 try {
-  let seq = 25
+  let seq = 26
   for (let index = 0; index < 300; index++) {
     const turn = 30 + index, requestId = `keyboard-many-${index}`
     emitLocalInput({ sessionId: ref.conversationId, bindingRevision: ref.bindingRevision, requestId })
@@ -213,7 +221,7 @@ source.append({ seq: 7, type: 'step/end', data: { turn: 70, step: 2 } })
 source.append({ seq: 8, type: 'turn/end', data: { turn: 70, reason: { kind: 'completed' } } })
 await new Promise(resolve => setTimeout(resolve, 0))
 const stepEvents = stepBatches.flatMap(batch => batch.events)
-assert.ok(stepEvents.some(event => event.type === 'reply.segment' && event.stepId.endsWith(':step:2') && event.submissionIds.includes(stepInputA.submissionId)), 'a tool-following step inherits the prior consumed-input watermark')
+assert.ok(stepEvents.some(event => event.type === 'reply.message' && event.stepId.endsWith(':step:2') && event.submissionIds.includes(stepInputA.submissionId)), 'a tool-following step inherits the prior consumed-input watermark')
 stopSteps()
 await stepConversation.release(ref)
 
@@ -235,7 +243,7 @@ source.append({ seq: 6, type: 'step/start', data: { turn: 71, step: 2 } })
 source.append({ seq: 7, type: 'user/message', data: { turn: 71, source: { kind: 'user', rpcId: localAfterMixed.submissionId } } })
 source.append({ seq: 8, type: 'assistant/message', data: { turn: 71, step: 2, message: { content: [{ type: 'text', text: '新的本地回复。' }] } } })
 await new Promise(resolve => setTimeout(resolve, 0))
-const originSegments = originBatches.flatMap(batch => batch.events).filter(event => event.type === 'reply.segment')
+const originSegments = originBatches.flatMap(batch => batch.events).filter(event => event.type === 'reply.message')
 assert.equal(originSegments[0]?.origin, 'mixed', 'same-step social plus local input is ineligible')
 assert.equal(originSegments[1]?.origin, 'local', 'a later local step is not contaminated by turn-wide social origin')
 assert.ok(originSegments[1]?.inputIds.includes('origin-local-after'))
@@ -263,7 +271,7 @@ source.append({ seq: 9, type: 'assistant/message', data: { turn: 72, step: 2, me
 await new Promise(resolve => setTimeout(resolve, 0))
 const taskEvents = taskBatches.flatMap(batch => batch.events)
 assert.ok(taskEvents.some(event => event.type === 'input.consumed' && event.submissionId === ownedTaskId && event.origin === 'owned-task' && event.sourceInputId === ownedTaskSource.sourceInputId), 'a strictly owned task notice has its own consumed identity and origin')
-const taskSegments = taskEvents.filter(event => event.type === 'reply.segment')
+const taskSegments = taskEvents.filter(event => event.type === 'reply.message')
 assert.equal(taskSegments[0]?.origin, 'owned-task')
 assert.ok(taskSegments[0]?.submissionIds.includes(ownedTaskId))
 assert.equal(taskSegments[1]?.origin, 'local', 'local plus an owned task notice remains a valid local reply')
@@ -282,7 +290,7 @@ const stopBaseline = await baselineConversation.follow(ref, { onBatch: batch => 
 source.append({ seq: 4, type: 'assistant/message', data: { turn: 20, message: { content: [{ type: 'text', text: '补完旧回答。' }] } } })
 source.append({ seq: 5, type: 'turn/end', data: { turn: 20, reason: { kind: 'completed' } } })
 await new Promise(resolve => setTimeout(resolve, 0))
-assert.ok(!baselineBatches.flatMap(batch => batch.events).some(event => event.type === 'reply.final'), 'a turn already running at follow baseline is never spoken')
+assert.ok(!baselineBatches.flatMap(batch => batch.events).some(event => event.type === 'reply.message'), 'a turn already running at follow baseline is never spoken')
 stopBaseline()
 await baselineConversation.dispose()
 
@@ -326,23 +334,25 @@ const newCallSubmission = await overlappingRetains.prepareSubmission({ inputId: 
 await overlappingRetains.submit({ submissionId: newCallSubmission.submissionId, conversationRef: { ...newCallRef }, scopeId: 'new-call', text: '新通话仍可使用此Session' })
 assert.equal(retainCalls, 1, 'same-target calls share one independently retained Session reference')
 source.append({ seq: 1, type: 'turn/start', data: { turn: 101 } })
-source.append({ seq: 2, type: 'user/message', data: { turn: 101, source: { kind: 'user', rpcId: oldCallSubmission.submissionId } } })
-source.append({ seq: 3, type: 'assistant/message', data: { turn: 101, message: { content: [{ type: 'text', text: '旧通话迟到的回答。' }] } } })
-source.append({ seq: 4, type: 'turn/end', data: { turn: 101, reason: { kind: 'completed' } } })
+source.append({ seq: 2, type: 'step/start', data: { turn: 101, step: 1 } })
+source.append({ seq: 3, type: 'user/message', data: { turn: 101, source: { kind: 'user', rpcId: oldCallSubmission.submissionId } } })
+source.append({ seq: 4, type: 'assistant/message', data: { turn: 101, step: 1, message: { content: [{ type: 'text', text: '旧通话迟到的回答。' }] } } })
+source.append({ seq: 5, type: 'turn/end', data: { turn: 101, reason: { kind: 'completed' } } })
 await new Promise(resolve => setTimeout(resolve, 0))
 const oldEvents = oldBatches.flatMap(batch => batch.events)
 const newEventsBeforeOldRelease = newBatches.flatMap(batch => batch.events)
 assert.ok(oldEvents.some(event => event.type === 'input.consumed' && event.submissionId === oldCallSubmission.submissionId), 'the old owner still proves its late voice input')
 assert.ok(!newEventsBeforeOldRelease.some(event => event.type === 'input.consumed' && event.submissionId === oldCallSubmission.submissionId), 'a new owner never consumes an old owner input')
-assert.ok(!newEventsBeforeOldRelease.some(event => event.type === 'reply.final' && event.conversationTurnId.endsWith(':turn:101') && event.origin === 'local'), 'an old turn cannot become a local eligible reply in the new call')
-source.append({ seq: 5, type: 'turn/start', data: { turn: 102 } })
-source.append({ seq: 6, type: 'user/message', data: { turn: 102, source: { kind: 'user', rpcId: newCallSubmission.submissionId } } })
-source.append({ seq: 7, type: 'assistant/message', data: { turn: 102, message: { content: [{ type: 'text', text: '保留后的回答。' }] } } })
-source.append({ seq: 8, type: 'turn/end', data: { turn: 102, reason: { kind: 'completed' } } })
+assert.ok(!newEventsBeforeOldRelease.some(event => event.type === 'reply.message' && event.conversationTurnId.endsWith(':turn:101') && event.origin === 'local'), 'an old turn cannot become a local eligible reply in the new call')
+source.append({ seq: 6, type: 'turn/start', data: { turn: 102 } })
+source.append({ seq: 7, type: 'step/start', data: { turn: 102, step: 1 } })
+source.append({ seq: 8, type: 'user/message', data: { turn: 102, source: { kind: 'user', rpcId: newCallSubmission.submissionId } } })
+source.append({ seq: 9, type: 'assistant/message', data: { turn: 102, step: 1, message: { content: [{ type: 'text', text: '保留后的回答。' }] } } })
+source.append({ seq: 10, type: 'turn/end', data: { turn: 102, reason: { kind: 'completed' } } })
 await new Promise(resolve => setTimeout(resolve, 0))
 const overlappingEvents = newBatches.flatMap(batch => batch.events)
 assert.ok(overlappingEvents.some(event => event.type === 'input.consumed' && event.submissionId === newCallSubmission.submissionId), 'scope keeps the new call identity separate from old evidence')
-assert.ok(overlappingEvents.some(event => event.type === 'reply.final' && event.conversationTurnId.endsWith(':turn:102') && event.origin === 'local'), 'new call retains its own eligible reply correlation')
+assert.ok(overlappingEvents.some(event => event.type === 'reply.message' && event.conversationTurnId.endsWith(':turn:102') && event.origin === 'local'), 'new call retains its own eligible reply correlation')
 stopNewCall()
 await overlappingRetains.release({ ...newCallRef }, { scopeId: 'new-call' })
 assert.equal(retainedReleaseCount, 0, 'the new call can end before the old drain releases its own owner')
@@ -373,9 +383,10 @@ const integratedSession = {
     const acceptedSubmission = activeSubmissionCallbacks.get(requestId)
     acceptedSubmission?.onAccept()
     integratedEventSource.append({ seq: 1, type: 'turn/start', data: { turn: 1 } })
-    integratedEventSource.append({ seq: 2, type: 'user/message', data: { turn: 1, source: { kind: 'user', rpcId: requestId } } })
-    integratedEventSource.append({ seq: 3, type: 'assistant/message', data: { turn: 1, message: { content: [{ type: 'text', text: '跨层集成回复。' }] } } })
-    integratedEventSource.append({ seq: 4, type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+    integratedEventSource.append({ seq: 2, type: 'step/start', data: { turn: 1, step: 1 } })
+    integratedEventSource.append({ seq: 3, type: 'user/message', data: { turn: 1, source: { kind: 'user', rpcId: requestId } } })
+    integratedEventSource.append({ seq: 4, type: 'assistant/message', data: { turn: 1, step: 1, message: { content: [{ type: 'text', text: '跨层集成回复。' }] } } })
+    integratedEventSource.append({ seq: 5, type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
     return { ok: true, value: { accepted: true } }
   },
 }
@@ -397,7 +408,11 @@ const integratedChat = {
     return { session: integratedSessionWithCallbacks, eventSource: integratedEventSource, sessionId: integratedRef.conversationId, release() { integratedRetainCount-- } }
   },
 }
-const integratedConversation = createDshConversation({ chat: integratedChat })
+const integratedRegistrations = new Map()
+const integratedConversation = createDshConversation({ chat: integratedChat,
+  async registerVoiceSource(payload) { integratedRegistrations.set(payload.submissionId, payload); return { registered: true } },
+  async releaseVoiceSource({ submissionId }) { return integratedRegistrations.delete(submissionId) },
+})
 const integratedAudio = createMemoryAudioStore()
 const integratedCapture = {
   async inspect() { return { available: true } },
@@ -445,4 +460,16 @@ for (let index = 0; index < 520; index++) {
 nextPromptResult = null
 await rejectionBoundedConversation.dispose()
 assert.ok(clearedSets > 0, 'stopping follow clears retained callbacks')
+const registrationCalls = [], releaseCalls = []
+const registrationDenied = fixture({
+  async registerVoiceSource(payload) { registrationCalls.push(payload); throw Object.assign(new Error('registration denied'), { code: 'VOICE_SOURCE_REGISTRATION_FAILED', outcome: 'not_applied' }) },
+  async releaseVoiceSource(payload) { releaseCalls.push(payload); return true },
+})
+await registrationDenied.retain(ref)
+await assert.rejects(registrationDenied.prepareSubmission({ inputId: 'voice-denied', conversationRef: ref, text: '登记失败' }), error => error.outcome === 'not_applied')
+assert.equal(registrationCalls[0].submissionId, 'request-1', 'the source registration uses the existing beginSubmission identity')
+assert.equal(submits, 0, 'a denied source registration cannot call session.prompt')
+assert.deepEqual(abandoned, ['request-1'], 'the locally prepared DSH submission is abandoned on registration denial')
+assert.equal(releaseCalls[0].submissionId, 'request-1', 'a late or uncertain Host registration is cleaned up')
+await registrationDenied.dispose()
 console.log('voice DSH conversation adapter: 1 passed')

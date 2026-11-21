@@ -13,7 +13,7 @@ const fetcher = async (url, options = {}) => {
   else data = {}
   return { ok: true, status: 200, async json() { return { ok: true, data } } }
 }
-const host = createDshHostVoice({ routes, audioStore: { putClip() {}, release() {} }, fetcher })
+const host = createDshHostVoice({ routes, fetcher })
 const state = await host.foreground.inspect(ref)
 assert.equal(state.available, true)
 assert.deepEqual(state.expected, { conversationTurnId: 'turn-2', responseId: 'response-2', stepId: '2:1' })
@@ -29,7 +29,7 @@ assert.equal(body.action, 'interrupt')
 host.close()
 
 let interruptCalls = 0, queryCalls = 0
-const lostReceiptHost = createDshHostVoice({ routes, audioStore: { putClip() {}, release() {} }, fetcher: async (url, options = {}) => {
+const lostReceiptHost = createDshHostVoice({ routes, fetcher: async (url, options = {}) => {
   if (url === routes.voiceCapabilities) return { ok: true, status: 200, async json() { return { ok: true, data: { ownership: { serviceGeneration: 'host-generation-2' }, synthesis: { supported: false, voices: [] } } } } }
   const body = JSON.parse(options.body)
   if (body.action === 'interrupt') { interruptCalls++; throw new Error('simulated lost RPC receipt') }
