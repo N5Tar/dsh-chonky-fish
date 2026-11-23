@@ -26,9 +26,9 @@ for(const importOnly of [false,true]) {
   assert(!all(render()).some(node=>node.type.name==='VoiceSettings'))
  }else{
   assert.equal(role('tablist').length,1)
-  assert.deepEqual(tabs().map(tab=>tab.children[0]),['语音设置','资料导入 / 导出'])
-  assert.deepEqual(tabs().map(tab=>tab.props.tabIndex),[0,-1])
-  assert.equal(panels().length,2)
+  assert.deepEqual(tabs().map(tab=>tab.children[0]),['语音设置','鱼鱼的日程','资料导入 / 导出'])
+  assert.deepEqual(tabs().map(tab=>tab.props.tabIndex),[0,-1,-1])
+  assert.equal(panels().length,3)
   for(const tab of tabs()){
    const panel=panels().find(node=>node.props.id===tab.props['aria-controls'])
    assert.equal(panel?.props['aria-labelledby'],tab.props.id)
@@ -36,21 +36,23 @@ for(const importOnly of [false,true]) {
   const voiceComponent=panels()[0].children[0].type
   assert.equal(voiceComponent.name,'VoiceSettings')
   assert.equal(panels()[0].children[0].props.active,true)
-  assert.deepEqual(panels().map(panel=>panel.props.hidden),[false,true])
+  assert.deepEqual(panels().map(panel=>panel.props.hidden),[false,true,true])
   assert(!button('导出资料'))
   let focused, prevented=0
   tabs().forEach((tab,index)=>tab.props.ref({focus(){focused=index}}))
-  for(const [key, from, to] of [['ArrowRight',0,1],['ArrowLeft',1,0],['End',0,1],['Home',1,0]]){
+  for(const [key, from, to] of [['ArrowRight',0,1],['ArrowLeft',1,0],['End',0,2],['Home',2,0]]){
    tabs()[from].props.onKeyDown({key,preventDefault(){prevented++}})
    assert.equal(focused,to)
-   assert.deepEqual(tabs().map(tab=>tab.props['aria-selected']),[to===0,to===1])
+   assert.deepEqual(tabs().map(tab=>tab.props['aria-selected']),[to===0,to===1,to===2])
   }
   assert.equal(prevented,4)
   tabs()[1].props.onClick()
-  assert.deepEqual(tabs().map(tab=>tab.props.tabIndex),[-1,0])
-  assert.deepEqual(panels().map(panel=>panel.props.hidden),[true,false])
+  assert.deepEqual(tabs().map(tab=>tab.props.tabIndex),[-1,0,-1])
+  assert.deepEqual(panels().map(panel=>panel.props.hidden),[true,false,true])
   assert.equal(panels()[0].children[0].type,voiceComponent,'voice draft component stays mounted')
   assert.equal(panels()[0].children[0].props.active,false)
+  tabs()[2].props.onClick()
+  assert.deepEqual(panels().map(panel=>panel.props.hidden),[true,true,false])
  }
  assert.equal(!!button('导出资料'),!importOnly)
  fail=true;await select();assert.equal(committed,0);assert(all(render()).some(n=>n.props.role==='alert'));assert(!button('确认替换'))
@@ -58,7 +60,7 @@ for(const importOnly of [false,true]) {
  if(!importOnly){
   const requestCount=requests.length
   tabs()[0].props.onClick();assert(!button('确认替换'))
-  tabs()[1].props.onClick();assert(button('确认替换'),'tab switching preserves the pending import')
+  tabs()[2].props.onClick();assert(button('确认替换'),'tab switching preserves the pending import')
   assert.equal(requests.length,requestCount,'tab switching sends no migration requests')
  }
  await button('取消').props.onClick();assert(!button('确认替换'));assert.equal(requests.at(-1).url,'/cancel')

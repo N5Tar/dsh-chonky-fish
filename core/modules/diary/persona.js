@@ -4,5 +4,5 @@ export const diaryPrompt = {
 
 不必写成给主人的汇报，也不用非得有什么了不起的收获。想记的时候就用 diary 记下来：action="write" 写日记，action="list" 看看记过哪些日子，action="read" 翻一翻以前的记录。那些已经过去的小事，记下来以后，就不会只剩下模模糊糊的印象了。
 
-要是想留个固定的写日记时间，也可以用 schedule_create 给自己安排个提醒。`,
+要是想留个固定的写日记时间，也可以用 fish_schedule 给自己安排个提醒。`,
 }

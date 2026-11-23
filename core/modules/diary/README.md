@@ -4,14 +4,14 @@
 一个工具 + 本地 Markdown + 面板只读查看。
 
 > **当前形态（2026-10-28）**：日记模块**不内置定时器**。
-> 什么时候写由大肥鱼自己决定——她可以用 DSH 原生的 `schedule_create`
+> 什么时候写由大肥鱼自己决定——她可以用 `fish_schedule`
 > 给自己排一个每日/每周提醒；到点提醒回到当前会话，她再调用 `diary`。
 
 ## 设计
 
 ```text
-大肥鱼自己用 schedule_create 排提醒（时间由她/主人定）
-      │ 到点 → DSH schedule 投回同一条鱼鱼会话
+大肥鱼自己用 fish_schedule 排提醒（时间由她/主人定）
+      │ 到点 → 插件日程投旁白回同一条鱼鱼会话
       ▼
 模型调用 diary(action="write", date="YYYY-MM-DD", content="…")
       │
@@ -56,17 +56,17 @@ core/modules/diary/
 - `diary.enabled` 在插件启动时读取，改完要重启 DSH Host；
   `maxContentChars` 每次写入时重读。
 
-## 排期：交给 DSH 定时任务
+## 排期：交给 fish_schedule
 
-`chonkyfish` preset 里挂了 `@deepseek-ai/dsh-tool-schedule`，鱼鱼可以直接用：
+鱼鱼用插件内部日程工具排提醒（不再挂 DSH `schedule_*`）：
 
 ```text
-schedule_create(prompt, title, daily({ time: "20:00:00", time_zone: "Asia/Shanghai" }))
-schedule_list() / schedule_update(id, …) / schedule_delete(id)
+fish_schedule({ action: "create", title, prompt, recurrence: "daily", at: "20:00", timezone: "Asia/Shanghai" })
+fish_schedule({ action: "list" }) / update / delete / enable / disable
 ```
 
-到点由 DSH 的 `schedule` 服务把提醒投回**创建它的那条会话**。面板始终同一个会话，
-所以提醒会回到面板里；鱼鱼收到提醒后再调用 `diary` 写当天日记。
+到点由插件往面板 `activeSessionId` 会话投旁白；鱼鱼收到后再调用 `diary` 写当天日记。
+详见 [docs/fish-schedule-design-v1.md](../../../docs/fish-schedule-design-v1.md)。
 
 ## 面板查看
 

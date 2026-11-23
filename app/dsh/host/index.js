@@ -39,6 +39,8 @@ import { installSkills } from '../adapters/skills/index.js'
 import { installPerception } from '../adapters/perception/index.js'
 import { installMemory } from '../adapters/memory/index.js'
 import { installMigration } from '../adapters/migration/index.js'
+import { installSchedule } from '../adapters/schedule/index.js'
+import { createDeliverer } from '../adapters/proactive/delivery.js'
 import { registerVoiceRoutes } from '../adapters/voice/http.js'
 import { createVoiceSourcePolicy } from '../adapters/voice/source-policy.js'
 import { createVoiceProviders } from '../../shared/voice/providers/index.js'
@@ -505,12 +507,29 @@ export function apply(ctx, config = {}) {
   /* ------------------------------------------------------------- diary */
 
   // 日记模块：单工具 `diary`（write/read/list）+ 本地 Markdown + 面板只读路由。
-  // 写日记的时机由大肥鱼自己用 DSH 的 schedule 工具安排，模块本身没有定时器。
+  // 写日记的时机由大肥鱼自己用 fish_schedule 安排，模块本身没有定时器。
   // 全局提供日记工具，不设置 preset 或会话访问门禁；保留模块启停与存储校验。
   const diaryConfig = resources.getConfig().diary
   if (diaryConfig.enabled) {
     ctx.effect(() => startDiary(ctx, { resources, ready: layoutReady, warn }), 'chonkyfish: diary')
   }
+
+  // 内部日程：工具可写、面板只读 GET、到点投会话；不挂 DSH schedule。
+  ctx.effect(() => {
+    const deliverer = createDeliverer({
+      ctx,
+      workspaceRoot: resources.paths.workspace,
+      preset: resources.spec.PRESET,
+      logger: ctx.logger,
+    })
+    const schedule = installSchedule(ctx, {
+      resources,
+      deliverer,
+      ready: layoutReady,
+      logger: ctx.logger,
+    })
+    return () => schedule.close()
+  }, 'chonkyfish: schedule')
 
   // 事件引擎（模块0）：采集 → 提取 → 查询。任何失败都不许影响面板本身。
   void startEventEngine(ctx, { resources, ready: layoutReady, warn })

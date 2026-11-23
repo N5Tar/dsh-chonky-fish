@@ -1,11 +1,13 @@
 var MIGRATION_ZH = {
   navSettings: '设置', settingsSubtitle: '管理大肥鱼的资料与运行偏好', migrationTitle: '资料导入 / 导出', migrationIntro: '在另一台电脑上继续保留大肥鱼的养成资料。',
+  scheduleTitle: '鱼鱼的日程', scheduleIntro: '只读查看内部日程；到点会投到面板会话。', scheduleFootnote: '改日程请让鱼鱼用工具调整。', scheduleLoading: '正在读取日程…', scheduleLoadFailed: '日程暂不可用。', scheduleEmpty: '还没有日程。', scheduleEnabled: '开启', scheduleDisabled: '关闭', scheduleNext: '下次：', scheduleBackoff: '退避至：',
   migrationIncluded: '包含：身份与人格、钱包与账本、日记、活动技能库、通用偏好，以及已经整理好的记忆。', migrationExcluded: '不包含：聊天、工作区、事件记忆、本机会话索引、社交连接和定时任务。',
   migrationExport: '导出资料', migrationImport: '导入资料', migrationSelect: '选择 .fishpack 文件', migrationPrivacy: '资料包含有人格、账本、日记、已整理的记忆和个人资料，请妥善保管。自定义个人资料目录和本机会话索引不会自动打包。',
   migrationReplace: '导入会替换已整理的记忆和其他纳入迁移的资料。现有资料会先备份；本机会话索引和其他未包含的数据保持不变。电脑活动采集与主动投递不会自动开启。', migrationConfirm: '确认替换', migrationCancel: '取消', migrationWorking: '正在处理资料…', migrationBusy: '正在准备导出…', migrationDone: '资料已恢复。', migrationDownload: '下载资料包', migrationReady: '检查完成，请确认要替换当前资料。', migrationError: '操作未完成，当前资料未确认改变。', migrationRecovery: '恢复未能自动完成。请保留备份并联系维护人员。', migrationCount: '项', migrationBytes: '字节', migrationRestart: '部分偏好需要重启 DSH 后生效。', migrationWarnCustomProfile: '自定义资料目录未包含', migrationWarnBrowserProfile: '浏览器运行资料未包含', migrationWarnAutonomous: '导入后不会自动启用主动行为', migrationUnsafePath: '个人资料中包含不支持的链接或特殊文件；请移除后重试。', migrationInvalidData: '资料内容无法通过校验，未导出或修改现有资料。', migrationTooLarge: '资料包超过大小限制。', migrationBusyError: '资料正在写入，请稍后重试。',
 }
 var MIGRATION_EN = {
   navSettings: 'Settings', settingsSubtitle: 'Manage ChonkyFish data and preferences', migrationTitle: 'Transfer data', migrationIntro: 'Carry ChonkyFish’s saved data to another computer.',
+  scheduleTitle: 'Fish schedule', scheduleIntro: 'Read-only view of internal reminders delivered to the panel session.', scheduleFootnote: 'Ask the fish to change schedules with tools.', scheduleLoading: 'Loading schedule…', scheduleLoadFailed: 'Schedule is unavailable.', scheduleEmpty: 'No schedules yet.', scheduleEnabled: 'On', scheduleDisabled: 'Off', scheduleNext: 'Next: ', scheduleBackoff: 'Backoff until: ',
   migrationIncluded: 'Includes: identity and persona, wallet and ledger, diaries, skills, general preferences, and organized memories.', migrationExcluded: 'Excludes: chats, workspace, event memories, this computer’s session index, social connections and scheduled tasks.',
   migrationExport: 'Export data', migrationImport: 'Import data', migrationSelect: 'Choose a .fishpack file', migrationPrivacy: 'The archive contains private persona, ledger, diary, organized memories and profile data. Custom profile directories and this computer’s session index are not included automatically.',
   migrationReplace: 'Import replaces organized memories and the other included data. Existing data is backed up first; this computer’s session index and other excluded data stay unchanged. Activity collection and proactive delivery stay off.', migrationConfirm: 'Replace data', migrationCancel: 'Cancel', migrationWorking: 'Processing data…', migrationBusy: 'Preparing export…', migrationDone: 'Data restored.', migrationDownload: 'Download archive', migrationReady: 'Validation complete. Confirm to replace current data.', migrationError: 'Operation did not complete. Current data was not confirmed changed.', migrationRecovery: 'Automatic recovery failed. Keep the backup and contact support.', migrationCount: 'items', migrationBytes: 'bytes', migrationRestart: 'Some preferences require a DSH restart.', migrationWarnCustomProfile: 'Custom profile directory excluded', migrationWarnBrowserProfile: 'Browser runtime profile excluded', migrationWarnAutonomous: 'Autonomous actions stay off after import', migrationUnsafePath: 'The profile contains an unsupported link or special file. Remove it and try again.', migrationInvalidData: 'Data validation failed. No current data was changed.', migrationTooLarge: 'The data archive exceeds the size limit.', migrationBusyError: 'Data is being written. Try again shortly.',
@@ -442,13 +444,55 @@ var SETTINGS_TABS_CSS = `
   .cf-migration .settings-tabs button[aria-selected="true"] { border-bottom-color: var(--dsw-alias-brand-primary, #316da9); background: #edf5ff; color: var(--dsw-alias-brand-primary, #316da9); }
   .cf-migration .settings-tabpanel { padding-top: 24px; }
   .cf-migration .settings-tabpanel > :first-child { margin-top: 0; }
+  .cf-schedule-list { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; }
+  .cf-schedule-item { padding: 12px 14px; border: 1px solid var(--dsw-alias-border-l1, #dbe5ef); border-radius: 8px; background: var(--dsw-alias-bg-layer-1, #fff); }
+  .cf-schedule-item .meta { display: block; margin-top: 4px; color: var(--dsw-alias-label-secondary, #71849a); font-size: 12px; }
+  .cf-schedule-item .prompt { margin: 8px 0 0; color: var(--dsw-alias-label-secondary, #60768d); white-space: pre-wrap; }
 `
 var settingsPageSerial = 0
+function createScheduleSettings(t) {
+  return function ScheduleSettings(props) {
+    var dataPair = React.useState({ loading: true, items: [], error: '' }), data = dataPair[0], setData = dataPair[1]
+    var active = props && props.active !== false
+    React.useEffect(function () {
+      if (!active) return undefined
+      var alive = true
+      setData({ loading: true, items: [], error: '' })
+      var url = (window.__CHONKYFISH_STATE__?.routes || RESOURCES.routes).schedule || '/chonkyfish/schedule'
+      fetch(url, { cache: 'no-store' }).then(function (response) {
+        return response.json().then(function (body) { return { response: response, body: body } })
+      }).then(function (result) {
+        if (!alive) return
+        if (!result.response.ok || !result.body || !result.body.ok) {
+          setData({ loading: false, items: [], error: t('scheduleLoadFailed') })
+          return
+        }
+        setData({ loading: false, items: result.body.items || [], error: '' })
+      }).catch(function () { if (alive) setData({ loading: false, items: [], error: t('scheduleLoadFailed') }) })
+      return function () { alive = false }
+    }, [active])
+    function row(item) {
+      return h('li', { key: item.id, className: 'cf-schedule-item' },
+        h('strong', null, item.title || item.id),
+        h('span', { className: 'meta' }, (item.enabled ? t('scheduleEnabled') : t('scheduleDisabled')) + ' · ' + (item.recurrence || '') + ' · ' + (item.at || '')),
+        h('span', { className: 'meta' }, t('scheduleNext') + (item.nextFireAt || '—')),
+        item.backoffUntil && h('span', { className: 'meta' }, t('scheduleBackoff') + item.backoffUntil),
+        item.prompt && h('p', { className: 'prompt' }, item.prompt.length > 120 ? item.prompt.slice(0, 120) + '…' : item.prompt))
+    }
+    return h('div', { className: 'cf-schedule-readonly' },
+      h('h2', null, t('scheduleTitle')), h('p', null, t('scheduleIntro')), h('p', { className: 'notice' }, t('scheduleFootnote')),
+      data.loading && h('p', null, t('scheduleLoading')),
+      data.error && h('p', { className: 'error', role: 'alert' }, data.error),
+      !data.loading && !data.error && data.items.length === 0 && h('p', null, t('scheduleEmpty')),
+      !data.loading && data.items.length > 0 && h('ul', { className: 'cf-schedule-list' }, data.items.map(row)))
+  }
+}
 function createMigrationSettings(t, options) {
   var importOnly = options?.importOnly === true
   var VoiceSettings = createVoiceSettings(t)
-  var tabs = ['voice', 'transfer']
-  var tabLabels = { voice: 'settingsVoiceTab', transfer: 'migrationTitle' }
+  var ScheduleSettings = createScheduleSettings(t)
+  var tabs = ['voice', 'schedule', 'transfer']
+  var tabLabels = { voice: 'settingsVoiceTab', schedule: 'scheduleTitle', transfer: 'migrationTitle' }
   return function MigrationSettings(props) {
     var endpoint = (window.__CHONKYFISH_STATE__?.routes || RESOURCES.routes)
     var exportUrl = endpoint.migrationExport || RESOURCES.routes.migrationExport
@@ -464,8 +508,10 @@ function createMigrationSettings(t, options) {
     function tabId(tab) { return pageId.current + '-' + tab + '-tab' }
     function panelId(tab) { return pageId.current + '-' + tab + '-panel' }
     function tabKey(event, tab) {
+      var index = tabs.indexOf(tab)
       var next
-      if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') next = tab === 'voice' ? 'transfer' : 'voice'
+      if (event.key === 'ArrowRight') next = tabs[(index + 1) % tabs.length]
+      if (event.key === 'ArrowLeft') next = tabs[(index - 1 + tabs.length) % tabs.length]
       if (event.key === 'Home') next = tabs[0]
       if (event.key === 'End') next = tabs[tabs.length - 1]
       if (next) {
@@ -568,6 +614,7 @@ function createMigrationSettings(t, options) {
         importOnly ? transfer : h(React.Fragment, null,
           h('div', { className: 'settings-tabs', role: 'tablist', 'aria-label': t('navSettings') }, tabs.map(renderTab)),
           renderPanel('voice', h(VoiceSettings, { active: selectedTab === 'voice' })),
+          renderPanel('schedule', h(ScheduleSettings, { active: selectedTab === 'schedule' })),
           renderPanel('transfer', transfer))))
   }
 }

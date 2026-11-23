@@ -22,12 +22,12 @@ import { isFishHeader, FISH_PRESET } from '../../../../core/modules/proactive/id
 import { NUDGE_SOURCE } from '../../../../core/modules/proactive/narration.js'
 
 /** 构造一条 user 角色的旁白消息（结构等价 createUserMessage，冻结交给会话日志）。 */
-export function createNudgeMessage(text) {
+export function createNudgeMessage(text, source = NUDGE_SOURCE) {
   return {
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text: String(text) }],
-    source: { ...NUDGE_SOURCE },
+    source: { ...(source && typeof source === 'object' ? source : NUDGE_SOURCE) },
   }
 }
 
@@ -56,9 +56,10 @@ export function createDeliverer({ ctx, workspaceRoot, preset = FISH_PRESET, logg
    * 把一条旁白投进指定鱼鱼会话。
    * @param {string} sessionId
    * @param {string} text
+   * @param {{ source?: object }} [options]
    * @returns {Promise<{ ok: boolean, messageId?: string, sessionId?: string, error?: string }>}
    */
-  async function deliver(sessionId, text) {
+  async function deliver(sessionId, text, options = {}) {
     if (typeof sessionId !== 'string' || sessionId.trim() === '') return { ok: false, error: 'missing-session-id' }
     if (typeof text !== 'string' || text.trim() === '') return { ok: false, error: 'empty-text' }
     const controller = service('sessionController')
@@ -88,7 +89,7 @@ export function createDeliverer({ ctx, workspaceRoot, preset = FISH_PRESET, logg
     // 正在跑 turn 的时候不要插队：让当前这轮先结束，调用方稍后重试。
     if (agent.status !== 'idle') return { ok: false, error: 'agent-busy' }
 
-    const message = createNudgeMessage(text)
+    const message = createNudgeMessage(text, options && options.source)
     try {
       agent.followup(message)
     } catch (error) {

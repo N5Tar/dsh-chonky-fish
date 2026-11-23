@@ -23,8 +23,8 @@
 - **状态落盘**：名字、补充人格、钱包、账本保存在 home 里的 `state.json`（Host 通过无插件私有鉴权的本地路由读写），HTTP API 与嵌入式浏览器存储只作为缓存/降级
 - **事件感知（模块0）**：Host 侧监听 DSH 会话事件，把「小鱼塘 + chonkyfish」会话里每个 turn 交给该会话自己的模型抽取语义事件（说了喜欢 / 打算做 / 否认做过……），落 `$DSH_HOME/chonkyfish/events.db`，面板右上角「感知」可查看，每条都带原文引用与事实地位
 - **主动消息（能力）**：保留「让大肥鱼先开口」的能力——Host 往**面板当前会话**里注入一条隐藏旁白，她就会主动说一句；主动消息本身没有定时器，不会自己新建或另找会话
-- **日记（模块1）**：一个 `diary` 工具（write / read / list）+ 本地 Markdown（`$DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md`）；模块**不带定时器**，写日记的时间由大肥鱼自己用定时任务工具安排；面板右上角 📔 图标可查看已写日记（只读）；不再按调用方 preset 限制工具，写完不用汇报
-- **定时任务（DSH 原生）**：给 `chonkyfish` preset 挂了 `schedule_create / list / update / delete`，鱼鱼可以自己排一次性/每日/每周/cron 提醒（包括“每天几点写日记”），到点由 DSH 的 `schedule` 服务把提醒投回**同一条会话**
+- **日记（模块1）**：一个 `diary` 工具（write / read / list）+ 本地 Markdown（`$DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md`）；模块**不带定时器**，写日记的时间由大肥鱼自己用 `fish_schedule` 安排；面板右上角 📔 图标可查看已写日记（只读）；不再按调用方 preset 限制工具，写完不用汇报
+- **内部日程（fish_schedule）**：大肥鱼自有日程模块；工具可写、设置页只读；到点只往面板会话投旁白（`chonkyfish-schedule`），不再挂 DSH `schedule_*`
 - **内嵌图片资源**：插图与头像以 WebP data URI 内嵌在 [client.js](<client.js>) 里，不下载图片
 
 ## 人格设定与能力说明
@@ -101,9 +101,9 @@ Host 会把消息投到面板当前会话。事件回访计划器 `core/modules/
   - `diary(action="read", date="2026-10-28")`：读某天；
   - `diary(action="list", limit=30)`：列出已有日期。
 - **存储**：`$DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md`，一天一个文件，UTF-8、正文原样保存（不自动加标题）。
-- **写日记的时间由鱼鱼自己安排**：她可以用 DSH 原生的 `schedule_create` 给自己排一个每日/每周提醒
-  （例如“以后每天 20:00 提醒我写日记”）；到点提醒回到同一条会话，她再调用 `diary` 写。
-  详见下方「定时任务」。
+- **写日记的时间由鱼鱼自己安排**：她可以用 `fish_schedule` 给自己排一个每日/每周提醒
+  （例如“以后每天 20:00 提醒我写日记”）；到点旁白回到面板会话，她再调用 `diary` 写。
+  详见下方「内部日程」。
 - **不新建会话、不做多会话聚合**：项目设定就是面板始终同一个会话。
 - **面板查看**：右上角 📔 图标打开「鱼鱼的日记」，按日期列出、点开只读正文；
   走无插件私有鉴权的本地路由 `GET /chonkyfish/diary?limit=60` / `?date=YYYY-MM-DD`，不写文件。
@@ -115,23 +115,20 @@ Host 会把消息投到面板当前会话。事件回访计划器 `core/modules/
 
 1. 在大肥鱼面板里让她“写今天的日记”，应调用 `diary` 且生成 `$DSH_HOME/chonkyfish/日记/<今天>.md`；
 2. 再说一次“写今天的日记”，应返回 `DIARY_ALREADY_EXISTS`，文件不变；
-3. 对她说“以后每天 20:00 提醒我写日记”，她应调用 `schedule_create` 建一个 daily 任务；
-   到点提醒回到面板会话，她再调用 `diary` 写；
+3. 对她说“以后每天 20:00 提醒我写日记”，她应调用 `fish_schedule` 建一个 daily 日程；
+   到点旁白回到面板会话，她再调用 `diary` 写；
 4. 在宿主提供该工具的其它 Agent 会话中，插件不应再因 preset 不同而隐藏或拒绝 `diary`。
 
-## 定时任务（DSH 原生）
+## 内部日程（fish_schedule）
 
-鱼鱼可以「自己给自己排一个提醒」，用的是 DSH 自带的耐久定时任务（`@deepseek-ai/dsh-schedule` 服务 + `@deepseek-ai/dsh-tool-schedule` 工具），不是我们另写的一套。
+鱼鱼用插件自己的日程模块排提醒（不再挂 DSH `@deepseek-ai/dsh-tool-schedule`）。
 
-- 挂载位置：`app/dsh/packaging/cordis.patch.yml` 的 `preset-chonkyfish.plugins` 里挂了 `@deepseek-ai/dsh-tool-schedule`；
-  `dsh-schedule` 服务由 DSH Web 组合全局提供，所以 Host 侧不用新增代码。
-- 鱼鱼可用的工具：
-  - `schedule_create(prompt, title, <after_seconds | at | every_seconds | daily | weekly | cron>)`
-  - `schedule_list()` / `schedule_update(id, …)` / `schedule_delete(id)`
-- 行为：每个提醒绑定**创建它的那条会话**；到点由 schedule 服务恢复/唤起该会话并投一条 follow-up 消息，
-  然后照常走鱼鱼的人格回复。面板始终同一个会话，所以提醒会回到面板里。
-- 典型用法：让鱼鱼自己排“每天 20:00 写日记”，时间、频率都由她/你决定，不再有硬编码的 8 点任务。
-- 注意：带活跃定时任务的会话在 DSH 里归档会被拒绝，先停掉/删除任务再归档。
+- 工具：`fish_schedule`（create / list / update / delete / enable / disable）
+- 持久化：`$DSH_HOME/chonkyfish/schedule.json`（原子写；不进资料迁移包）
+- 到点：只投面板 `activeSessionId` 会话；`source.kind = chonkyfish-schedule`；正文为 `prompt`
+- 漏点不补；busy/无会话短退避；跨槽丢弃；单次扫描最多成功投递 5 条
+- 面板：设置页「鱼鱼的日程」只读（`GET /chonkyfish/schedule`）；改日程请跟鱼鱼说
+- 设计见 [docs/fish-schedule-design-v1.md](docs/fish-schedule-design-v1.md) / [docs/fish-schedule-technical-v1.md](docs/fish-schedule-technical-v1.md)
 
 ## chonkyFish home 与资源管理
 
@@ -142,6 +139,7 @@ $DSH_HOME/chonkyfish/            # 大肥鱼默认主目录
   config.json        # 可编辑配置（主动消息开关 / 事件引擎节奏 / 上限）
   state.json         # 面板状态：名字、补充人格、个人档案目录、钱包、账本、演示对话
   proactive.json     # 主动消息：面板当前会话 id、发送计数、最近记录
+  schedule.json      # 内部日程（fish_schedule）
   events.db          # 模块0 事件库（SQLite，含 -wal/-shm）
   个人资料/          # 人格页默认个人档案目录（对话时追加到人格 prompt 最后）
   日记/              # 日记正文：YYYY-MM-DD.md（一天一个文件）
@@ -237,7 +235,7 @@ node app/dsh/build.mjs      # 从 app/dsh/ui/original.html + app/dsh/ui/runtime.
 - 浏览器 localStorage（`chonkyfish-mini-demo-v1`）仅作为缓存和降级；首次安装/更新后刷新一次页面以加载最新客户端与路由配置
 - 「感知」事件保存在 `$DSH_HOME/chonkyfish/events.db`（只存抽取结果，原始对话仍在 DSH 会话日志里）；抽取会把该 turn 的对话原文发给当前配置的模型
 - 主动消息的「面板当前会话 id、发送计数、最近发送记录」保存在 `$DSH_HOME/chonkyfish/proactive.json`；旁白正文与鱼鱼回复都会进入 DSH 会话日志
-- 日记正文保存在 `$DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md`；定时任务由 DSH 自己保存（`$DSH_HOME` 下的 schedule 存储）
+- 日记正文保存在 `$DSH_HOME/chonkyfish/日记/YYYY-MM-DD.md`；内部日程保存在 `$DSH_HOME/chonkyfish/schedule.json`
 - 路径、路由、上限、默认配置由 `app/shared/resources/` 统一管理，可编辑配置在 `$DSH_HOME/chonkyfish/config.json`
 - Social 默认没有任何连接；配置一条连接后 Host 才会连它的 OneBot Endpoint 并缓存收到的消息。其余图片资源无外部请求；`web_search` / `web_fetch` 会走 DSH 配置的 Web 服务
 

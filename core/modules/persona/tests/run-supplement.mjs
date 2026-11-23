@@ -219,7 +219,8 @@ test('各项能力说明包含对应工具名称和常用操作', () => {
   const expected = [
     ['我的个人资料', ['glob', 'read']],
     ['感知', ['perception_get_owner_state']],
-    ['日记', ['diary', 'action="write"', 'action="list"', 'action="read"', 'schedule_create']],
+    ['日记', ['diary', 'action="write"', 'action="list"', 'action="read"', 'fish_schedule']],
+    ['鱼鱼日程', ['fish_schedule', 'action="create"', 'action="list"', 'action="update"', 'action="delete"', 'action="enable"', 'action="disable"', 'schedule_*']],
     ['技能', ['fish_skill', 'fish_skill_learn', 'action="list"', 'action="read"', 'action="create"', 'action="record"', 'action="revise"']],
   ]
   for (const [title, names] of expected) {

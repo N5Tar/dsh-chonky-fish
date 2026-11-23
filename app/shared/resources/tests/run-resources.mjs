@@ -109,6 +109,7 @@ await test('paths: 所有文件都在 home 下，工作区在 home/小鱼塘', (
     voiceDatabase: join(home, FILES.voice, FILES.voiceDatabase),
     diary: join(home, '日记'),
     memory: join(home, FILES.memory),
+    schedule: join(home, FILES.schedule),
     personalProfile: join(home, '个人资料'),
     workspace: join(home, WORKSPACE_DIR),
     social: join(home, 'social'),

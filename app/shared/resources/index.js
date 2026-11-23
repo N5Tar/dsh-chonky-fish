@@ -233,6 +233,7 @@ export function createResources({ env = process.env, homeRoot } = {}) {
     voiceDatabase: join(home, FILES.voice, FILES.voiceDatabase),
     diary: join(home, DIARY_DIR),
     memory: join(home, FILES.memory),
+    schedule: join(home, FILES.schedule),
     personalProfile: join(home, PERSONAL_PROFILE_DIR),
     workspace: join(home, WORKSPACE_DIR),
     social: join(home, SOCIAL.directory),

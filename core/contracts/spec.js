@@ -56,6 +56,7 @@ export const FILES = Object.freeze({
   tasks: 'tasks.db',
   migration: 'migration',
   memory: 'memory',
+  schedule: 'schedule.json',
 })
 
 /** Bundled native collector locations, relative to plugin package root. */
@@ -75,6 +76,7 @@ export const ROUTES = Object.freeze({
   proactive: '/chonkyfish/proactive',
   config: '/chonkyfish/config',
   diary: '/chonkyfish/diary',
+  schedule: '/chonkyfish/schedule',
   skills: '/chonkyfish/skills',
   perception: '/chonkyfish/perception',
   social: '/chonkyfish/social',
@@ -118,6 +120,16 @@ export const LIMITS = Object.freeze({
   taskMaxCommandBytes: 64 * 1024,
   taskMaxResources: 32,
   taskMaxList: 100,
+  schedule: Object.freeze({
+    maxItems: 50,
+    maxTitleChars: 80,
+    maxPromptChars: 2000,
+    maxScanDeliveries: 5,
+    scanContinueMs: 5000,
+    maxFireRecords: 200,
+    maxBackoffAccumMs: 30 * 60 * 1000,
+    maxTimerMs: 2 ** 31 - 1,
+  }),
 })
 
 /** 活动技能库的有界存储与读取限制。 */
@@ -194,8 +206,8 @@ export const DEFAULT_CONFIG = Object.freeze({
    * 日记模块：同一个大肥鱼会话里写日记，正文落本地 Markdown。
    * - maxContentChars：单篇日记正文上限
    *
-   * 注意：模块本身**没有定时器**。写日记的时间由大肥鱼自己用 DSH 的
-   * `schedule_create` 安排（想每天写就排一个 daily 提醒）。
+   * 注意：模块本身**没有定时器**。写日记的时间由大肥鱼自己用
+   * `fish_schedule` 安排（想每天写就排一个 daily 提醒）。
    */
   diary: Object.freeze({
     enabled: true,
