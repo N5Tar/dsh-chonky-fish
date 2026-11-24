@@ -17,6 +17,7 @@ import { defaultNarration, NUDGE_SOURCE, timeBucket } from '../narration.js'
 import { createProactiveService as createCoreProactiveService } from '../proactive.js'
 import { platform } from '../../../../app/shared/platform/index.js'
 import { createProactiveStore, dateKey } from '../store.js'
+import { formatProactiveNavLabel } from '../unread-label.js'
 
 const results = []
 function test(name, fn) {
@@ -225,6 +226,40 @@ await test('store: 坏文件/旧版本回落到空状态，不抛错', () => {
   }
 })
 
+await test('unread-label: 0 / N / 99+', () => {
+  assert.equal(formatProactiveNavLabel('大肥鱼', 0), '大肥鱼')
+  assert.equal(formatProactiveNavLabel('大肥鱼', 3), '大肥鱼 3')
+  assert.equal(formatProactiveNavLabel('大肥鱼', 99), '大肥鱼 99')
+  assert.equal(formatProactiveNavLabel('大肥鱼', 100), '大肥鱼 99+')
+  assert.equal(formatProactiveNavLabel('ChonkyFish', 2), 'ChonkyFish 2')
+})
+
+await test('store: unreadCount 落盘；panelFocused 仅内存；缺字段默认 0/false', () => {
+  const workspace = makeHome()
+  try {
+    const store = createProactiveStore({ file: workspace.storePath })
+    assert.equal(store.unreadCount(), 0)
+    assert.equal(store.panelFocused(), false)
+    store.bumpUnread()
+    store.bumpUnread()
+    assert.equal(store.unreadCount(), 2)
+    store.setPanelFocused(true)
+    assert.equal(store.panelFocused(), true)
+    const raw = JSON.parse(readFileSync(workspace.storePath, 'utf8'))
+    assert.equal(raw.unreadCount, 2)
+    assert.equal('panelFocused' in raw, false)
+    const reopened = createProactiveStore({ file: workspace.storePath })
+    assert.equal(reopened.unreadCount(), 2)
+    assert.equal(reopened.panelFocused(), false)
+    reopened.clearUnread()
+    assert.equal(reopened.unreadCount(), 0)
+    for (let i = 0; i < 1005; i += 1) reopened.bumpUnread()
+    assert.equal(reopened.unreadCount(), 999)
+  } finally {
+    workspace.cleanup()
+  }
+})
+
 /* ------------------------------------------------------------ delivery */
 
 await test('delivery: 投递 = followup + flush，消息带来源', async () => {
@@ -415,6 +450,49 @@ await test('service: 只保留能力，不再暴露任何定时器入口', () =>
     assert.equal(typeof service.forceNudge, 'undefined')
     assert.equal(typeof service.send, 'function')
     assert.equal(typeof service.registerActiveSession, 'function')
+    service.dispose()
+  } finally {
+    workspace.cleanup()
+  }
+})
+
+await test('service: send 成功且未 focus 时 unread+1；focused 时不加；focus true 清零', async () => {
+  const workspace = makeHome()
+  try {
+    const panel = makeAgent('session-panel')
+    const { ctx } = makeCtx({ agents: { 'session-panel': panel.agent } })
+    const service = createProactiveService({ ctx, resources: makeResources({ storePath: workspace.storePath }) })
+    const bound = service.registerActiveSession('session-panel')
+    assert.equal(bound.ok, true)
+    assert.equal(service.inspect().unreadCount, 0)
+    assert.equal(service.inspect().panelFocused, false)
+    assert.equal((await service.send({ narration: 'hi' })).ok, true)
+    assert.equal(service.inspect().unreadCount, 1)
+    const focused = service.registerActiveSession('session-panel', { panelFocused: true })
+    assert.equal(focused.unreadCount, 0)
+    assert.equal(focused.panelFocused, true)
+    assert.equal((await service.send({ narration: 'again' })).ok, true)
+    assert.equal(service.inspect().unreadCount, 0)
+    service.registerActiveSession('session-panel', { panelFocused: false })
+    assert.equal((await service.send({ narration: 'later' })).ok, true)
+    assert.equal(service.inspect().unreadCount, 1)
+    const cleared = service.clearUnread()
+    assert.equal(cleared.unreadCount, 0)
+    assert.equal(cleared.panelFocused, true)
+    service.dispose()
+  } finally {
+    workspace.cleanup()
+  }
+})
+
+await test('service: 投递失败不增加 unread', async () => {
+  const workspace = makeHome()
+  try {
+    const { ctx } = makeCtx({})
+    const service = createProactiveService({ ctx, resources: makeResources({ storePath: workspace.storePath }) })
+    service.registerActiveSession('missing')
+    assert.equal((await service.send({})).ok, false)
+    assert.equal(service.inspect().unreadCount, 0)
     service.dispose()
   } finally {
     workspace.cleanup()

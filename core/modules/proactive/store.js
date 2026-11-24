@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname } from 'node:path'
 
 export const STORE_VERSION = 2
+export const UNREAD_MAX_STORED = 999
 const MAX_RECENT = 20
 const MAX_COUNT_DAYS = 14
 
@@ -34,6 +35,8 @@ function emptyData() {
     lastSentKind: null,
     /** 最近发送记录，方便排查；不参与任何判断 */
     recent: [],
+    /** 侧栏未读（主动搭话）；缺字段 sanitize 为 0 */
+    unreadCount: 0,
   }
 }
 
@@ -61,6 +64,10 @@ function sanitize(raw) {
     })
   }
   data.recent = data.recent.slice(-MAX_RECENT)
+  const unread = Number(raw.unreadCount)
+  if (Number.isFinite(unread) && unread >= 0) {
+    data.unreadCount = Math.min(Math.floor(unread), UNREAD_MAX_STORED)
+  }
   return data
 }
 
@@ -69,6 +76,8 @@ function sanitize(raw) {
  */
 export function createProactiveStore({ file, now = Date.now }) {
   const data = read()
+  /** 侧栏主聊天是否选中；仅进程内，不落盘 */
+  let panelFocused = false
 
   function read() {
     try {
@@ -138,6 +147,35 @@ export function createProactiveStore({ file, now = Date.now }) {
     write()
   }
 
+  function unreadCount() {
+    return data.unreadCount || 0
+  }
+
+  function bumpUnread() {
+    data.unreadCount = Math.min((data.unreadCount || 0) + 1, UNREAD_MAX_STORED)
+    write()
+    return data.unreadCount
+  }
+
+  function clearUnread() {
+    if ((data.unreadCount || 0) !== 0) {
+      data.unreadCount = 0
+      write()
+    } else {
+      data.unreadCount = 0
+    }
+    return data.unreadCount
+  }
+
+  function panelFocusedValue() {
+    return panelFocused === true
+  }
+
+  function setPanelFocused(value) {
+    panelFocused = value === true
+    return panelFocused
+  }
+
   function snapshot() {
     return JSON.parse(JSON.stringify(data))
   }
@@ -157,6 +195,11 @@ export function createProactiveStore({ file, now = Date.now }) {
     countFor,
     lastSentAt,
     noteSend,
+    unreadCount,
+    bumpUnread,
+    clearUnread,
+    panelFocused: panelFocusedValue,
+    setPanelFocused,
     snapshot,
     flush,
     dispose,

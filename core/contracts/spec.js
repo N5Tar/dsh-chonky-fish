@@ -74,6 +74,7 @@ export const ROUTES = Object.freeze({
   events: '/chonkyfish/events',
   session: '/chonkyfish/session',
   proactive: '/chonkyfish/proactive',
+  proactiveUnreadClear: '/chonkyfish/proactive/unread/clear',
   config: '/chonkyfish/config',
   diary: '/chonkyfish/diary',
   schedule: '/chonkyfish/schedule',

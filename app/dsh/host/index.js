@@ -805,9 +805,10 @@ async function startEventEngine(ctx, { resources, ready, warn }) {
 
 /**
  * 启动主动消息能力（无定时器）：
- *   PUT  /chonkyfish/session      面板上报当前显示的鱼鱼会话
- *   GET  /chonkyfish/proactive    只读诊断（active session / 最近发送 / 配置）
- *   POST /chonkyfish/proactive    让她往面板当前会话主动说一句（可选自定义旁白）
+ *   PUT  /chonkyfish/session                 面板上报会话；可选 panelFocused
+ *   GET  /chonkyfish/proactive               只读诊断（含 unreadCount / panelFocused）
+ *   POST /chonkyfish/proactive               主动搭话
+ *   POST /chonkyfish/proactive/unread/clear  清零未读并视为进入主聊天（兜底）
  * 返回一个幂等的 stop 函数。
  */
 async function startProactive(ctx, { resources, ready, warn, onActiveSession }) {
@@ -836,12 +837,28 @@ async function startProactive(ctx, { resources, ready, warn, onActiveSession }) 
             return
           }
           readJsonBody(request, resources.limits.jsonBodyBytes).then((body) => {
-            const result = proactive.registerActiveSession(body && body.sessionId)
+            const hasFocus = body && Object.prototype.hasOwnProperty.call(body, 'panelFocused')
+            const panelFocused = hasFocus
+              ? body.panelFocused === true ? true : body.panelFocused === false ? false : undefined
+              : undefined
+            if (hasFocus && panelFocused === undefined) {
+              replyJson(response, 400, { ok: false, error: 'invalid-panel-focused' })
+              return
+            }
+            const result = proactive.registerActiveSession(body && body.sessionId, hasFocus ? { panelFocused } : {})
             if (!result.ok) {
               replyJson(response, 400, result)
               return
             }
             onActiveSession?.(result.sessionId)
+            if (hasFocus) {
+              replyJson(response, 200, {
+                ok: true,
+                unreadCount: result.unreadCount,
+                panelFocused: result.panelFocused,
+              })
+              return
+            }
             response.writeHead(204)
             response.end()
           })
@@ -873,6 +890,19 @@ async function startProactive(ctx, { resources, ready, warn, onActiveSession }) 
           })
         },
       }), 'chonkyfish: proactive route')
+
+      const clearPath = resources.routes.proactiveUnreadClear || '/chonkyfish/proactive/unread/clear'
+      ctx.effect(() => ctx.webServer.register({
+        kind: 'exact',
+        path: clearPath,
+        handler: (request, response) => {
+          if (request.method !== 'POST') {
+            replyJson(response, 405, { ok: false, error: 'method-not-allowed' })
+            return
+          }
+          replyJson(response, 200, proactive.clearUnread())
+        },
+      }), 'chonkyfish: proactive unread clear')
     } catch (error) {
       // 插件卸载中注册会被拒：收掉服务，避免留下半套路由。
       warn('[chonkyfish] 主动消息路由注册失败', error)
