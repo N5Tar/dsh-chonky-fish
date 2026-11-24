@@ -45,16 +45,38 @@ export function createProactiveService({ resources, deliverer, logger, now = Dat
    * 面板上报「我现在显示的是这条鱼鱼会话」。Host 只认一条 active session，
    * 主动消息永远投这里——这是「不生成新会话、只出现在面板对话里」的关键。
    * @param {string} sessionId
-   * @returns {{ ok: boolean, sessionId?: string, error?: string }}
+   * @param {{ panelFocused?: boolean }} [options]
+   * @returns {{ ok: boolean, sessionId?: string, unreadCount?: number, panelFocused?: boolean, error?: string }}
    */
-  function registerActiveSession(sessionId) {
+  function registerActiveSession(sessionId, { panelFocused } = {}) {
     if (typeof sessionId !== 'string' || sessionId.trim() === '') {
       return { ok: false, error: 'invalid-session-id' }
     }
     const id = sessionId.trim()
     store.setActiveSession(id)
-    note('面板当前会话：' + id)
-    return { ok: true, sessionId: id }
+    if (panelFocused === true) {
+      store.setPanelFocused(true)
+      store.clearUnread()
+      note('面板当前会话（主聊天选中）：' + id)
+    } else if (panelFocused === false) {
+      store.setPanelFocused(false)
+      note('面板当前会话（离开主聊天）：' + id)
+    } else {
+      note('面板当前会话：' + id)
+    }
+    return {
+      ok: true,
+      sessionId: id,
+      unreadCount: store.unreadCount(),
+      panelFocused: store.panelFocused(),
+    }
+  }
+
+  /** 清零未读并视为进入主聊天（clear 路由兜底）。 */
+  function clearUnread() {
+    store.setPanelFocused(true)
+    store.clearUnread()
+    return { ok: true, unreadCount: 0, panelFocused: true }
   }
 
   /**
@@ -94,8 +116,9 @@ export function createProactiveService({ resources, deliverer, logger, now = Dat
       sessionId: result.sessionId,
       messageId: result.messageId,
     })
+    if (!store.panelFocused()) store.bumpUnread()
     note('主动消息已投递：' + result.sessionId)
-    return result
+    return { ...result, unreadCount: store.unreadCount(), panelFocused: store.panelFocused() }
   }
 
   function inspect() {
@@ -105,6 +128,8 @@ export function createProactiveService({ resources, deliverer, logger, now = Dat
       config: resources.getConfig(),
       activeSessionId: store.activeSessionId(),
       lastSentAt: store.lastSentAt(),
+      unreadCount: store.unreadCount(),
+      panelFocused: store.panelFocused(),
       store: store.snapshot(),
       automatic: false,
     }
@@ -114,5 +139,5 @@ export function createProactiveService({ resources, deliverer, logger, now = Dat
     store.dispose()
   }
 
-  return { registerActiveSession, send, inspect, dispose }
+  return { registerActiveSession, send, clearUnread, inspect, dispose }
 }

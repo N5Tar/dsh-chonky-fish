@@ -358,6 +358,41 @@ ${avatarWidget}
      * localStorage except the Session id.
      */
     var fishChat = null
+    /** 侧栏未读数字（主动搭话）；与 core/modules/proactive/unread-label.js 保持一致。 */
+    var proactiveUnread = 0
+    var mainChatFocused = false
+    var refreshPanellist = function () {}
+    function applyProactiveUnread(count) {
+      var next = Math.max(0, Math.floor(Number(count) || 0))
+      if (next === proactiveUnread) return
+      proactiveUnread = next
+      refreshPanellist()
+    }
+    function formatProactiveNavLabel(base) {
+      if (proactiveUnread <= 0) return base
+      if (proactiveUnread > 99) return base + ' 99+'
+      return base + ' ' + proactiveUnread
+    }
+    function reportPanelFocus(focused) {
+      mainChatFocused = focused === true
+      if (!fishChat || typeof fishChat.reportActiveSession !== 'function') return
+      var sid = typeof fishChat.getSessionId === 'function' ? fishChat.getSessionId() : null
+      if (typeof sid === 'string' && sid) fishChat.reportActiveSession(sid, mainChatFocused)
+    }
+    function pullProactiveUnread() {
+      try {
+        if (typeof fetch !== 'function' || (typeof document !== 'undefined' && document.hidden)) return
+        var bridge = typeof window !== 'undefined' ? window.__CHONKYFISH_STATE__ : null
+        var url = (bridge && bridge.proactiveEndpoint) || (RESOURCES.routes && RESOURCES.routes.proactive) || '/chonkyfish/proactive'
+        fetch(url, { method: 'GET' }).then(function (response) {
+          return response && response.ok ? response.json() : null
+        }).then(function (data) {
+          if (data && typeof data.unreadCount === 'number') applyProactiveUnread(data.unreadCount)
+        }).catch(function () { /* ignore */ })
+      } catch (error) {
+        /* ignore */
+      }
+    }
 
     function createFishChat(ctx) {
       var STORAGE = RESOURCES.storageKeys
@@ -420,19 +455,27 @@ ${avatarWidget}
       }
       // 告诉 Host「面板现在显示的是这条鱼鱼会话」。主动消息只投这一条会话，
       // 所以不会跑到别的会话、也不会新建会话。上报失败只影响主动消息，聊天照常。
-      function reportActiveSession(sessionId) {
+      // panelFocused: true/false 时兼报主聊天选中态（未读清零 / 离开主入口）。
+      function reportActiveSession(sessionId, panelFocused) {
         try {
           var bridge = typeof window !== 'undefined' ? window.__CHONKYFISH_STATE__ : null
           if (!bridge || typeof sessionId !== 'string' || sessionId === '') return
           if (typeof fetch !== 'function') return
           var endpoint = bridge.sessionEndpoint || RESOURCES.routes.session
+          var payload = { sessionId: sessionId }
+          if (panelFocused === true || panelFocused === false) payload.panelFocused = panelFocused
           fetch(endpoint, {
             method: 'PUT',
             headers: {
               'content-type': 'application/json',
             },
-            body: JSON.stringify({ sessionId: sessionId }),
+            body: JSON.stringify(payload),
             keepalive: true,
+          }).then(function (response) {
+            if (!response || !response.ok || response.status === 204) return null
+            return response.json()
+          }).then(function (data) {
+            if (data && typeof data.unreadCount === 'number') applyProactiveUnread(data.unreadCount)
           }).catch(function () {
             /* the panel works without the host route */
           })
@@ -693,13 +736,14 @@ ${avatarWidget}
         }
       }
       function attach(nextReference, sessionId) {
+        // 会话刚绑定时若已在主聊天，补报 focus:true（清零）；否则不改 Host focus。
         reference = nextReference
         binding = nextReference.binding
         bindingSessionId = sessionId
         voiceBindingRevision += 1
         unsubscribes.push(binding.eventSource.subscribe(emit))
         unsubscribes.push(binding.session.subscribe(emit))
-        reportActiveSession(sessionId)
+        reportActiveSession(sessionId, mainChatFocused ? true : undefined)
       }
       function releaseReference() {
         for (var i = 0; i < unsubscribes.length; i += 1) {
@@ -953,6 +997,8 @@ ${avatarWidget}
         isRunning: isRunning,
         getStatus: getStatus,
         onChange: onChange,
+        getSessionId: function () { return bindingSessionId },
+        reportActiveSession: reportActiveSession,
         dispose: dispose,
       }
     }
@@ -968,6 +1014,7 @@ ${avatarWidget}
         var hostRef = React.useRef(null)
 
         React.useEffect(function () {
+          reportPanelFocus(view === 'chat')
           var host = hostRef.current
           if (!host) return undefined
           var shadow
@@ -1004,6 +1051,7 @@ ${avatarWidget}
               console.error('[chonkyfish] page dispose failed', error)
             }
             shadow.innerHTML = ''
+            if (view === 'chat') reportPanelFocus(false)
           }
         }, [])
 
@@ -1157,17 +1205,59 @@ ${avatarWidget}
         })
       })
 
+      // DSH 仅在 panellist 条目变化 / locale 变化时 resolve label；未读变了要重注册。
       ctx.slots.inject('sidebar.panellist', function () {
-        return PANELS.map(function (panel) {
-          return ctx.slots.register({
-            name: 'sidebar.panellist',
-            id: panel.id,
-            order: panel.order,
-            label: function () { return t(panel.label) },
-            locale: NS,
-          }, panel.icon)
-        })
+        var alive = true
+        var disposers = []
+        function remount() {
+          for (var i = 0; i < disposers.length; i += 1) {
+            try { disposers[i]() } catch (error) { /* ignore */ }
+          }
+          disposers = []
+          if (!alive) return
+          disposers = PANELS.map(function (panel) {
+            return ctx.slots.register({
+              name: 'sidebar.panellist',
+              id: panel.id,
+              order: panel.order,
+              label: function () {
+                var base = t(panel.label)
+                return panel.id === 'chonkyfish' ? formatProactiveNavLabel(base) : base
+              },
+              locale: NS,
+            }, panel.icon)
+          })
+        }
+        remount()
+        refreshPanellist = remount
+        return function () {
+          alive = false
+          refreshPanellist = function () {}
+          for (var j = 0; j < disposers.length; j += 1) {
+            try { disposers[j]() } catch (error) { /* ignore */ }
+          }
+          disposers = []
+        }
       })
+
+      ctx.effect(function () {
+        var stopped = false
+        function tick() {
+          if (stopped) return
+          pullProactiveUnread()
+        }
+        tick()
+        var timer = setInterval(tick, 8000)
+        function onVisibility() {
+          if (!document.hidden) tick()
+        }
+        document.addEventListener('visibilitychange', onVisibility)
+        return function () {
+          stopped = true
+          clearInterval(timer)
+          document.removeEventListener('visibilitychange', onVisibility)
+        }
+      }, 'chonkyfish: proactive unread poll')
     }
 
     return { apply: apply, inject: ['slots', 'locale', 'theme', 'sessions', 'workspaces', 'uiWorkspace', 'remote'] }
