@@ -120,7 +120,7 @@ assert.match(display.describeAbsAudit({ type: 'Observation', observation: { kind
 assert.match(display.describeAbsAudit({ type: 'Observation', observation: { kind: 'exploration', result: 'explore_content_found', sessionId: 'fish', seq: 4 } }).summary, /取得可用资料/)
 assert.match(JSON.stringify(display.describeAbsAudit({ type: 'FeedbackApplied', driveId: 'curiosity', delta: .15, source: 'exploration' })), /\+0\.150/)
 assert.equal(display.describeAbsAudit({ type: 'ModeChanged', previous: 'shadow', mode: 'active' }).summary, '观察模式 → 投递模式')
-assert.match(display.describeAbsAudit({ type: 'StateMigrated', archived: { motivations: 2, executions: 1 } }).summary, /不再参与运行/)
+assert.equal(display.describeAbsAudit({ type: 'StateMigrated', archived: { motivations: 2, executions: 1 } }).title, '系统记录', 'retired audit types fall back to the generic record')
 assert.match(display.describeAbsAudit({ type: 'ClockScaleChanged', previous: 1, timeScale: 60, at: '2026-11-07T03:00:00Z', realAt: '2026-11-07T03:00:00Z' }).summary, /不重置已累计的变化/)
 assert.equal(display.describeAbsAudit({ type: 'FutureEvent' }).title, '系统记录')
 assert.equal(display.absAuditWord('__proto__'), '__proto__')
@@ -150,6 +150,19 @@ const needsTree = JSON.stringify(display.AbsNeedsPanel({ state: panelState }))
 assert.match(needsTree, /不代表真实情绪/)
 assert.match(needsTree, /不构成行动命令/)
 assert.ok(!needsTree.includes('动机'))
+assert.ok(needsTree.includes('好奇满足度') && !needsTree.includes('探索'), 'an old Host without actionSignals keeps the curiosity card, worded 好奇')
+assert.ok(!needsTree.includes('代办回看'))
+assert.equal(display.describeAbsActionSignals({}).length, 0)
+const signalState = { ...panelState, actionSignals: [
+  { intent: 'review_pending', label: '代办回看', basis: '距上次回看（时间信号）', value: 1, min: 0.5, score: 1, ready: true },
+  { intent: 'study', label: '学习', basis: '好奇缺口', value: 0.4, min: 0.65, score: null, ready: false },
+  { intent: 'browse', label: '逛网站', basis: '好奇缺口', value: 0.8, min: 0.65, score: 0.64, ready: true },
+  { intent: 'continue_interest', value: 1, min: 0, score: 1, ready: true },
+] }
+assert.equal(display.describeAbsActionSignals(signalState).map(row => row.title).join(','), '代办回看,学习,逛网站', 'rows the Host sent without a label are not shown')
+const signalTree = JSON.stringify(display.AbsNeedsPanel({ state: signalState }))
+for (const text of ['社交满足度', '代办回看', '学习', '逛网站', '未达门槛', '64.0%']) assert.ok(signalTree.includes(text), text)
+for (const text of ['探索', '好奇满足度']) assert.ok(!signalTree.includes(text), '拆分后没有独立的探索卡：' + text)
 
 const rows = [{ type: 'WakeRecord', at: '2026-11-07T03:00:00Z', cause: 'timer', mode: 'shadow', gate: 'SHADOW_PREVIEW_ONLY' }, { type: 'ReviewDelivered', at: '2026-11-07T04:00:00Z', reviewId: 'r1', acceptance: {} }]
 const beforeTimeline = JSON.stringify(rows)

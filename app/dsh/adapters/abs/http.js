@@ -135,7 +135,7 @@ function activityRange(url, now = Date.now()) {
   if (snapshotSeqRaw != null && (!Number.isSafeInteger(snapshotSeq) || snapshotSeq < 0)) throw new TypeError('ABS_INVALID_ACTIVITY_SNAPSHOT')
   if (beforeWakeAt != null && snapshotSeq == null) throw new TypeError('ABS_INVALID_ACTIVITY_SNAPSHOT')
   const outcome = url.searchParams.get('outcome') ?? undefined
-  if (outcome && !['verified','deferred','failed','no_action','unknown','not_started'].includes(outcome)) throw new TypeError('ABS_INVALID_ACTIVITY_OUTCOME')
+  if (outcome && !['verified','failed','no_action','unknown','not_started'].includes(outcome)) throw new TypeError('ABS_INVALID_ACTIVITY_OUTCOME')
   return { ...window, limit, snapshotAt, ...(snapshotSeq == null ? {} : { snapshotSeq }),
     ...(beforeWakeAt == null ? {} : { beforeWakeAt, beforeEpisodeId }), ...(outcome ? { outcome } : {}) }
 }

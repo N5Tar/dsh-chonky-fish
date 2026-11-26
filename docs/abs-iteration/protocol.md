@@ -10,7 +10,7 @@
 | **用户** | 内容主观验收、确认是否改代码/本机 ABS 配置、是否进入下一旋钮 |
 | **大肥鱼 / ABS** | 按现有运行时行为运转；**不**自校准、不自动改参 |
 
-首阶段 **单行动锁定**：只调 `chat_owner`。`continue_interest`、`remind_rest` 可记录基线，不主动改旋钮。
+首阶段 **单行动锁定**：只调 `chat_owner`。`review_pending`、`study`、`browse`、`remind_rest` 可记录基线，不主动改旋钮。
 
 ## 本基建范围（明确不含）
 
@@ -37,7 +37,7 @@ Baseline → Analyze → Change(1 knob) → Observe → Decide
 | 内容未过 | 回滚或换下一内容旋钮，再开内容窗 |
 | 内容过关 | 切 1×，开频次短窗 |
 | 频次未过 | 只动频次旋钮，保持内容相关改动 |
-| 两者过关 | 锁定 `chat_owner`，再开 `continue_interest` 同源协议 |
+| 两者过关 | 锁定 `chat_owner`，再开 `review_pending` / `study` / `browse` 同源协议 |
 
 ## 观测窗
 
@@ -75,7 +75,7 @@ Baseline → Analyze → Change(1 knob) → Observe → Decide
 **频次阶段（1×，内容过关后）**
 
 4. **`drives.social`** — `decayPerHour`、`setpoint`、`ownerMessageGain`（及 feedback 侧相关项）。
-5. **`abs.actionPolicy.minimumGap`**（可配置，默认 0.65）— 先调共享阈值；仅当调高社交机会明显拖累 `continue_interest` 时，再拆 `chat_owner` 专用阈值。实验可用 `POST /chonkyfish/abs` `action:"pacing"`。
+5. **`abs.actionPolicy.minimumGap`**（可配置，默认 0.65）— 先调共享阈值；仅当调高社交机会明显拖累 `study` / `browse` 时，再拆 `chat_owner` 专用阈值。实验可用 `POST /chonkyfish/abs` `action:"pacing"`。
 6. **`reviewIntervalMinutes` / `reviewMinRealGapMinutes`** — 影响全局机会；亦可经 `pacing` 热更新，**生产默认勿长期压低**。
 
 ## 命令入口
@@ -102,4 +102,4 @@ node scripts/abs-iteration/summarize.mjs docs/abs-iteration/snapshots/Rnn.json
 
 ## 后续
 
-`chat_owner` 内容与频次均过关后，对 `continue_interest` 复用本 protocol / scorecard / cycles 骨架，不另起闭环体系。
+`chat_owner` 内容与频次均过关后，对 `review_pending` / `study` / `browse` 复用本 protocol / scorecard / cycles 骨架，不另起闭环体系。

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
-import { renderActionPrompt, formatCstTime, driveDemand } from '../review.js'
+import { formatCstTime, driveDemand } from '../review.js'
+import { renderActionPrompt } from '../actions.js'
 
 const owner = { sessionId: 'fish', realAt: '2026-11-07T03:00:00.000Z', sourceKind: 'user' }
 const BANNED = ['你应该', '需要你', '请你', '建议', '去联系', '下一步', '任务', '目标', '必须', '帮我', '告诉主人']
@@ -63,10 +64,30 @@ test('remind_rest requires a measured work streak of at least 60 minutes', () =>
   for (const word of BANNED) assert.ok(!text.includes(word), word)
 })
 
-test('continue_interest is a fixed first-person curiosity prompt', () => {
-  const text = renderActionPrompt({ intent: 'continue_interest' })
-  assert.equal(text, '我现在很想接触些新东西，好奇的念头很强。我最近做了点啥？要不要继续？')
+test('review_pending, study and browse are fixed first-person prompts without banned words', () => {
+  const prompts = {
+    review_pending: '我想回头看一下自己的代码或日程，看看有没有还没收尾的地方。',
+    study: '我想看看前面记下的学习线，接着想想。',
+    browse: '我想去网上逛逛，看看有没有新鲜的东西。',
+  }
+  for (const [intent, expected] of Object.entries(prompts)) {
+    const text = renderActionPrompt({ intent })
+    assert.equal(text, expected)
+    for (const word of BANNED) assert.ok(!text.includes(word), `${intent}: ${word}`)
+  }
+  assert.throws(() => renderActionPrompt({ intent: 'continue_interest' }), /Invalid ABS action prompt intent/, 'legacy intent is no longer rendered')
   assert.throws(() => renderActionPrompt({ intent: 'unknown' }), /Invalid ABS action prompt intent/)
+})
+
+test('a verified browse result feeds the chat hook only while recent', () => {
+  const base = { intent: 'chat_owner', currentSessionId: 'fish', ownerInteraction: owner, now: Date.parse('2026-11-07T08:30:00.000Z') }
+  const browsed = renderActionPrompt({ ...base, lastExploration: { resultKind: 'local_content_found', activity: 'browse', realAt: '2026-11-07T07:00:00.000Z', sources: 0 } })
+  assert.match(browsed, /我最近一次出去逛是 2026-11-07 15:00:00，在网页上看到了点东西/)
+  assert.ok(!browsed.includes('眼下是'))
+  const stale = renderActionPrompt({ ...base, lastExploration: { resultKind: 'local_content_found', activity: 'browse', realAt: '2026-11-07T00:00:00.000Z', sources: 0 } })
+  assert.match(stale, /眼下是下午/)
+  const read = renderActionPrompt({ ...base, lastExploration: { resultKind: 'local_content_found', activity: 'read', realAt: '2026-11-07T07:00:00.000Z', sources: 0 } })
+  assert.match(read, /眼下是下午/, 'local reads do not produce a browsing hook')
 })
 
 test('comparison and timestamps stay factual', () => {

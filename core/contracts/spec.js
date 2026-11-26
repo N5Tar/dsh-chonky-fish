@@ -11,6 +11,7 @@
 
 import { DEFAULT_INBOX_LIMITS } from '../modules/social/limits.js'
 import { ABS_DEFAULTS } from '../modules/abs/config.js'
+import { ABS_ACTION_VIEWS } from '../modules/abs/actions.js'
 import { DEFAULT_VOICE_CONFIG } from '../modules/voice/config.js'
 
 /** 插件自己的 home 目录名：$DSH_HOME/chonkyfish/ */
@@ -24,6 +25,12 @@ export const DIARY_DIR = '日记'
 
 /** 人格页默认个人档案目录，独立于日记与会话工作区。 */
 export const PERSONAL_PROFILE_DIR = '个人资料'
+
+/** browser-cdp 技能的客户端脚本，相对个人资料目录。ABS 浏览证据据此识别。 */
+export const PERSONAL_PROFILE_CDP_TOOL = Object.freeze(['tools', 'cdp.py'])
+
+/** ABS 行动类型在客户端的投影（intent → 中文名）。定义在 core/modules/abs/actions.js，这里只转出给构建用。 */
+export { ABS_ACTION_VIEWS }
 
 /** Social is disabled until a strict, separate configuration is explicitly enabled. */
 export const SOCIAL = Object.freeze({

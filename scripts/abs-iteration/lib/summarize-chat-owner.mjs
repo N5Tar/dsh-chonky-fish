@@ -32,8 +32,6 @@ export function summarizeChatOwner(page) {
       reason: selection.reason ?? null,
       visibleAt: selection.visibleAt ?? null,
       resolutionReason: selection.resolutionReason ?? null,
-      choiceSummary:
-        typeof episode.choice?.summary === 'string' ? episode.choice.summary.slice(0, 80) : null,
       result: episode.result ?? episode.outcome ?? null,
     })
   }

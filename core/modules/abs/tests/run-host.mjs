@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-import { createAbsHost } from '../../../../app/dsh/adapters/abs/host.js'
+import { createAbsHost, shellWords } from '../../../../app/dsh/adapters/abs/host.js'
 
 const now = 1804471200000
 const REVIEW = '唔……我现在很想和主人说说话，这份念头很强。要不要找他说说话呢？'
@@ -35,7 +35,7 @@ function fixture({ flush = true, idle = true, activeSessionId = 'fish' } = {}) {
   }
   const host = createAbsHost({
     ctx: { get: (key) => services[key], on: (name, callback) => { callbacks.set(name, callback); return () => callbacks.delete(name) } },
-    resources: { paths: { workspace: '/fish', proactive } },
+    resources: { paths: { workspace: '/fish', proactive, memory: join(directory, 'memory'), personalProfile: join(directory, 'profile') } },
   })
   host.subscribeObservation((observation) => observations.push(observation))
   host.subscribeActivity((activity) => activities.push(activity))
@@ -341,4 +341,98 @@ await test('synthetic context is ignored and model failures expose sanitized sta
   assert.deepEqual(preDispatch.activities.at(-1).turnDiagnostic, { phase: 'during_tools', code: 'TRANSPORT' }, 'pre-dispatch results do not consume outstanding call state')
   preDispatch.cleanup()
 })
+await test('new action intents are accepted and the retired continue_interest is refused', async () => {
+  const f = fixture()
+  for (const intent of ['review_pending', 'study', 'browse']) {
+    assert.equal((await surface(f.host, { intent, selectionId: 'selection-' + intent, reviewId: 'review-' + intent, messageId: 'msg-' + intent })).accepted, true)
+  }
+  assert.equal((await surface(f.host, { intent: 'continue_interest', selectionId: 'selection-old', reviewId: 'review-old', messageId: 'msg-old' })).reason, 'invalid-action')
+  assert.deepEqual(f.messages.map((message) => message.source.intent), ['review_pending', 'study', 'browse'])
+  f.cleanup()
+})
+
+await test('shellWords accepts one plain command and rejects operators, substitution and open quotes', async () => {
+  assert.deepEqual(shellWords('python3 "a b" \'c d\' e\\ f'), ['python3', 'a b', 'c d', 'e f'])
+  assert.deepEqual(shellWords('x ""'), ['x', ''])
+  for (const command of ['echo a; rm b', 'echo a && echo b', 'echo a | head', 'echo $(id)', 'echo `id`', 'echo "unclosed', 'echo a\necho b', 'echo a > out']) {
+    assert.equal(shellWords(command), null, command)
+  }
+})
+
+await test('browsing counts only a successful cdp eval with non-empty output, read through the command rather than meta', async () => {
+  const f = fixture()
+  const cdp = join(f.directory, 'profile', 'tools', 'cdp.py')
+  const ws = 'ws://127.0.0.1:9333/devtools/page/abc'
+  let turnNo = 50
+  function bash(command, output, { isError = false, meta = null } = {}) {
+    const turn = turnNo++
+    f.emit('turn/start', { turn })
+    const callId = 'bash-' + turn
+    const call = f.emit('tool/call', { turn, step: 1, callId, name: 'bash', arguments: JSON.stringify({ command, workdir: '/fish' }) })
+    f.emit('tool/result', { turn, step: 1, meta, message: { role: 'tool', toolCallId: callId, source: { kind: 'tool', callId }, isError,
+      content: [{ type: 'text', text: output }] } }, { surfaceOp: 'append', sourceEventSeqs: [call.seq] })
+    f.emit('turn/end', { turn, reason: { kind: 'completed' } })
+    return f.observations.at(-1)
+  }
+  const verified = bash(`python3 ${cdp} ${ws} eval "document.title"`, '大肥鱼 - 首页')
+  assert.equal(verified.result, 'local_content_found')
+  assert.equal(verified.activity, 'browse')
+  assert.match(verified.evidenceKey, /^[a-f0-9]{64}$/)
+  assert.equal(verified.sources, 0)
+  const goto = bash(`python3 ${cdp} ${ws} goto "https://example.org"`, 'Example Domain')
+  assert.equal(goto.result, 'unverified_activity', 'goto only prints a title and does not count')
+  assert.equal(bash(`python3 ${cdp} ${ws} eval "document.title"`, '', {}).result, 'unverified_activity', 'empty output does not count')
+  assert.equal(bash(`python3 ${cdp} ${ws} eval "document.title"`, 'null').result, 'unverified_activity')
+  assert.equal(bash(`python3 ${cdp} ${ws} eval "document.title"`, 'Traceback (most recent call last)').result, 'unverified_activity')
+  assert.equal(bash(`python3 ${cdp} ${ws} eval "document.title"`, 'boom', { isError: true }).result, 'failed')
+  assert.equal(bash(`python3 /tmp/cdp.py ${ws} eval "document.title"`, '大肥鱼').result, 'unverified_activity', 'another script is not the browser-cdp client')
+  assert.equal(bash(`python3 ${cdp} ws://example.com/devtools eval "document.title"`, '大肥鱼').result, 'unverified_activity', 'only a loopback browser counts')
+  assert.equal(bash(`python3 ${cdp} ${ws} eval "document.title" | head -1`, '大肥鱼').result, 'unverified_activity', 'piped commands do not count')
+  assert.equal(bash(`python3 ${cdp} ${ws} eval "document.title"; rm -f x`, '大肥鱼').result, 'unverified_activity')
+  // A verified browse result is evidence for curiosity, not a file-path artifact: the meta path is absent.
+  const repeated = bash(`python3 ${cdp} ${ws} eval "document.title"`, '大肥鱼 - 首页')
+  assert.equal(repeated.result, 'local_content_found')
+  assert.equal(repeated.evidenceKey, verified.evidenceKey, 'the same expression and output dedupe by key')
+  f.cleanup()
+})
+
+await test('memory directory writes count as learning evidence; other workspace-free writes do not', async () => {
+  const f = fixture()
+  f.emit('turn/start', { turn: 70 })
+  const memoryFile = join(f.directory, 'memory', 'sessions', '2026-11-26.md')
+  function write(name, args, meta, isError = false) {
+    const callId = 'write-' + f.observations.length + '-' + name
+    const call = f.emit('tool/call', { turn: 70, step: 1, callId, name, arguments: JSON.stringify(args) })
+    f.emit('tool/result', { turn: 70, step: 1, meta, message: { role: 'tool', toolCallId: callId, source: { kind: 'tool', callId }, isError, content: [] } },
+      { surfaceOp: 'append', sourceEventSeqs: [call.seq] })
+  }
+  write('write', { content: '学到的第一件事' }, { path: memoryFile, operation: 'create' })
+  assert.equal(f.observations.at(-1).result, 'local_content_found')
+  write('edit', {}, { path: memoryFile, diffs: [{ oldText: 'a', newText: 'b' }] })
+  assert.equal(f.observations.at(-1).result, 'local_content_found')
+  const workspaceWrite = f.observations.length
+  write('write', { content: 'workspace note' }, { path: '/fish/note.md', operation: 'create' })
+  assert.equal(f.observations.at(-1).result, 'local_content_found')
+  write('write', { content: 'ABS state' }, { path: join(f.directory, 'abs', 'state.json'), operation: 'create' })
+  assert.equal(f.observations.length, workspaceWrite + 1, 'ABS state never counts')
+  f.cleanup()
+})
+
+await test('review_pending turns record evidence but never move curiosity', async () => {
+  const f = fixture()
+  await surface(f.host, { intent: 'review_pending', selectionId: 'selection-review', reviewId: 'review-pending', messageId: 'msg-review-pending' })
+  f.emit('turn/start', { turn: 80 })
+  f.callbacks.get('agent/inbox/claimed')?.({ agent: f.agent, message: f.messages[0], turn: 80 })
+  f.emit('step/start', { turn: 80, step: 1 })
+  f.emit('user/message', { turn: 80, id: f.messages[0].id, source: f.messages[0].source })
+  const observations = f.observations.length
+  const call = f.emit('tool/call', { turn: 80, step: 1, callId: 'pending-search', name: 'web_search', arguments: '{}' })
+  f.emit('tool/result', { turn: 80, step: 1, message: { role: 'tool', toolCallId: 'pending-search', source: { kind: 'tool', callId: 'pending-search' }, isError: false },
+    meta: { sources: [{ url: 'https://example.org', title: 'source' }], truncated: false } }, { surfaceOp: 'append', sourceEventSeqs: [call.seq] })
+  assert.equal(f.observations.length, observations, 'a review turn never feeds curiosity or the explanation hook')
+  assert.equal(f.activities.at(-1).kind, 'exploration')
+  assert.equal(f.activities.at(-1).result, 'explore_content_found')
+  f.cleanup()
+})
+
 console.log(`ABS host: ${checks} groups passed (offline; no model/network).`)

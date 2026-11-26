@@ -18,14 +18,6 @@ function episode(id, time, reviewId = 'review-' + id) {
     inputStatus: 'pending', attribution: 'unlinked', stateAtWake: { social: .45, curiosity: .32 } }
 }
 
-/** Legacy choice columns — no public repository API; query() still reads them. */
-function legacyChoice(dbFile, { reviewId, sessionId, kind, summary, reason = null, at: when }) {
-  const db = new DatabaseSync(dbFile)
-  db.prepare(`UPDATE activity_episodes SET choice_kind=?, choice_summary=?, choice_reason=?, choice_at=?
-    WHERE review_id=? AND session_id=?`).run(kind, summary, reason, when, reviewId, sessionId)
-  db.close()
-}
-
 let checks = 0
 function test(name, run) { run(); checks++; console.log(`ok ${checks} - ${name}`) }
 
@@ -38,18 +30,6 @@ try {
   assert.equal(coverage.window.to, iso(30))
   assert.equal(coverage.window.requestedTo, iso(60))
   assert.equal(coverage.window.gaps.length, 0)
-
-  test('deferred follows legacy choice_kind when turn completes without evidence', () => {
-    repo.recordWake(episode('defer', at))
-    repo.recordTurn({ reviewId: 'review-defer', sessionId: 'fish', turn: 1, status: 'pending', attribution: 'self_review', claimStatus: 'claimed', inputStatus: 'appended' })
-    legacyChoice(path, { reviewId: 'review-defer', sessionId: 'fish', kind: 'defer', summary: '这轮先不打扰主人。', reason: '暂时没有想继续的内容。', at: iso(1) })
-    repo.recordTurn({ reviewId: 'review-defer', sessionId: 'fish', turn: 1, status: 'completed', attribution: 'self_review', claimStatus: 'claimed', inputStatus: 'appended' })
-    repo.recordWake({ ...episode('defer', at), reviewStatus: 'accepted', attribution: 'self_review' })
-    const page = repo.query({ ...day, now: Date.parse(at) + 2 * 60000 })
-    assert.equal(page.episodes.find(item => item.id === 'defer').result, 'deferred')
-    assert.equal(page.summary.deferred, 1)
-    assert.equal(page.episodes.find(item => item.id === 'defer').choice?.kind, 'defer')
-  })
 
   test('verified when self-review evidence is verified', () => {
     repo.recordWake(episode('verified', iso(2), 'review-verified'))
@@ -71,35 +51,34 @@ try {
     assert.equal(page.summary.unknown, 1)
   })
 
-  test('unverified evidence blocks a false defer classification', () => {
+  test('an unverified tool attempt keeps the result unknown', () => {
     repo.recordWake(episode('defer-with-attempt', iso(4), 'review-defer-attempt'))
     repo.recordTurn({ reviewId: 'review-defer-attempt', sessionId: 'fish', turn: 4, status: 'pending', attribution: 'self_review', claimStatus: 'claimed', inputStatus: 'appended' })
     repo.recordAttempt({ evidenceId: 'fish:44', reviewId: 'review-defer-attempt', sessionId: 'fish', turn: 4, seq: 44, callId: 'call-44', activity: 'unsupported_tool', at: iso(4), attribution: 'self_review' })
     repo.recordEvidence({ evidenceId: 'fish:44', sessionId: 'fish', callSeq: 44, resultSeq: 45,
       callId: 'call-44', status: 'unverified', at: iso(5), attribution: 'self_review' })
-    legacyChoice(path, { reviewId: 'review-defer-attempt', sessionId: 'fish', kind: 'defer', summary: '这轮先暂缓。', at: iso(5.5) })
     repo.recordTurn({ reviewId: 'review-defer-attempt', sessionId: 'fish', turn: 4, status: 'completed', attribution: 'self_review', claimStatus: 'claimed', inputStatus: 'appended' })
     const page = repo.query({ ...day, now: Date.parse(at) + 6 * 60000 })
-    assert.equal(page.episodes.find(item => item.id === 'defer-with-attempt').result, 'unknown', 'an unverified tool attempt prevents a false defer result')
-    assert.equal(page.summary.deferred, 1)
+    assert.equal(page.episodes.find(item => item.id === 'defer-with-attempt').result, 'unknown')
+    assert.equal('deferred' in page.summary, false, 'the retired deferred count is not reported')
     assert.ok(page.summary.unknown >= 2)
   })
 
-  test('no_action when review completes without evidence or legacy choice', () => {
+  test('no_action when review completes without evidence', () => {
     repo.recordWake(episode('no-action', iso(3.5), 'review-no-action'))
     repo.recordTurn({ reviewId: 'review-no-action', sessionId: 'fish', turn: 3, status: 'completed', attribution: 'self_review', claimStatus: 'claimed', inputStatus: 'appended' })
     repo.recordWake({ ...episode('no-action', iso(3.5), 'review-no-action'), reviewStatus: 'accepted', attribution: 'self_review' })
     const page = repo.query({ ...day, now: Date.parse(at) + 4 * 60000 })
     const row = page.episodes.find(item => item.id === 'no-action')
     assert.equal(row.result, 'no_action')
-    assert.equal(row.choice, null)
+    assert.equal('choice' in row || 'interests' in row, false, 'model-reported choices and interests are no longer exposed')
     assert.equal(page.summary.noAction >= 1, true)
   })
 
   test('action selection persistence and query summary', () => {
     repo.recordWake(episode('action-episode', iso(6), 'review-action'))
     const created = repo.recordActionSelection({ selectionId: 'sel-1', episodeId: 'action-episode', reviewId: 'review-action', sessionId: 'fish',
-      messageId: 'message-action-episode', intent: 'continue_interest', reason: 'selected', score: 0.6, mode: 'active', at: iso(6) })
+      messageId: 'message-action-episode', intent: 'study', reason: 'selected', score: 0.6, mode: 'active', at: iso(6) })
     assert.equal(created.created, true)
     assert.equal(created.dispatchStatus, 'reserved')
     repo.resolveActionSelection({ selectionId: 'sel-1', dispatchStatus: 'enqueued', at: iso(6.1) })
@@ -107,7 +86,7 @@ try {
     repo.recordTurn({ reviewId: 'review-action', sessionId: 'fish', turn: 5, status: 'completed', attribution: 'self_review', claimStatus: 'claimed', inputStatus: 'appended' })
     const page = repo.query({ ...day, now: Date.parse(at) + 7 * 60000 })
     const row = page.episodes.find(item => item.id === 'action-episode')
-    assert.equal(row.actionSelection?.intent, 'continue_interest')
+    assert.equal(row.actionSelection?.intent, 'study')
     assert.equal(row.actionSelection?.dispatchStatus, 'enqueued')
     assert.ok(page.summary.actionSelections.total >= 1)
     repo.recordWake(episode('rest-episode', iso(6.8), 'review-rest'))
@@ -153,9 +132,10 @@ try {
     beforeWakeAt: notStartedFirst.page.nextCursor.wakeAt, beforeEpisodeId: notStartedFirst.page.nextCursor.episodeId,
     snapshotSeq: notStartedFirst.page.snapshotSeq, snapshotAt: notStartedFirst.page.snapshotAt, now: Date.parse(at) + 8 * 60000 })
   assert.equal(afterFilterTransition.episodes[0].id, 'late-insert', 'a result changing between filtered pages does not shift the immutable keyset boundary')
-  const deferredPage = repo.query({ ...day, outcome: 'deferred', now: Date.parse(at) + 8 * 60000 })
-  assert.equal(deferredPage.episodes[0].result, 'deferred')
-  assert.ok(deferredPage.summary.unknown >= 1, 'full-day summary stays unfiltered')
+  assert.throws(() => repo.query({ ...day, outcome: 'deferred', now: Date.parse(at) + 8 * 60000 }), /Invalid activity outcome/)
+  const unknownPage = repo.query({ ...day, outcome: 'unknown', now: Date.parse(at) + 8 * 60000 })
+  assert.equal(unknownPage.episodes[0].result, 'unknown')
+  assert.ok(unknownPage.summary.unknown >= 1, 'full-day summary stays unfiltered')
 
   const db = new DatabaseSync(path)
   const columns = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()
@@ -177,6 +157,25 @@ try {
   assert.ok(page.window.gaps.length >= 1, 'restart gap is exposed rather than filled')
   assert.equal(page.window.runtimeWindows[0].endReason, 'recovered')
   assert.equal(repo.recordAttempt({ evidenceId: 'unlinked:1', reviewId: 'missing', sessionId: 'fish', turn: 9, seq: 1, callId: 'unlinked-call', activity: 'read', at: iso(32), attribution: 'unlinked' }), false)
+  test('review and curiosity history count only what the host actually dispatched', () => {
+    assert.equal(repo.lastEnqueuedAt('review_pending'), null)
+    repo.recordWake(episode('review-a', iso(12), 'review-a'))
+    repo.recordActionSelection({ selectionId: 'sel-review-a', episodeId: 'review-a', reviewId: 'review-a', sessionId: 'fish',
+      messageId: 'message-review-a', intent: 'review_pending', reason: 'selected', score: 1, mode: 'active', at: iso(12) })
+    assert.equal(repo.lastEnqueuedAt('review_pending'), null, 'a reserved selection is not yet an enqueued review')
+    repo.resolveActionSelection({ selectionId: 'sel-review-a', dispatchStatus: 'enqueued', at: iso(12.1) })
+    assert.equal(repo.lastEnqueuedAt('review_pending'), iso(12.1))
+    repo.recordWake(episode('review-b', iso(13), 'review-b'))
+    repo.recordActionSelection({ selectionId: 'sel-review-b', episodeId: 'review-b', reviewId: 'review-b', sessionId: 'fish',
+      messageId: 'message-review-b', intent: 'review_pending', reason: 'selected', score: 1, mode: 'active', at: iso(13) })
+    repo.resolveActionSelection({ selectionId: 'sel-review-b', dispatchStatus: 'released', at: iso(13.1), reason: 'test' })
+    assert.equal(repo.lastEnqueuedAt('review_pending'), iso(12.1), 'a released review does not reset the signal')
+    repo.recordWake(episode('browse-a', iso(14), 'review-browse-a'))
+    repo.recordActionSelection({ selectionId: 'sel-browse-a', episodeId: 'browse-a', reviewId: 'review-browse-a', sessionId: 'fish',
+      messageId: 'message-browse-a', intent: 'browse', reason: 'selected', score: 0.5, mode: 'active', at: iso(14) })
+    assert.equal(repo.lastIntentAmong(['study', 'browse']), 'browse')
+  })
+
   repo.recordWake(episode('expired', '2026-05-01T10:00:00.000Z', 'review-expired'))
   repo.recordTurn({ reviewId: 'review-expired', sessionId: 'fish', turn: 10, status: 'completed', attribution: 'self_review', claimStatus: 'claimed', inputStatus: 'appended' })
   repo.recordAttempt({ evidenceId: 'fish:100', reviewId: 'review-expired', sessionId: 'fish', turn: 10, seq: 100, callId: 'call-expired', activity: 'read', at: '2026-05-01T10:02:00.000Z', attribution: 'self_review' })
@@ -228,11 +227,78 @@ try {
   assert.equal(migrated.episodes.find(item => item.id === 'model-failed').result, 'unknown', 'v1 turn failures are not inferred as confirmed model failures')
   assert.equal(migrated.episodes.find(item => item.id === 'verified-before-failure').result, 'verified')
   const migratedDb = new DatabaseSync(migrationPath)
-  assert.equal(migratedDb.prepare('PRAGMA user_version').get().user_version, 3)
+  assert.equal(migratedDb.prepare('PRAGMA user_version').get().user_version, 5)
   assert.ok(migratedDb.prepare('PRAGMA table_info(activity_episodes)').all().some(column => column.name === 'turn_diagnostic_code'))
   assert.ok(migratedDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='activity_action_selections'").get())
   migratedDb.close()
   repo.close()
+
+  // Schema v3 CHECK allowed only the three original intents. Rebuild keeps history and accepts the new intents.
+  const v3Path = join(root, 'v3-activities.db')
+  copyFileSync(path, v3Path)
+  const v3 = new DatabaseSync(v3Path)
+  v3.exec(`DROP TABLE activity_action_selections;
+    CREATE TABLE activity_action_selections (
+      selection_id TEXT PRIMARY KEY,
+      episode_id TEXT NOT NULL UNIQUE REFERENCES activity_episodes(episode_id) ON DELETE CASCADE,
+      review_id TEXT UNIQUE, session_id TEXT, message_id TEXT UNIQUE,
+      intent TEXT CHECK (intent IS NULL OR intent IN ('chat_owner','remind_rest','continue_interest')),
+      reason TEXT NOT NULL,
+      score REAL CHECK (score IS NULL OR (score>=0 AND score<=1)),
+      dispatch_status TEXT NOT NULL CHECK (dispatch_status IN ('preview','reserved','enqueued','unknown','released','suppressed')),
+      work_streak_id TEXT, selected_at TEXT NOT NULL, visible_at TEXT, visible_turn INTEGER, resolved_at TEXT, resolution_reason TEXT
+    );
+    INSERT INTO activity_action_selections (selection_id,episode_id,review_id,session_id,message_id,intent,reason,score,dispatch_status,selected_at,resolved_at)
+      VALUES ('sel-legacy','action-episode','review-action','fish','message-action-episode','continue_interest','selected',0.6,'enqueued','2026-11-18T10:06:00.000Z','2026-11-18T10:06:10.000Z');
+    PRAGMA user_version=3;`)
+  v3.close()
+  repo = createAbsActivityRepository({ dbPath: v3Path, DatabaseSync })
+  const legacySelection = repo.findActionSelection({ selectionId: 'sel-legacy', sessionId: 'fish', messageId: 'message-action-episode' })
+  assert.equal(legacySelection?.intent, 'continue_interest', 'legacy rows survive the rebuild')
+  assert.equal(legacySelection?.dispatchStatus, 'enqueued')
+  repo.recordWake(episode('post-migration', iso(20), 'review-post-migration'))
+  const created = repo.recordActionSelection({ selectionId: 'sel-post', episodeId: 'post-migration', reviewId: 'review-post-migration', sessionId: 'fish',
+    messageId: 'message-post-migration', intent: 'review_pending', reason: 'selected', score: 1, mode: 'active', at: iso(20) })
+  assert.equal(created.intent, 'review_pending')
+  repo.recordWake(episode('post-study', iso(21), 'review-post-study'))
+  assert.equal(repo.recordActionSelection({ selectionId: 'sel-study', episodeId: 'post-study', reviewId: 'review-post-study', sessionId: 'fish',
+    messageId: 'message-post-study', intent: 'study', reason: 'selected', score: 0.5, mode: 'shadow', at: iso(21) }).intent, 'study', 'new study intent is accepted by the schema')
+  assert.throws(() => repo.recordActionSelection({ selectionId: 'sel-bad', episodeId: 'post-migration', intent: 'organize', reason: 'selected', mode: 'active', at: iso(20) }), /Invalid ABS action intent/)
+  assert.equal(repo.lastEnqueuedAt('review_pending'), null)
+  repo.close()
+  const v3Check = new DatabaseSync(v3Path)
+  assert.equal(v3Check.prepare('PRAGMA user_version').get().user_version, 5)
+  v3Check.close()
+
+  // v4 databases still carry the retired model-report tables and columns; v5 drops them and keeps the episodes.
+  const v4Path = join(root, 'v4-activities.db')
+  copyFileSync(path, v4Path)
+  const v4 = new DatabaseSync(v4Path)
+  v4.exec(`CREATE TABLE interest_lines (interest_id TEXT PRIMARY KEY, scope_session_id TEXT NOT NULL, normalized_title TEXT NOT NULL, title TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('active','completed','abandoned')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE interest_updates (update_id TEXT PRIMARY KEY, interest_id TEXT NOT NULL REFERENCES interest_lines(interest_id),
+      episode_id TEXT NOT NULL REFERENCES activity_episodes(episode_id) ON DELETE CASCADE, source_evidence_id TEXT, continuation TEXT NOT NULL, updated_at TEXT NOT NULL);
+    ALTER TABLE activity_episodes ADD COLUMN choice_kind TEXT CHECK (choice_kind IS NULL OR choice_kind IN ('continue','defer'));
+    ALTER TABLE activity_episodes ADD COLUMN choice_summary TEXT;
+    ALTER TABLE activity_episodes ADD COLUMN choice_reason TEXT;
+    ALTER TABLE activity_episodes ADD COLUMN choice_at TEXT;
+    INSERT INTO interest_lines VALUES ('i1','fish','x','x','active','2026-11-18T10:00:00.000Z','2026-11-18T10:00:00.000Z');
+    INSERT INTO interest_updates VALUES ('u1','i1','verified',NULL,'later','2026-11-18T10:00:00.000Z');
+    UPDATE activity_episodes SET choice_kind='defer', choice_summary='old' WHERE episode_id='no-action';
+    PRAGMA user_version=4;`)
+  v4.close()
+  repo = createAbsActivityRepository({ dbPath: v4Path, DatabaseSync })
+  const v4Page = repo.query({ ...day, now: Date.parse(at) + 40 * 60000 })
+  assert.equal(v4Page.episodes.find(item => item.id === 'no-action')?.result, 'no_action', 'a stale defer choice no longer changes the result')
+  assert.equal(v4Page.episodes.some(item => 'choice' in item || 'interests' in item), false)
+  repo.close()
+  const v4Check = new DatabaseSync(v4Path)
+  assert.equal(v4Check.prepare('PRAGMA user_version').get().user_version, 5)
+  assert.equal(v4Check.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN ('interest_lines','interest_updates')").get().n, 0)
+  assert.equal(v4Check.prepare('PRAGMA table_info(activity_episodes)').all().some(column => column.name.startsWith('choice_')), false)
+  assert.ok(v4Check.prepare("SELECT COUNT(*) AS n FROM activity_episodes").get().n > 0)
+  assert.doesNotMatch(v4Check.prepare("SELECT sql FROM sqlite_master WHERE name='activity_action_selections'").get().sql, /CHECK \(intent/, 'the intent CHECK is gone, so a new action needs no schema change')
+  v4Check.close()
   void runtimeA
   console.log('ABS activity SQLite: normalized schema and lifecycle invariants passed')
 } finally { rmSync(root, { recursive: true, force: true }) }

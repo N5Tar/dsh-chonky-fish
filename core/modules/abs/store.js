@@ -16,23 +16,10 @@ function validate(state) {
     const d = state.drives?.[id];
     if (!d || !Number.isFinite(d.satisfaction) || d.satisfaction < 0 || d.satisfaction > 1 || !(d.setpoint > 0 && d.setpoint <= 1) || !Number.isFinite(d.decayPerHour) || d.decayPerHour < 0 || !Number.isFinite(Date.parse(d.updatedAt))) throw new Error('ABS drive state invalid');
   }
-  for (const key of ['motivations', 'executions', 'history', 'proposalIds', 'feedbackKeys']) if (!Array.isArray(state[key])) throw new Error(`ABS state ${key} invalid`);
-  if (state.motivations.length > 1000 || state.executions.length > 10000 || state.history.length > 10000 || state.proposalIds.length > 10000 || state.feedbackKeys.length > 10000) throw new Error('ABS state capacity exceeded; refusing unsafe dedupe eviction');
-  if (!state.budget || !Number.isSafeInteger(state.budget.llmCalls) || state.budget.llmCalls < 0 || !/^\d{4}-\d{2}-\d{2}$/.test(state.budget.day) || !Number.isFinite(Date.parse(state.updatedAt))) throw new Error('ABS state metadata invalid');
-  for (const key of ['proposalIds', 'feedbackKeys']) {
-    if (state[key].some((id) => typeof id !== 'string' || !id) || new Set(state[key]).size !== state[key].length) throw new Error(`ABS invalid dedupe keys: ${key}`);
-  }
-  const motivationIds = new Set();
-  for (const m of state.motivations) {
-    if (!m || typeof m.id !== 'string' || !m.id || motivationIds.has(m.id) || !['explore', 'organize', 'social_contact'].includes(m.intent) || m.driveId !== (m.intent === 'social_contact' ? 'social' : 'curiosity') || !Number.isFinite(m.strength) || m.strength < 0 || m.strength > 1 || !['active', 'snoozed', 'completed', 'expired'].includes(m.status) || typeof m.normKey !== 'string' || !Array.isArray(m.aliasNormKeys) || !Array.isArray(m.sourceRefs) || !Number.isFinite(Date.parse(m.updatedAt)) || (m.nextReviewAt && !Number.isFinite(Date.parse(m.nextReviewAt)))) throw new Error('ABS motivation state invalid');
-    motivationIds.add(m.id);
-  }
-  const executionIds = new Set();
-  for (const e of state.executions) {
-    if (!e || typeof e.executionId !== 'string' || !e.executionId || executionIds.has(e.executionId) || !motivationIds.has(e.motivationId) || typeof e.status !== 'string' || !e.status) throw new Error('ABS execution state invalid');
-    executionIds.add(e.executionId);
-  }
-  for (const h of state.history) if (!h || !Number.isFinite(Date.parse(h.at)) || !['execution', 'defer'].includes(h.kind) || !['active', 'shadow'].includes(h.mode) || !['explore', 'organize', 'social_contact'].includes(h.intent)) throw new Error('ABS history state invalid');
+  if (!Array.isArray(state.feedbackKeys)) throw new Error('ABS state feedbackKeys invalid');
+  if (state.feedbackKeys.length > 10000) throw new Error('ABS state capacity exceeded; refusing unsafe dedupe eviction');
+  if (!Number.isFinite(Date.parse(state.updatedAt))) throw new Error('ABS state metadata invalid');
+  if (state.feedbackKeys.some((id) => typeof id !== 'string' || !id) || new Set(state.feedbackKeys).size !== state.feedbackKeys.length) throw new Error('ABS invalid dedupe keys: feedbackKeys');
 }
 
 /** Single process writer. Snapshot is authoritative; audit failure never rolls it back.

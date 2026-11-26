@@ -26,7 +26,7 @@ export function formatCycleFragment({ cycleId, capturedAt, abs, chatSummary }) {
   ]
   for (const sample of chatSummary.chatOwner.samples) {
     lines.push(
-      `- ${sample.episodeId} @ ${sample.wakeAt}: choice="${sample.choiceSummary ?? ''}" visibleAt=${sample.visibleAt ?? 'null'} result=${sample.result ?? 'null'}`,
+      `- ${sample.episodeId} @ ${sample.wakeAt}: visibleAt=${sample.visibleAt ?? 'null'} result=${sample.result ?? 'null'}`,
     )
   }
   lines.push('', '_Reply excerpts ≤80 chars: fill manually in cycle md; not present in ABS activities API._')

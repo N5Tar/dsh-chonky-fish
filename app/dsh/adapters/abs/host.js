@@ -1,16 +1,21 @@
 import { randomUUID, createHash } from 'node:crypto'
-import { resolve, dirname } from 'node:path'
+import { resolve, dirname, isAbsolute } from 'node:path'
 import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 
 import { platform } from '../../../shared/platform/index.js'
 import { isFishHeader } from '../../../../core/modules/proactive/identity.js'
 import { isChannelUserMessage } from '../../../../core/modules/social/policy.js'
+import { PERSONAL_PROFILE_CDP_TOOL } from '../../../../core/contracts/spec.js'
+import { ABS_ACTION_INTENTS, ABS_NO_FEEDBACK_INTENTS } from '../../../../core/modules/abs/actions.js'
 
 const text = (value) => typeof value === 'string' && value.trim().length > 0
 const OBSERVED_TOOL_NAMES = new Set(['web_search','read','read_image','write','edit','bash'])
 const SYNTHETIC_CONTEXT_SOURCES = new Set(['runtime-context','time-context'])
 const ABS_ACTION_SOURCE = 'chonkyfish-abs-action'
-const ACTION_INTENTS = new Set(['chat_owner','remind_rest','continue_interest'])
+const ACTION_INTENTS = new Set(ABS_ACTION_INTENTS)
+const NO_FEEDBACK_INTENTS = new Set(ABS_NO_FEEDBACK_INTENTS)
+const LOOPBACK_CDP_URL = /^wss?:\/\/(127\.0\.0\.1|localhost)[:/]/
 const TURN_ERROR_CODES = new Map([
   ['TRANSPORT','TRANSPORT'], ['TRANSPORT_TIMEOUT','TIMEOUT'], ['TIMEOUT','TIMEOUT'], ['ETIMEDOUT','TIMEOUT'],
   ['QUOTA','QUOTA'], ['RATE_LIMIT','RATE_LIMIT'], ['RATE_LIMITED','RATE_LIMIT'], ['AUTH','AUTH'],
@@ -20,6 +25,61 @@ const NO_DISPATCH_TOOL_CODES = new Set(['ABORTED_BEFORE_DISPATCH','TOOL_ABORTED_
 const httpUrl = (value) => { try { return ['http:', 'https:'].includes(new URL(value).protocol) } catch { return false } }
 const isoTime = (value) => Number.isFinite(Number(value)) ? new Date(Number(value)).toISOString() : new Date().toISOString()
 const toolErrorCode = (error) => String(error?.code ?? '').toUpperCase()
+const toolOutputText = (message) => (Array.isArray(message?.content) ? message.content : [])
+  .filter((part) => part?.type === 'text' && typeof part.text === 'string').map((part) => part.text).join('')
+
+/**
+ * Split one shell command into words. Returns null for anything that is not a
+ * single plain command: operators, newlines, command substitution, or unclosed quotes.
+ */
+export function shellWords(command) {
+  const words = []
+  let word = null, quote = null
+  const endWord = () => { if (word !== null) { words.push(word); word = null } }
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]
+    if (ch === '`' || (ch === '$' && command[i + 1] === '(')) return null
+    if (quote === "'") { if (ch === "'") quote = null; else word += ch; continue }
+    if (quote === '"') {
+      if (ch === '"') quote = null
+      else if (ch === '\\' && i + 1 < command.length) word += command[++i]
+      else word += ch
+      continue
+    }
+    if (ch === "'" || ch === '"') { quote = ch; word ??= ''; continue }
+    if (ch === '\\') { if (i + 1 >= command.length) return null; word = (word ?? '') + command[++i]; continue }
+    if (ch === '\n' || ch === '\r' || ';&|<>()'.includes(ch)) return null
+    if (/\s/.test(ch)) { endWord(); continue }
+    word = (word ?? '') + ch
+  }
+  if (quote !== null) return null
+  endWord()
+  return words
+}
+
+function samePath(raw, workdir, target) {
+  const expanded = raw === '~' || raw.startsWith('~/') ? homedir() + raw.slice(1) : raw.replace(/^\$HOME(?=\/|$)/, homedir())
+  const absolute = isAbsolute(expanded) ? resolve(expanded)
+    : typeof workdir === 'string' && isAbsolute(workdir) ? resolve(workdir, expanded) : null
+  return absolute === target
+}
+
+/**
+ * Browsing evidence: exactly `python3 <cdp.py> <loopback ws url> eval "<expr>"` that
+ * succeeded with non-empty output. `goto` only prints a title and does not count.
+ * The key is independent of a `path` field: bash results carry no meta path.
+ */
+export function browseEvidenceKey({ command, workdir } = {}, output, cdpPath) {
+  if (!cdpPath || typeof command !== 'string' || typeof output !== 'string') return null
+  const words = shellWords(command)
+  if (!words || words.length !== 5 || !/^python3?$/.test(words[0]) || words[3] !== 'eval' || !text(words[4])) return null
+  if (!samePath(words[1], workdir, cdpPath) || !LOOPBACK_CDP_URL.test(words[2])) return null
+  const body = output.trim()
+  if (!body || body === 'null' || body === 'undefined' || body.includes('Traceback')) return null
+  return createHash('sha256').update('browse' + words[4] + output).digest('hex')
+}
+
+const attributionFor = (turn) => turn.reviewId ? turn.mixed ? 'mixed' : turn.inputSeen ? 'self_review' : 'mixed' : 'unlinked'
 
 function turnDiagnostic(reason, turn) {
   if (!turn.inputSeen || !turn.stepSeen) {
@@ -48,6 +108,8 @@ export function createAbsHost({ ctx, resources }) {
   const activityListeners = new Set()
   const turns = new Map()
   const pendingReviews = new Map()
+  const cdpPath = typeof resources.paths?.personalProfile === 'string' ? resolve(resources.paths.personalProfile, ...PERSONAL_PROFILE_CDP_TOOL) : null
+  const memoryRoot = typeof resources.paths?.memory === 'string' ? resolve(resources.paths.memory) : null
   let actionLookup = null
   let closed = false
   const service = (name) => { try { return ctx.get(name) } catch { return undefined } }
@@ -160,6 +222,15 @@ export function createAbsHost({ ctx, resources }) {
   function emitExploration(observation) {
     emit(observation)
     emitActivity(observation)
+  }
+
+  /**
+   * Actions flagged `feedback: false` in the registry (review_pending) only re-read the fish's own state.
+   * Their results are recorded as activity evidence but never move curiosity or the explanation hook.
+   */
+  function emitLocal(turn, observation) {
+    if (NO_FEEDBACK_INTENTS.has(turn.action?.intent)) emitActivity(observation)
+    else emitExploration(observation)
   }
 
   function sessionIdFor(agent) {
@@ -290,19 +361,31 @@ export function createAbsHost({ ctx, resources }) {
     const errorCode = toolErrorCode(data.error)
     if (data.error?.name === 'ToolOutcomeUnknownError' || errorCode === 'TOOL_OUTCOME_UNKNOWN' || NO_DISPATCH_TOOL_CODES.has(errorCode)) return
     turn.calls.delete(message.source.callId)
+    // Browsing is verified by the command and its output, not by a meta path, so it runs before the path gate.
+    if (call.name === 'bash' && message.isError === false) {
+      const evidenceKey = browseEvidenceKey(call.args, toolOutputText(message), cdpPath)
+      if (evidenceKey) {
+        emitLocal(turn, { kind: 'exploration', result: 'local_content_found', activity: 'browse', evidenceKey,
+          sessionId, seq: event.seq, turn: turn.turn, reviewId: turn.reviewId ?? null, attribution: attributionFor(turn),
+          callId: message.source.callId, callSeq: call.seq, resultSeq: event.seq, at: isoTime(event.time), sources: 0 })
+        return
+      }
+    }
     if (call.name !== 'web_search') {
       const meta = data.meta ?? {}, path = typeof meta.path === 'string' ? resolve(meta.path) : null
       // Never reward reading/writing ABS's own state. Path containment is a platform
       // concern (separators, drive letters, case folding): see app/shared/platform/.
       if (path && platform.isWithin(resolve(dirname(resources.paths.proactive), 'abs'), path)) return
       let evidence = null, activity = call.name
+      // Writes into the memory directory are learning evidence, scored like other verified local writes.
+      const memory = memoryRoot !== null && path !== null && platform.isWithin(memoryRoot, path)
       if (message.isError === false && path) {
         if (call.name === 'read' && Array.isArray(meta.lines) && meta.lines.every((line) => line && typeof line.text === 'string') && meta.lines.some((line) => text(line.text))) {
           evidence = meta.lines.map((line) => line.text).join('\n')
         } else if (call.name === 'read_image') {
           const image = message.content?.find((part) => part.type === 'image' && text(part.attachment?.attachmentId) && part.attachment.bytes > 0)
           evidence = image?.attachment.attachmentId ?? null
-        } else if (['write', 'edit'].includes(call.name) && platform.isWithin(resolve(resources.paths.workspace), path)) {
+        } else if (['write', 'edit'].includes(call.name) && (memory || platform.isWithin(resolve(resources.paths.workspace), path))) {
           const changed = Array.isArray(meta.diffs) ? meta.diffs.filter((diff) => diff && typeof diff.oldText === 'string' && typeof diff.newText === 'string' && diff.oldText !== diff.newText) : []
           if (changed?.length) evidence = changed.map((diff) => diff.newText).join('\n')
           else if (call.name === 'write' && meta.operation === 'create' && text(call.args.content)) evidence = call.args.content
@@ -311,18 +394,18 @@ export function createAbsHost({ ctx, resources }) {
       const verified = evidence !== null && evidence.trim().length > 0
       const observation = { kind: 'exploration', result: message.isError === true ? 'failed' : verified ? 'local_content_found' : 'unverified_activity',
         sessionId, seq: event.seq, turn: turn.turn, reviewId: turn.reviewId ?? null,
-        attribution: turn.reviewId ? turn.mixed ? 'mixed' : turn.inputSeen ? 'self_review' : 'mixed' : 'unlinked',
+        attribution: attributionFor(turn),
         callId: message.source.callId, callSeq: call.seq, resultSeq: event.seq, at: isoTime(event.time), sources: 0, activity,
         ...(verified ? { evidenceKey: createHash('sha256').update(activity + ':' + path + ':' + evidence).digest('hex') } : {}) }
-      if (OBSERVED_TOOL_NAMES.has(call.name)) emitExploration(observation)
+      if (OBSERVED_TOOL_NAMES.has(call.name)) emitLocal(turn, observation)
       else emitActivity(observation)
       return
     }
     if (message.isError === true) {
       const observation = { kind: 'exploration', result: 'failed', sessionId, seq: event.seq, turn: turn.turn, reviewId: turn.reviewId ?? null,
-        attribution: turn.reviewId ? turn.mixed ? 'mixed' : turn.inputSeen ? 'self_review' : 'mixed' : 'unlinked', callId: message.source.callId,
+        attribution: attributionFor(turn), callId: message.source.callId,
         activity: call.name, callSeq: call.seq, resultSeq: event.seq, at: isoTime(event.time), sources: 0 }
-      if (OBSERVED_TOOL_NAMES.has(call.name)) emitExploration(observation)
+      if (OBSERVED_TOOL_NAMES.has(call.name)) emitLocal(turn, observation)
       else emitActivity(observation)
       return
     }
@@ -330,8 +413,8 @@ export function createAbsHost({ ctx, resources }) {
     if (message.isError !== false || !meta || !Array.isArray(meta.sources) || typeof meta.truncated !== 'boolean' ||
         (meta.answer !== undefined && typeof meta.answer !== 'string') ||
         !meta.sources.every((source) => source && httpUrl(source.url) && ['title', 'snippet', 'publishedAt'].every((key) => source[key] === undefined || typeof source[key] === 'string'))) return
-    emitExploration({ kind: 'exploration', result: meta.sources.length > 0 ? 'explore_content_found' : 'explore_no_usable_content', sessionId, seq: event.seq,
-      turn: turn.turn, reviewId: turn.reviewId ?? null, attribution: turn.reviewId ? turn.mixed ? 'mixed' : turn.inputSeen ? 'self_review' : 'mixed' : 'unlinked',
+    emitLocal(turn, { kind: 'exploration', result: meta.sources.length > 0 ? 'explore_content_found' : 'explore_no_usable_content', sessionId, seq: event.seq,
+      turn: turn.turn, reviewId: turn.reviewId ?? null, attribution: attributionFor(turn),
       callId: message.source.callId, callSeq: call.seq, resultSeq: event.seq, activity: call.name, at: isoTime(event.time), sources: meta.sources.length })
   }
   const unsubscribe = typeof ctx.on === 'function' ? ctx.on('session/event', onEvent) : null

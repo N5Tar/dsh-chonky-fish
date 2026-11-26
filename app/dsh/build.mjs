@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildSync } from 'esbuild'
-import { ASSETS, DEFAULT_PANEL_PROMPT, PRESET, ROUTES, STORAGE_KEYS, WORKSPACE_DIR } from '../../core/contracts/spec.js'
+import { ABS_ACTION_VIEWS, ASSETS, DEFAULT_PANEL_PROMPT, PRESET, ROUTES, STORAGE_KEYS, WORKSPACE_DIR } from '../../core/contracts/spec.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '../..')
@@ -40,6 +40,7 @@ const clientResources = {
   workspaceName: WORKSPACE_DIR,
   routes: ROUTES,
   storageKeys: STORAGE_KEYS,
+  absActions: ABS_ACTION_VIEWS,
   defaultPanelPrompt: DEFAULT_PANEL_PROMPT,
   assets: { avatar: assets.avatar, poses: assets.poses },
 }

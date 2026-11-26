@@ -13,6 +13,7 @@ export const ABS_DEFAULTS = Object.freeze({
   actionPolicy: Object.freeze({
     minimumGap: 0.65,
     explorationScoreFactor: 0.8,
+    reviewMinGap: 0.5,
   }),
   drives: {
     social: { initialSatisfaction: 0.55, setpoint: 0.75, decayPerHour: 0.008 },
@@ -47,6 +48,7 @@ export function sanitizeAbsConfig(raw) {
     minimumGap: number(actionPolicy.minimumGap, defaults.actionPolicy.minimumGap, 0, 1),
     explorationScoreFactor: number(
       actionPolicy.explorationScoreFactor, defaults.actionPolicy.explorationScoreFactor, 0, 2),
+    reviewMinGap: number(actionPolicy.reviewMinGap, defaults.actionPolicy.reviewMinGap, 0, 1),
   }
   result.drives = {}
   for (const id of ['social', 'curiosity']) {

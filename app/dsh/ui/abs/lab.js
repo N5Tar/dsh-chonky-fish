@@ -43,9 +43,9 @@ var ABS_LAB_SURFACE = `
 @container(max-width:960px){.cf-abs-lab .abs-shell{padding:28px 24px}.cf-abs-lab .abs-states{grid-template-columns:1fr}.cf-abs-lab .abs-time-grid{grid-template-columns:1fr;gap:0}}@container(max-width:600px){.cf-abs-lab .abs-shell{padding:20px 16px}.cf-abs-lab .abs-panel{padding:20px}.cf-abs-lab .abs-settings{padding:0}.cf-abs-lab .abs-settings-summary{display:block;margin:8px 0 0}.cf-abs-lab .abs-value{font-size:28px}.cf-abs-lab .abs-drives{gap:16px}.cf-abs-lab .abs-drive+.abs-drive{padding-left:16px}.cf-abs-lab .activity{font-size:32px}}
 `
 var ABS_ACTIVITY_STYLE = `
-.cf-abs-lab .abs-observation-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px}.cf-abs-lab .abs-observation-entry{display:block;color:inherit;text-decoration:none;background:#fff;border:1px solid var(--cf-border);border-radius:20px;padding:21px 23px;box-shadow:0 18px 46px #87b2e01a;min-width:0}.cf-abs-lab .abs-observation-entry:hover{border-color:#b4d2f1;background:#fcfdff}.cf-abs-lab .abs-observation-entry:focus-visible{outline:2px solid var(--cf-accent);outline-offset:3px}.cf-abs-lab .abs-entry-heading{display:flex;justify-content:space-between;align-items:center;gap:12px}.cf-abs-lab .abs-entry-heading h2{margin:0}.cf-abs-lab .abs-observation-entry>p{font-size:12px;color:var(--cf-muted);margin:7px 0 0}.cf-abs-lab .abs-entry-sample{margin:18px 0 14px;padding:12px 14px;border-radius:12px;background:var(--cf-soft);min-height:68px;overflow-wrap:anywhere}.cf-abs-lab .abs-entry-sample small{display:block;color:var(--cf-muted);font-size:11px;margin-top:5px}.cf-abs-lab .abs-entry-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;color:var(--cf-muted);font-size:11px}.cf-abs-lab .abs-entry-foot strong{color:var(--cf-accent);font-weight:600}.cf-abs-lab .abs-back-link{display:inline-block;color:var(--cf-accent);text-decoration:none;margin:0 0 18px}.cf-abs-lab .abs-detail-title{margin:0 0 18px}.cf-abs-lab .abs-detail-title h1{font-size:25px}.cf-abs-lab .abs-detail-title p{color:var(--cf-muted);font-size:12px;margin-top:4px}.cf-abs-lab .abs-events-summary,.cf-abs-lab .abs-activity-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;background:#fff;border:1px solid var(--cf-border);border-radius:18px;padding:18px 20px;margin:0 0 14px}.cf-abs-lab .abs-events-summary span,.cf-abs-lab .abs-activity-summary span{display:block;font-size:11px;color:var(--cf-muted)}.cf-abs-lab .abs-events-summary strong,.cf-abs-lab .abs-activity-summary strong{display:block;font-size:23px;color:#22456b}.cf-abs-lab .abs-events-summary+.cf-abs-events-note{font-size:11px;color:var(--cf-muted);margin:0 0 16px}.cf-abs-lab .cf-abs-events{margin:0}.cf-abs-lab .cf-abs-events .cf-abs-events-head{margin:0 0 14px}.cf-abs-lab .abs-activity-page{min-width:0}.cf-abs-lab .abs-activity-error{margin-bottom:14px}.cf-abs-lab .abs-activity-coverage{font-size:11px;color:var(--cf-muted);margin:0 0 18px}.cf-abs-lab .abs-activity-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0 10px}.cf-abs-lab .abs-activity-head h2{margin:0}.cf-abs-lab .abs-activity-layout{display:grid;grid-template-columns:minmax(0,1fr) 230px;gap:16px;align-items:start}.cf-abs-lab .abs-activity-list{min-width:0}.cf-abs-lab .abs-activity-record{padding:19px 20px;background:#fff;border:1px solid var(--cf-border);border-radius:18px;margin-bottom:10px;overflow-wrap:anywhere}.cf-abs-lab .abs-activity-heading{display:flex;justify-content:space-between;align-items:start;gap:12px}.cf-abs-lab .abs-activity-heading h3{font-size:14px;margin:0}.cf-abs-lab .abs-status,.cf-abs-lab .abs-source-tag{font-size:10px;white-space:nowrap;padding:2px 8px;border-radius:99px;background:#eaf4fb;color:#316da9}.cf-abs-lab .abs-status-failed{background:#fff0ee;color:#a14e43}.cf-abs-lab .abs-status-unknown{background:#f7f1e5;color:#81621f}.cf-abs-lab .abs-activity-record>p{font-size:11px;margin:6px 0}.cf-abs-lab .abs-activity-record details{font-size:12px;margin-top:12px}.cf-abs-lab .abs-activity-record summary{cursor:pointer;color:var(--cf-accent)}.cf-abs-lab .abs-activity-trail{list-style:none;padding:0;margin:12px 0 0 7px;border-left:2px solid #d4e3ee}.cf-abs-lab .abs-activity-trail>li{position:relative;padding:0 0 15px 14px}.cf-abs-lab .abs-activity-trail>li:before{content:'';position:absolute;left:-5px;top:7px;width:8px;height:8px;border-radius:50%;background:#8fb5cc}.cf-abs-lab .abs-activity-trail strong{font-weight:600}.cf-abs-lab .abs-activity-trail p,.cf-abs-lab .abs-activity-trail ul{margin:4px 0;color:var(--cf-muted);font-size:11px;line-height:1.7}.cf-abs-lab .abs-evidence-ref{margin-top:9px;padding:8px 12px;border-left:2px solid #b8cbd8;background:var(--cf-soft);overflow-wrap:anywhere}.cf-abs-lab .abs-evidence-ref p{font-size:11px;margin:5px 0}.cf-abs-lab .abs-annotations{display:flex;align-items:center;gap:7px;flex-wrap:wrap;border-top:1px solid var(--cf-border);padding-top:12px;margin-top:13px;color:var(--cf-muted);font-size:11px}.cf-abs-lab .abs-annotations button{font-size:10px;min-height:30px;padding:4px 9px}.cf-abs-lab .abs-annotations button[aria-pressed=true]{color:var(--cf-accent);background:#edf5ff;border-color:#b4d2f1}.cf-abs-lab .abs-interest-panel{padding:18px}.cf-abs-lab .abs-interest-panel h2{margin:0}.cf-abs-lab .abs-interest-panel article{border-top:1px solid var(--cf-border);padding:12px 0 0;margin-top:12px}.cf-abs-lab .abs-interest-panel article h3{font-size:12px;margin:0}.cf-abs-lab .abs-interest-panel article p,.cf-abs-lab .abs-interest-panel>p{font-size:11px;color:var(--cf-muted);margin:5px 0}.cf-abs-lab .abs-debug-drawer{margin-top:18px}.cf-abs-lab .abs-debug-drawer>summary{cursor:pointer;color:var(--cf-muted);font-size:12px}.cf-abs-lab .abs-debug-section{padding:16px 0;border-top:1px solid var(--cf-border);overflow-wrap:anywhere}
+.cf-abs-lab .abs-observation-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px}.cf-abs-lab .abs-observation-entry{display:block;color:inherit;text-decoration:none;background:#fff;border:1px solid var(--cf-border);border-radius:20px;padding:21px 23px;box-shadow:0 18px 46px #87b2e01a;min-width:0}.cf-abs-lab .abs-observation-entry:hover{border-color:#b4d2f1;background:#fcfdff}.cf-abs-lab .abs-observation-entry:focus-visible{outline:2px solid var(--cf-accent);outline-offset:3px}.cf-abs-lab .abs-entry-heading{display:flex;justify-content:space-between;align-items:center;gap:12px}.cf-abs-lab .abs-entry-heading h2{margin:0}.cf-abs-lab .abs-observation-entry>p{font-size:12px;color:var(--cf-muted);margin:7px 0 0}.cf-abs-lab .abs-entry-sample{margin:18px 0 14px;padding:12px 14px;border-radius:12px;background:var(--cf-soft);min-height:68px;overflow-wrap:anywhere}.cf-abs-lab .abs-entry-sample small{display:block;color:var(--cf-muted);font-size:11px;margin-top:5px}.cf-abs-lab .abs-entry-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;color:var(--cf-muted);font-size:11px}.cf-abs-lab .abs-entry-foot strong{color:var(--cf-accent);font-weight:600}.cf-abs-lab .abs-back-link{display:inline-block;color:var(--cf-accent);text-decoration:none;margin:0 0 18px}.cf-abs-lab .abs-detail-title{margin:0 0 18px}.cf-abs-lab .abs-detail-title h1{font-size:25px}.cf-abs-lab .abs-detail-title p{color:var(--cf-muted);font-size:12px;margin-top:4px}.cf-abs-lab .abs-events-summary,.cf-abs-lab .abs-activity-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;background:#fff;border:1px solid var(--cf-border);border-radius:18px;padding:18px 20px;margin:0 0 14px}.cf-abs-lab .abs-events-summary span,.cf-abs-lab .abs-activity-summary span{display:block;font-size:11px;color:var(--cf-muted)}.cf-abs-lab .abs-events-summary strong,.cf-abs-lab .abs-activity-summary strong{display:block;font-size:23px;color:#22456b}.cf-abs-lab .abs-events-summary+.cf-abs-events-note{font-size:11px;color:var(--cf-muted);margin:0 0 16px}.cf-abs-lab .cf-abs-events{margin:0}.cf-abs-lab .cf-abs-events .cf-abs-events-head{margin:0 0 14px}.cf-abs-lab .abs-activity-page{min-width:0}.cf-abs-lab .abs-activity-error{margin-bottom:14px}.cf-abs-lab .abs-activity-coverage{font-size:11px;color:var(--cf-muted);margin:0 0 18px}.cf-abs-lab .abs-activity-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0 10px}.cf-abs-lab .abs-activity-head h2{margin:0}.cf-abs-lab .abs-activity-list{min-width:0}.cf-abs-lab .abs-activity-record{padding:19px 20px;background:#fff;border:1px solid var(--cf-border);border-radius:18px;margin-bottom:10px;overflow-wrap:anywhere}.cf-abs-lab .abs-activity-heading{display:flex;justify-content:space-between;align-items:start;gap:12px}.cf-abs-lab .abs-activity-heading h3{font-size:14px;margin:0}.cf-abs-lab .abs-status,.cf-abs-lab .abs-source-tag{font-size:10px;white-space:nowrap;padding:2px 8px;border-radius:99px;background:#eaf4fb;color:#316da9}.cf-abs-lab .abs-status-failed{background:#fff0ee;color:#a14e43}.cf-abs-lab .abs-status-unknown{background:#f7f1e5;color:#81621f}.cf-abs-lab .abs-activity-record>p{font-size:11px;margin:6px 0}.cf-abs-lab .abs-activity-record details{font-size:12px;margin-top:12px}.cf-abs-lab .abs-activity-record summary{cursor:pointer;color:var(--cf-accent)}.cf-abs-lab .abs-activity-trail{list-style:none;padding:0;margin:12px 0 0 7px;border-left:2px solid #d4e3ee}.cf-abs-lab .abs-activity-trail>li{position:relative;padding:0 0 15px 14px}.cf-abs-lab .abs-activity-trail>li:before{content:'';position:absolute;left:-5px;top:7px;width:8px;height:8px;border-radius:50%;background:#8fb5cc}.cf-abs-lab .abs-activity-trail strong{font-weight:600}.cf-abs-lab .abs-activity-trail p,.cf-abs-lab .abs-activity-trail ul{margin:4px 0;color:var(--cf-muted);font-size:11px;line-height:1.7}.cf-abs-lab .abs-evidence-ref{margin-top:9px;padding:8px 12px;border-left:2px solid #b8cbd8;background:var(--cf-soft);overflow-wrap:anywhere}.cf-abs-lab .abs-evidence-ref p{font-size:11px;margin:5px 0}.cf-abs-lab .abs-annotations{display:flex;align-items:center;gap:7px;flex-wrap:wrap;border-top:1px solid var(--cf-border);padding-top:12px;margin-top:13px;color:var(--cf-muted);font-size:11px}.cf-abs-lab .abs-annotations button{font-size:10px;min-height:30px;padding:4px 9px}.cf-abs-lab .abs-annotations button[aria-pressed=true]{color:var(--cf-accent);background:#edf5ff;border-color:#b4d2f1}.cf-abs-lab .abs-debug-drawer{margin-top:18px}.cf-abs-lab .abs-debug-drawer>summary{cursor:pointer;color:var(--cf-muted);font-size:12px}.cf-abs-lab .abs-debug-section{padding:16px 0;border-top:1px solid var(--cf-border);overflow-wrap:anywhere}
 .cf-abs-lab .abs-activity-summary{grid-template-columns:repeat(3,minmax(0,1fr))}.cf-abs-lab .abs-activity-pagination{display:flex;justify-content:center;align-items:center;gap:12px;margin:16px 0;font-size:11px;color:var(--cf-muted)}.cf-abs-lab .abs-activity-coverage details{margin:7px 0}.cf-abs-lab .abs-activity-coverage summary{cursor:pointer;color:var(--cf-accent)}.cf-abs-lab .abs-activity-coverage p{margin:5px 0}
-@container(max-width:760px){.cf-abs-lab .abs-observation-grid,.cf-abs-lab .abs-activity-layout{grid-template-columns:1fr}.cf-abs-lab .abs-interest-panel{order:2}}@container(max-width:520px){.cf-abs-lab .abs-observation-grid{grid-template-columns:1fr}.cf-abs-lab .abs-events-summary,.cf-abs-lab .abs-activity-summary{grid-template-columns:1fr 1fr;padding:15px}.cf-abs-lab .abs-observation-entry{padding:17px}.cf-abs-lab .abs-entry-foot{align-items:start;flex-direction:column}.cf-abs-lab .abs-activity-record{padding:15px}.cf-abs-lab .abs-activity-heading{flex-wrap:wrap}.cf-abs-lab .abs-activity-pagination{flex-wrap:wrap}}
+@container(max-width:760px){.cf-abs-lab .abs-observation-grid{grid-template-columns:1fr}}@container(max-width:520px){.cf-abs-lab .abs-observation-grid{grid-template-columns:1fr}.cf-abs-lab .abs-events-summary,.cf-abs-lab .abs-activity-summary{grid-template-columns:1fr 1fr;padding:15px}.cf-abs-lab .abs-observation-entry{padding:17px}.cf-abs-lab .abs-entry-foot{align-items:start;flex-direction:column}.cf-abs-lab .abs-activity-record{padding:15px}.cf-abs-lab .abs-activity-heading{flex-wrap:wrap}.cf-abs-lab .abs-activity-pagination{flex-wrap:wrap}}
 `
 var ABS_AUDIT_WORDS = {
   off: '已关闭', shadow: '观察模式', active: '投递模式',
@@ -61,7 +61,7 @@ var ABS_AUDIT_WORDS = {
   'search-capability-unavailable': '搜索能力当前不可用',
   owner_message: '主人消息', exploration: '探索', explore_content_found: '取得可用资料',
   explore_no_usable_content: '没有可用内容', failed: '执行失败',
-  social: '社交满足度', curiosity: '好奇满足度', proposal: '动机提案', decision: '行动决策', 'execution-turn': '执行轮次',
+  social: '社交满足度', curiosity: '好奇满足度',
 }
 function absAuditWord(value) { return Object.prototype.hasOwnProperty.call(ABS_AUDIT_WORDS, value) ? ABS_AUDIT_WORDS[value] : String(value == null ? '未记录' : value) }
 function describeAbsAudit(record) {
@@ -110,22 +110,9 @@ function describeAbsAudit(record) {
       summary = row.previous + '× → ' + row.timeScale + '×。只调整状态变化与审查频率，不重置已累计的变化，不代表已经审查或行动。'
       facts.push(['生效时间', formatAbsTime(row.realAt)])
       break
-    case 'StateMigrated':
-      title = '旧版状态已归档'
-      summary = '旧版动机与执行记录已归档，不再参与运行；需求数值与时钟保留。'
-      if (row.archived) facts.push(['归档数量', '动机 ' + row.archived.motivations + ' · 执行 ' + row.archived.executions])
-      break
     case 'Recovery':
       title = 'ABS 状态已恢复'
       summary = '重启后从保存的状态继续；不会补发错过的审查。'
-      break
-    case 'ModelBudgetReserved':
-      title = '预留模型预算（历史策略）'
-      summary = '当前版本已取消此限制。'
-      break
-    case 'ModelLaunchRecorded':
-      title = '准备发起模型调用'
-      summary = '用途：' + absAuditWord(row.purpose) + '。仅记录尝试，不代表调用成功。'
       break
     default:
       facts.push(['记录类型', row.type || '未记录'])
@@ -157,7 +144,7 @@ function describeAbsNeeds(state) {
     var available = valid(drive.satisfaction) && drive.satisfaction >= 0 && drive.satisfaction <= 1 && valid(drive.setpoint) && drive.setpoint > 0 && drive.setpoint <= 1
     var demand = available ? Math.max(0, Math.min(1, (drive.setpoint - drive.satisfaction) / drive.setpoint)) : null
     return {
-      id: id, title: id === 'social' ? '社交满足程度' : '探索满足程度', available: available, demand: demand,
+      id: id, title: id === 'social' ? '社交满足程度' : '好奇满足程度', available: available, demand: demand,
       satisfaction: available ? drive.satisfaction : null, setpoint: available ? drive.setpoint : null,
       level: !available ? '暂无有效数据' : demand === 0 ? '处于平常的满足水平' : demand < .35 ? '缺口较小' : demand < .7 ? '缺口中等' : '缺口较大',
       decay: valid(drive.decayPerHour) && drive.decayPerHour >= 0 ? drive.decayPerHour : null,
@@ -165,15 +152,31 @@ function describeAbsNeeds(state) {
     }
   })
 }
+// The Host sends each shown action's name and basis with its signal (from the action registry); none are listed here.
+function describeAbsActionSignals(state) {
+  var rows = state && Array.isArray(state.actionSignals) ? state.actionSignals : []
+  return rows.filter(function (row) { return row && typeof row.intent === 'string' && typeof row.label === 'string' }).map(function (row) {
+    var known = typeof row.value === 'number' && Number.isFinite(row.value)
+    return { id: row.intent, title: row.label, basis: typeof row.basis === 'string' ? row.basis : '', value: known ? row.value : null,
+      min: typeof row.min === 'number' ? row.min : null, score: typeof row.score === 'number' ? row.score : null, ready: row.ready === true }
+  })
+}
 function AbsNeedsPanel(props) {
-  var state = props.state || {}, rows = describeAbsNeeds(state)
+  var state = props.state || {}, rows = describeAbsNeeds(state), actions = describeAbsActionSignals(state)
   var percent = function(value) { return value === null ? '暂无数据' : (value*100).toFixed(1)+'%' }
   return h('section',{className:'abs-panel','aria-label':'大肥鱼状态'},
     h('div',{className:'abs-panel-heading'},h('h2',null,'大肥鱼状态'),h('span',{className:'abs-muted'},props.stale?'非实时状态':'内部满足度')),
-    h('div',{className:'abs-drives'},rows.map(function(row){return h('article',{key:row.id,className:'abs-drive'},
-      h('h3',null,row.id==='social'?'社交满足度':'探索满足度'),h('div',{className:'abs-value'},percent(row.satisfaction)),
-      row.available?h('meter',{min:0,max:1,value:row.satisfaction,'aria-label':row.title},percent(row.satisfaction)):null,
-      h('p',{className:'abs-muted'},'需求缺口 '+percent(row.demand)+' · '+row.level))})),
+    // Exploration is split into 代办回看 / 学习 / 逛网站, so there is no standalone exploration card.
+    // An older Host without actionSignals keeps the curiosity card as a fallback.
+    h('div',{className:'abs-drives',style:{gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))'}},
+      rows.filter(function(row){return !actions.length||row.id==='social'}).map(function(row){return h('article',{key:row.id,className:'abs-drive'},
+        h('h3',null,row.id==='social'?'社交满足度':'好奇满足度'),h('div',{className:'abs-value'},percent(row.satisfaction)),
+        row.available?h('meter',{min:0,max:1,value:row.satisfaction,'aria-label':row.title},percent(row.satisfaction)):null,
+        h('p',{className:'abs-muted'},'需求缺口 '+percent(row.demand)+' · '+row.level))}),
+      actions.map(function(row){return h('article',{key:row.id,className:'abs-drive'},
+        h('h3',null,row.title),h('div',{className:'abs-value'},row.ready?percent(row.score):'未达门槛'),
+        row.value!==null?h('meter',{min:0,max:1,value:row.value,'aria-label':row.title},percent(row.value)):null,
+        h('p',{className:'abs-muted'},row.basis+' '+percent(row.value)+' · 门槛 '+percent(row.min)))})),
     h('div',{className:'abs-panel-footer'},h('span',null,'内部数值不代表真实情绪，也不构成行动命令。'),h('span',null,state.mode?absAuditWord(state.mode):'模式未知')))
 }
 function parseAbsTimeScale(value) {

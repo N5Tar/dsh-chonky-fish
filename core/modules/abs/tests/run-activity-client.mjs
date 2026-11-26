@@ -5,8 +5,8 @@ import vm from 'node:vm'
 const source = readFileSync(new URL('../../../../app/dsh/ui/abs/activity-panel.js', import.meta.url), 'utf8')
 const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 const snapshotAt = new Date().toISOString()
-const row = (id, result, extra = {}) => ({ id, wakeAt: snapshotAt, cause: 'timer', mode: 'active', reviewStatus: 'accepted', turnStatus: 'completed', attribution: 'self_review', choice: null, outcome: result, result, outcomeSummary: '结果摘要 ' + id, evidence: [], interests: [], annotations: [], ...extra })
-const episodes = [row('verified', 'verified'), row('deferred', 'deferred', { choice: { source: 'model_reported', kind: 'defer', summary: '这次先安静一会儿' } }), row('failed-transport', 'failed', { turnStatus: 'failed', turnDiagnostic: { phase: 'before_tools', code: 'TRANSPORT' }, evidence: [] }), row('failed-legacy', 'failed', { turnStatus: 'failed', turnDiagnostic: null, evidence: [] }), row('unknown', 'unknown'), row('not-started', 'not_started', { reviewStatus: 'not_due', turnStatus: 'unknown', attribution: 'unlinked', turnDiagnostic: { phase: 'not_executed', code: 'NOT_EXECUTED' } }), row('not-started-2', 'not_started', { reviewStatus: 'skipped', turnStatus: 'unknown', attribution: 'unlinked' })]
+const row = (id, result, extra = {}) => ({ id, wakeAt: snapshotAt, cause: 'timer', mode: 'active', reviewStatus: 'accepted', turnStatus: 'completed', attribution: 'self_review', outcome: result, result, outcomeSummary: '结果摘要 ' + id, evidence: [], annotations: [], ...extra })
+const episodes = [row('verified', 'verified'), row('no-action', 'no_action'), row('failed-transport', 'failed', { turnStatus: 'failed', turnDiagnostic: { phase: 'before_tools', code: 'TRANSPORT' }, evidence: [] }), row('failed-legacy', 'failed', { turnStatus: 'failed', turnDiagnostic: null, evidence: [] }), row('unknown', 'unknown'), row('not-started', 'not_started', { reviewStatus: 'not_due', turnStatus: 'unknown', attribution: 'unlinked', turnDiagnostic: { phase: 'not_executed', code: 'NOT_EXECUTED' } }), row('not-started-2', 'not_started', { reviewStatus: 'skipped', turnStatus: 'unknown', attribution: 'unlinked' })]
 function harness() {
   const state = [], timers = new Map(), listeners = new Map(), requests = []
   let cursor = 0, deps, effect, cleanup, nextTimer = 0, nowMs = Date.now()
@@ -29,8 +29,8 @@ function harness() {
       const nextCursor = hasMore && rows.length ? { wakeAt: rows.at(-1).wakeAt, episodeId: rows.at(-1).id } : null
       return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true,
         window: { from: parsed.searchParams.get('from'), to: parsed.searchParams.get('to'), timeZone: 'Asia/Shanghai', coverageStart: snapshotAt, coverageEnd: snapshotAt, coveredMs: 3600000, complete: false, gaps: [{ from: parsed.searchParams.get('from'), to: snapshotAt }] },
-        summary: { episodes: 4, opportunities: 4, totalWakes: 6, notStarted: 2, verified: 1, deferred: 1, failed: 1, unknown: 1 },
-        episodes: rows, interests: [], page: { limit: 5, total: filtered.length, hasMore, snapshotAt, snapshotSeq: 50, outcome, nextCursor } }) }
+        summary: { episodes: 4, opportunities: 4, totalWakes: 6, notStarted: 2, verified: 1, noAction: 1, failed: 1, unknown: 1 },
+        episodes: rows, page: { limit: 5, total: filtered.length, hasMore, snapshotAt, snapshotSeq: 50, outcome, nextCursor } }) }
     },
     h: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(value => value != null) }),
     React: {
@@ -64,8 +64,9 @@ assert.equal(firstUrl.searchParams.has('offset'), false)
 assert.equal(firstUrl.searchParams.has('beforeWakeAt'), false)
 assert.equal(firstUrl.searchParams.has('beforeEpisodeId'), false)
 assert.match(text(tree), /结果已验证/)
-assert.match(text(tree), /明确暂缓/)
+assert.match(text(tree), /未观察到行动/)
 assert.match(text(tree), /执行失败/)
+assert.doesNotMatch(text(tree), /明确暂缓|兴趣线索|模型自报/, 'retired deferred / interest / model-reported parts are gone')
 assert.match(text(tree), /失败阶段：工具请求前 · 原因：模型连接失败/)
 assert.match(text(tree), /本轮在工具请求前失败；没有关联的工具请求或工具回执。/)
 assert.match(text(tree), /这条较早记录没有保存失败诊断，失败阶段和原因未记录。/)
@@ -75,7 +76,7 @@ assert.match(text(tree), /存在 1 个观察缺口/)
 assert.match(text(tree), /失败 1 · 未知 1/)
 assert.equal(nodes(tree, 'article').length, 5)
 const badges = nodes(tree, 'span').map(node => text(node))
-for (const label of ['已验证', '明确暂缓', '失败', '未知']) assert.ok(badges.includes(label), 'renders result status: ' + label)
+for (const label of ['已验证', '未观察到行动', '失败', '未知']) assert.ok(badges.includes(label), 'renders result status: ' + label)
 
 const select = nodes(tree, 'select')[0]
 nodes(tree, 'button').find(button => button.children.includes('加载更多')).props.onClick()
@@ -94,23 +95,24 @@ assert.equal(nodes(tree, 'button').some(button => button.children.includes('加�
 const loadedPages = app.requests.filter(request => request.method !== 'POST').length
 app.tick(); await flush()
 assert.equal(app.requests.filter(request => request.method !== 'POST').length, loadedPages, 'later pages stay frozen while the user reviews them')
-const deferredSelect = nodes(tree, 'select')[0]
-deferredSelect.props.onChange({ target: { value: 'deferred' } })
+const outcomeSelect = nodes(tree, 'select')[0]
+assert.equal(nodes(outcomeSelect, 'option').some(option => option.props.value === 'deferred'), false, 'the retired deferred filter is not offered')
+outcomeSelect.props.onChange({ target: { value: 'no_action' } })
 tree = app.render()
 await flush()
 tree = app.render()
-assert.equal(new URL(app.requests.at(-1).url).searchParams.get('outcome'), 'deferred', 'outcome filter is applied by the server across the full day')
+assert.equal(new URL(app.requests.at(-1).url).searchParams.get('outcome'), 'no_action', 'outcome filter is applied by the server across the full day')
 assert.equal(new URL(app.requests.at(-1).url).searchParams.has('offset'), false, 'outcome filter resets keyset pagination')
 assert.equal(new URL(app.requests.at(-1).url).searchParams.has('beforeEpisodeId'), false, 'filtered first page omits stale cursor')
-assert.equal(nodes(tree, 'article').length, 1, 'deferred filter uses exclusive canonical result')
-assert.match(text(tree), /明确暂缓/)
+assert.equal(nodes(tree, 'article').length, 1, 'no_action filter uses exclusive canonical result')
+assert.match(text(tree), /未观察到行动/)
 assert.equal(nodes(tree, 'button').find(button => button.children.includes('有意思')).props.disabled, false)
 const interesting = nodes(tree, 'button').find(button => button.children.includes('有意思'))
 interesting.props.onClick()
 await flush()
 tree = app.render()
 assert.equal(app.requests.at(-1).method, 'POST')
-assert.deepEqual(JSON.parse(app.requests.at(-1).body), { action: 'annotate', activityId: 'deferred', label: 'interesting', active: true })
+assert.deepEqual(JSON.parse(app.requests.at(-1).body), { action: 'annotate', activityId: 'no-action', label: 'interesting', active: true })
 assert.equal(nodes(tree, 'button').find(button => button.children.includes('有意思')).props['aria-pressed'], true)
 
 const previousFrom = new URL(app.requests.filter(request => request.method !== 'POST').at(-1).url).searchParams.get('from')
@@ -125,7 +127,7 @@ assert.notEqual(reactivated.searchParams.get('from'), previousFrom)
 assert.equal(reactivated.searchParams.has('offset'), false)
 assert.equal(reactivated.searchParams.has('beforeEpisodeId'), false)
 assert.equal(reactivated.searchParams.has('snapshotSeq'), false)
-assert.equal(reactivated.searchParams.get('outcome'), 'deferred', 'day reactivation preserves the selected outcome filter')
+assert.equal(reactivated.searchParams.get('outcome'), 'no_action', 'day reactivation preserves the selected outcome filter')
 
 app.unmount(); assert.equal(app.timers.size, 0); assert.equal(app.listeners.size, 0)
 console.log('ABS activity client: PASS (UTC+8 window, result states, gaps, annotations, refresh cleanup)')

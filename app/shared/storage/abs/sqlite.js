@@ -1,19 +1,25 @@
 import { randomUUID } from 'node:crypto'
 
+import { ABS_ACTION_INTENTS } from '../../../../core/modules/abs/actions.js'
+
 const LABELS = new Set(['interesting', 'repetitive', 'follow_up_worthy'])
 const STATUSES = new Set(['pending', 'verified', 'failed', 'unverified'])
-const RESULTS = new Set(['verified','deferred','failed','no_action','unknown','not_started'])
+const RESULTS = new Set(['verified','failed','no_action','unknown','not_started'])
 const TURN_DIAGNOSTIC_PHASES = new Set(['before_tools','during_tools','after_tools','not_executed'])
 const TURN_DIAGNOSTIC_CODES = new Set(['TRANSPORT','TIMEOUT','RATE_LIMIT','AUTH','INVALID_REQUEST','QUOTA','MODEL_ERROR','ABORTED','INTERRUPTED','BLOCKED','TURN_ERROR','NOT_EXECUTED'])
-const ACTION_INTENTS = new Set(['chat_owner','remind_rest','continue_interest'])
+// Writes accept only registered actions (core/modules/abs/actions.js). The column has no CHECK, so adding an
+// action needs no schema change; retired intents such as continue_interest stay readable as history.
+const ACTION_INTENTS = new Set(ABS_ACTION_INTENTS)
+const RETIRED_EPISODE_COLUMNS = ['choice_kind', 'choice_summary', 'choice_reason', 'choice_at']
 const ACTION_STATUSES = new Set(['preview','reserved','enqueued','unknown','released','suppressed'])
-const ACTION_SELECTIONS_SQL = `CREATE TABLE IF NOT EXISTS activity_action_selections (
+const ACTION_SELECTION_COLUMNS = 'selection_id,episode_id,review_id,session_id,message_id,intent,reason,score,dispatch_status,work_streak_id,selected_at,visible_at,visible_turn,resolved_at,resolution_reason'
+const actionSelectionsSql = (table) => `CREATE TABLE IF NOT EXISTS ${table} (
   selection_id TEXT PRIMARY KEY,
   episode_id TEXT NOT NULL UNIQUE REFERENCES activity_episodes(episode_id) ON DELETE CASCADE,
   review_id TEXT UNIQUE,
   session_id TEXT,
   message_id TEXT UNIQUE,
-  intent TEXT CHECK (intent IS NULL OR intent IN ('chat_owner','remind_rest','continue_interest')),
+  intent TEXT,
   reason TEXT NOT NULL,
   score REAL CHECK (score IS NULL OR (score>=0 AND score<=1)),
   dispatch_status TEXT NOT NULL CHECK (dispatch_status IN ('preview','reserved','enqueued','unknown','released','suppressed')),
@@ -24,17 +30,23 @@ const ACTION_SELECTIONS_SQL = `CREATE TABLE IF NOT EXISTS activity_action_select
   resolved_at TEXT,
   resolution_reason TEXT
 );`
+const ACTION_SELECTIONS_SQL = actionSelectionsSql('activity_action_selections')
+// Schema v3/v4 carried an intent CHECK. SQLite cannot alter a CHECK, so rebuild the table without it (rows are kept).
+const ACTION_SELECTIONS_REBUILD_SQL = `BEGIN IMMEDIATE;
+  ${actionSelectionsSql('activity_action_selections_next')}
+  INSERT INTO activity_action_selections_next (${ACTION_SELECTION_COLUMNS}) SELECT ${ACTION_SELECTION_COLUMNS} FROM activity_action_selections;
+  DROP TABLE activity_action_selections;
+  ALTER TABLE activity_action_selections_next RENAME TO activity_action_selections;
+  COMMIT;`
 const RESULT_SQL = `CASE
   WHEN e.review_status IN ('not_due','skipped','failed') THEN 'not_started'
   WHEN e.attribution='self_review' AND EXISTS (SELECT 1 FROM activity_evidence a WHERE a.episode_id=e.episode_id AND a.attribution='self_review' AND a.result_status='verified') THEN 'verified'
   WHEN e.attribution='self_review' AND EXISTS (SELECT 1 FROM activity_evidence a WHERE a.episode_id=e.episode_id AND a.attribution='self_review' AND a.result_status='failed') THEN 'failed'
   WHEN e.attribution='self_review' AND e.turn_status='failed' AND e.turn_diagnostic_code IS NOT NULL
     AND NOT EXISTS (SELECT 1 FROM activity_evidence a WHERE a.episode_id=e.episode_id) THEN 'failed'
-  WHEN e.review_status IN ('pending','accepted','reconcile') AND e.attribution='self_review' AND e.choice_kind='defer' AND e.turn_status='completed'
-    AND NOT EXISTS (SELECT 1 FROM activity_evidence a WHERE a.episode_id=e.episode_id) THEN 'deferred'
   WHEN e.review_status IN ('accepted','reconcile') AND e.review_id IS NOT NULL AND e.session_id IS NOT NULL AND e.turn_number IS NOT NULL
     AND e.claimed_status='claimed' AND e.input_status='appended' AND e.attribution='self_review' AND e.turn_status='completed'
-    AND e.turn_diagnostic_code IS NULL AND e.choice_kind IS NULL
+    AND e.turn_diagnostic_code IS NULL
     AND NOT EXISTS (SELECT 1 FROM activity_evidence a WHERE a.episode_id=e.episode_id) THEN 'no_action'
   WHEN e.review_status IN ('pending','accepted','reconcile') THEN 'unknown'
   ELSE 'not_started' END`
@@ -57,7 +69,7 @@ export function createAbsActivityRepository({ dbPath, DatabaseSync }) {
   let closed = false
   try {
     const version = db.prepare('PRAGMA user_version').get().user_version
-    if (version > 3) throw new Error('Unsupported ABS activity database schema')
+    if (version > 5) throw new Error('Unsupported ABS activity database schema')
     db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=1000; PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS activity_episodes (
         activity_order INTEGER PRIMARY KEY AUTOINCREMENT, episode_id TEXT NOT NULL UNIQUE, wake_at TEXT NOT NULL, cause TEXT NOT NULL,
@@ -71,9 +83,7 @@ export function createAbsActivityRepository({ dbPath, DatabaseSync }) {
         turn_diagnostic_phase TEXT, turn_diagnostic_code TEXT,
         attribution TEXT NOT NULL DEFAULT 'unlinked' CHECK (attribution IN ('self_review','mixed','unlinked')),
         social_satisfaction REAL CHECK (social_satisfaction IS NULL OR (social_satisfaction>=0 AND social_satisfaction<=1)),
-        curiosity_satisfaction REAL CHECK (curiosity_satisfaction IS NULL OR (curiosity_satisfaction>=0 AND curiosity_satisfaction<=1)),
-        choice_kind TEXT CHECK (choice_kind IS NULL OR choice_kind IN ('continue','defer')),
-        choice_summary TEXT, choice_reason TEXT, choice_at TEXT
+        curiosity_satisfaction REAL CHECK (curiosity_satisfaction IS NULL OR (curiosity_satisfaction>=0 AND curiosity_satisfaction<=1))
       );
       CREATE INDEX IF NOT EXISTS abs_activity_episodes_wake ON activity_episodes(wake_at DESC);
       CREATE TABLE IF NOT EXISTS activity_evidence (
@@ -87,20 +97,6 @@ export function createAbsActivityRepository({ dbPath, DatabaseSync }) {
         UNIQUE(session_id, source_seq)
       );
       CREATE INDEX IF NOT EXISTS abs_activity_evidence_episode ON activity_evidence(episode_id, observed_at);
-      CREATE TABLE IF NOT EXISTS interest_lines (
-        interest_id TEXT PRIMARY KEY, scope_session_id TEXT NOT NULL, normalized_title TEXT NOT NULL,
-        title TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('active','completed','abandoned')),
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-        UNIQUE(scope_session_id, normalized_title)
-      );
-      CREATE INDEX IF NOT EXISTS abs_interest_status ON interest_lines(status, updated_at DESC);
-      CREATE TABLE IF NOT EXISTS interest_updates (
-        update_id TEXT PRIMARY KEY, interest_id TEXT NOT NULL REFERENCES interest_lines(interest_id),
-        episode_id TEXT NOT NULL REFERENCES activity_episodes(episode_id) ON DELETE CASCADE,
-        source_evidence_id TEXT REFERENCES activity_evidence(evidence_id) ON DELETE SET NULL,
-        continuation TEXT NOT NULL, updated_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS abs_interest_updates_interest ON interest_updates(interest_id, updated_at DESC);
       CREATE TABLE IF NOT EXISTS activity_annotations (
         episode_id TEXT NOT NULL REFERENCES activity_episodes(episode_id) ON DELETE CASCADE,
         label TEXT NOT NULL CHECK (label IN ('interesting','repetitive','follow_up_worthy')),
@@ -114,10 +110,19 @@ export function createAbsActivityRepository({ dbPath, DatabaseSync }) {
       ALTER TABLE activity_episodes ADD COLUMN turn_diagnostic_phase TEXT;
       ALTER TABLE activity_episodes ADD COLUMN turn_diagnostic_code TEXT;
       ${ACTION_SELECTIONS_SQL}
-      PRAGMA user_version=3;
+      PRAGMA user_version=4;
       COMMIT;`)
-    else if (version === 2) db.exec(`BEGIN IMMEDIATE; ${ACTION_SELECTIONS_SQL} PRAGMA user_version=3; COMMIT;`)
-    else if (version === 0) db.exec(`BEGIN IMMEDIATE; ${ACTION_SELECTIONS_SQL} PRAGMA user_version=3; COMMIT;`)
+    else if (version === 2) db.exec(`BEGIN IMMEDIATE; ${ACTION_SELECTIONS_SQL} PRAGMA user_version=4; COMMIT;`)
+    else if (version === 0) db.exec(`BEGIN IMMEDIATE; ${ACTION_SELECTIONS_SQL} PRAGMA user_version=4; COMMIT;`)
+    else if (version === 3 || version === 4) db.exec(ACTION_SELECTIONS_REBUILD_SQL)
+    // The steps above stop at user_version<=4. v5 also drops what nothing writes any more:
+    // model-reported choices and interest lines (both came from the retired abs_report_activity tool).
+    if (version < 5) {
+      const columns = new Set(db.prepare('PRAGMA table_info(activity_episodes)').all().map(row => row.name))
+      db.exec('BEGIN IMMEDIATE; DROP TABLE IF EXISTS interest_updates; DROP TABLE IF EXISTS interest_lines;')
+      for (const column of RETIRED_EPISODE_COLUMNS) if (columns.has(column)) db.exec(`ALTER TABLE activity_episodes DROP COLUMN ${column};`)
+      db.exec('PRAGMA user_version=5; COMMIT;')
+    }
   } catch (error) { db.close(); throw error }
   const assertOpen = () => { if (closed) throw new Error('ABS activity repository is closed') }
   const transaction = fn => {
@@ -127,7 +132,7 @@ export function createAbsActivityRepository({ dbPath, DatabaseSync }) {
   }
   const decodeActionSelection = row => row ? ({ selectionId: row.selection_id, episodeId: row.episode_id, reviewId: row.review_id,
     sessionId: row.session_id, messageId: row.message_id, intent: row.intent, reason: row.reason, score: row.score,
-    dispatchStatus: row.dispatch_status, ...(typeof row.interest_id === 'string' ? { interestId: row.interest_id } : {}), workStreakId: row.work_streak_id,
+    dispatchStatus: row.dispatch_status, workStreakId: row.work_streak_id,
     selectedAt: row.selected_at, visibleAt: row.visible_at ?? null, resolvedAt: row.resolved_at, resolutionReason: row.resolution_reason }) : null
 
   return {
@@ -184,10 +189,6 @@ export function createAbsActivityRepository({ dbPath, DatabaseSync }) {
         WHERE selection_id=? AND review_id=? AND session_id=? AND dispatch_status IN ('reserved','enqueued','unknown')`)
         .run(iso(at),turn,text(selectionId,128,'action selection id'),text(reviewId,128,'review id'),text(sessionId,256,'session id')).changes) > 0
     },
-    actionSelectionForEpisode(episodeId) {
-      assertOpen()
-      return decodeActionSelection(db.prepare('SELECT * FROM activity_action_selections WHERE episode_id=?').get(text(episodeId,128,'episode id')))
-    },
     actionContext() {
       assertOpen()
       return {
@@ -198,6 +199,21 @@ export function createAbsActivityRepository({ dbPath, DatabaseSync }) {
           WHERE intent='remind_rest' AND work_streak_id IS NOT NULL
             AND dispatch_status IN ('reserved','enqueued','unknown')`).all().map(row => row.work_streak_id),
       }
+    },
+    /** Real time of the latest selection of `intent` that the host actually enqueued; null when never. */
+    lastEnqueuedAt(intent) {
+      assertOpen()
+      if (!ACTION_INTENTS.has(intent)) throw new TypeError('Invalid ABS action intent')
+      const row = db.prepare(`SELECT MAX(COALESCE(resolved_at, selected_at)) AS at FROM activity_action_selections
+        WHERE intent=? AND dispatch_status='enqueued'`).get(intent)
+      return row?.at ?? null
+    },
+    /** The latest selected intent (any status) among `intents`; null when none. */
+    lastIntentAmong(intents) {
+      assertOpen()
+      if (!Array.isArray(intents) || !intents.length || !intents.every(intent => ACTION_INTENTS.has(intent))) throw new TypeError('Invalid ABS action intents')
+      return db.prepare(`SELECT intent FROM activity_action_selections
+        WHERE intent IN (${intents.map(() => '?').join(',')}) ORDER BY selected_at DESC, rowid DESC LIMIT 1`).get(...intents)?.intent ?? null
     },
     recordWake(episode) {
       assertOpen()
@@ -302,10 +318,6 @@ export function createAbsActivityRepository({ dbPath, DatabaseSync }) {
         const evidence = evidenceRows.map(item => ({ id: item.evidence_id, kind: item.activity_kind, status: item.result_status, at: item.observed_at,
           sessionId: item.session_id, turn: item.turn_number, seq: item.source_seq, resultSeq: item.result_seq, callId: item.source_call_id,
           source: 'host_observed', attribution: item.attribution, sources: item.source_count }))
-        const updates = db.prepare(`SELECT i.interest_id AS id,i.title,i.status,u.continuation,e.evidence_id AS sourceEvidenceId
-          FROM interest_updates u JOIN interest_lines i ON i.interest_id=u.interest_id
-          LEFT JOIN activity_evidence e ON e.evidence_id=u.source_evidence_id
-          WHERE u.episode_id=? ORDER BY u.updated_at`).all(row.episode_id)
         const annotations = db.prepare('SELECT label,created_at FROM activity_annotations WHERE episode_id=? ORDER BY label').all(row.episode_id)
         return { id: row.episode_id, wakeAt: row.wake_at, cause: row.cause, mode: row.mode, gateReason: row.gate_reason,
           reviewId: row.review_id, messageId: row.message_id, sessionId: row.session_id, turn: row.turn_number,
@@ -316,9 +328,7 @@ export function createAbsActivityRepository({ dbPath, DatabaseSync }) {
             dispatchStatus: row.action_dispatch_status, selectedAt: row.action_selected_at,
             visibleAt: row.attribution === 'self_review' && row.action_visible_turn === row.turn_number ? row.action_visible_at ?? null : null,
             resolvedAt: row.action_resolved_at ?? null, resolutionReason: row.action_resolution_reason ?? null } : null,
-          choice: row.choice_kind ? { source: 'model_reported', kind: row.choice_kind, summary: row.choice_summary, reason: row.choice_reason, at: row.choice_at, attribution: row.attribution } : null,
           result: row.result, outcome: row.result, outcomeSummary: null, evidence,
-          interests: updates.map(item => ({ id: item.id, title: item.title, status: item.status, continuation: item.continuation, sourceEvidenceId: item.sourceEvidenceId })),
           annotations: annotations.map(item => ({ label: item.label, at: item.created_at })) }
       })
       const dayTotal = db.prepare('SELECT COUNT(*) AS count FROM activity_episodes WHERE wake_at>=? AND wake_at<?').get(start,end).count
@@ -335,10 +345,10 @@ export function createAbsActivityRepository({ dbPath, DatabaseSync }) {
         actionSelections.byStatus[row.dispatch_status] = (actionSelections.byStatus[row.dispatch_status] ?? 0) + row.count
       }
       const countByResult = Object.fromEntries(countRows.map(row => [row.result,row.count]))
-      const verifiedCount = countByResult.verified ?? 0, deferredCount = countByResult.deferred ?? 0
+      const verifiedCount = countByResult.verified ?? 0
       const failedCount = countByResult.failed ?? 0, noActionCount = countByResult.no_action ?? 0, knownUnknown = countByResult.unknown ?? 0
       const notStarted = countByResult.not_started ?? 0
-      const opportunities = verifiedCount + deferredCount + failedCount + noActionCount + knownUnknown
+      const opportunities = verifiedCount + failedCount + noActionCount + knownUnknown
       const windows = db.prepare(`SELECT started_at,last_seen_at,ended_at,end_reason FROM activity_runtime_windows WHERE started_at<? AND (ended_at IS NULL OR ended_at>?) ORDER BY started_at`).all(end,start)
       const nowAt = new Date(now).toISOString(), endBound = Date.parse(end), fromBound = Date.parse(start), coverageBound = Math.max(fromBound, Math.min(endBound, Date.parse(nowAt)))
       const gaps = []
@@ -362,13 +372,9 @@ export function createAbsActivityRepository({ dbPath, DatabaseSync }) {
           coverageStart: runtimeWindows[0]?.from ?? null, coverageEnd: runtimeWindows.at(-1)?.to ?? null,
           observedThrough: new Date(coverageBound).toISOString(),
           runtimeWindows, coveredMs, gaps, complete: gaps.length === 0 },
-        summary: { episodes: opportunities, opportunities, totalWakes: dayTotal, notStarted, verified: verifiedCount, deferred: deferredCount,
+        summary: { episodes: opportunities, opportunities, totalWakes: dayTotal, notStarted, verified: verifiedCount,
           failed: failedCount, noAction: noActionCount, unknown: knownUnknown, actionSelections },
         episodes,
-        interests: db.prepare(`SELECT i.interest_id AS id,i.title,i.status,i.updated_at AS updatedAt,
-          u.continuation,u.episode_id AS lastActivityId,e.evidence_id AS sourceEvidenceId
-          FROM interest_lines i JOIN interest_updates u ON u.update_id=(SELECT update_id FROM interest_updates WHERE interest_id=i.interest_id ORDER BY updated_at DESC LIMIT 1)
-          LEFT JOIN activity_evidence e ON e.evidence_id=u.source_evidence_id WHERE i.status='active' ORDER BY i.updated_at DESC LIMIT 100`).all(),
         page: { limit, total: pageTotal, hasMore, snapshotAt: snapshot, snapshotSeq: pageSnapshot,
           outcome: outcome ?? null, nextCursor: hasMore && tail ? { wakeAt: tail.wake_at, episodeId: tail.episode_id } : null },
       }
@@ -397,7 +403,6 @@ export function createAbsActivityRepository({ dbPath, DatabaseSync }) {
       assertOpen(); const cutoff = iso(before)
       return transaction(() => {
         const removed = db.prepare('DELETE FROM activity_episodes WHERE wake_at<?').run(cutoff).changes
-        db.prepare('DELETE FROM interest_lines WHERE NOT EXISTS (SELECT 1 FROM interest_updates WHERE interest_updates.interest_id=interest_lines.interest_id)').run()
         db.prepare('DELETE FROM activity_runtime_windows WHERE COALESCE(ended_at,last_seen_at)<?').run(cutoff)
         return removed
       })

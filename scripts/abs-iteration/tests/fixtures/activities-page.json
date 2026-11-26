@@ -4,7 +4,7 @@
     "opportunities": 4,
     "actionSelections": {
       "total": 3,
-      "byIntent": { "chat_owner": 2, "continue_interest": 1 },
+      "byIntent": { "chat_owner": 2, "study": 1 },
       "byStatus": { "enqueued": 2, "preview": 1 }
     }
   },
@@ -22,7 +22,6 @@
         "resolvedAt": "2026-11-25T02:00:21.000Z",
         "resolutionReason": "visible_reply_committed"
       },
-      "choice": { "kind": "continue", "summary": "想跟主人打个招呼" },
       "result": "no_action"
     },
     {
@@ -38,7 +37,6 @@
         "resolvedAt": "2026-11-25T03:01:00.000Z",
         "resolutionReason": "completed_without_output"
       },
-      "choice": null,
       "result": "no_action"
     },
     {
@@ -54,14 +52,13 @@
         "resolvedAt": null,
         "resolutionReason": null
       },
-      "choice": null,
-      "result": "deferred"
+      "result": "no_action"
     },
     {
       "id": "ep-explore",
       "wakeAt": "2026-11-25T05:00:00.000Z",
       "actionSelection": {
-        "intent": "continue_interest",
+        "intent": "study",
         "reason": "selected",
         "score": 0.6,
         "dispatchStatus": "enqueued",
@@ -70,7 +67,6 @@
         "resolvedAt": null,
         "resolutionReason": null
       },
-      "choice": null,
       "result": "verified"
     }
   ]

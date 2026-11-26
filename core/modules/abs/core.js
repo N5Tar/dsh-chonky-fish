@@ -28,8 +28,7 @@ export function createState(now, config = {}) {
   return {
     schemaVersion: 1, revision: 0, mode: config.mode ?? DEFAULT_CONFIG.mode,
     createdAt: at, updatedAt: at, drives,
-    motivations: [], executions: [], history: [], proposalIds: [], feedbackKeys: [],
-    observations: [], budget: { day: at.slice(0, 10), llmCalls: 0 },
+    feedbackKeys: [], observations: [],
     lastReview: null, lastOwnerMessage: null, lastExploration: null, nextWakeAt: null,
   }
 }

@@ -1,10 +1,16 @@
-# ABS 迭代 · 内容评分表（chat_owner）
+# ABS 迭代 · 内容评分表（chat_owner / study / browse / review_pending）
 
 ## 样本
-主样本：`actionSelection.intent === 'chat_owner'` 且 `dispatchStatus === 'enqueued'`。
+主样本：`actionSelection.intent` 为 `chat_owner`、`study`、`browse`、`review_pending` 之一，且 `dispatchStatus === 'enqueued'`。
+`continue_interest` 为历史值，不再产生新样本，旧记录只作基线。
 
 评分材料：ABS 行动提示摘要 + 鱼可见回复短摘录（≤80 字）+ 用户标注。
 **禁止**把私人对话全文写入 cycles。
+
+### 按类型的附加检查
+- `review_pending`：是否刷屏（同窗派发间隔应接近 12 小时，过密即记为异常，不计内容分）。
+- `study`：记忆目录是否出现去重后的新内容。
+- `browse`：是否有 `cdp eval` 非空输出的证据；`goto` 单独出现不算浏览收获。
 
 ## 维度（每条 0–2）
 
@@ -19,7 +25,7 @@
 Agent 可预填机械项（是否含具体名词、是否复读同句），**不得**顶替用户验收。
 
 ## 内容窗过关
-- 同窗 ≥3 条有效样本
+- 同窗 ≥3 条有效样本（按类型分别计：`study`、`browse` 各自 ≥3 条，`review_pending` 检查刷屏即可）
 - 「有意思或一般」≥2/3
 - 无「打扰」
 - 由头均分 ≥1.5

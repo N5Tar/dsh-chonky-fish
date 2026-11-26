@@ -32,9 +32,10 @@ for (const url of [
   '/?date=2026-02-30', '/?limit=101', '/?offset=4', '/?beforeWakeAt=2026-11-18T09%3A00%3A00.000Z', '/?date=2026-11-18&date=2026-11-18',
   '/?from=2026-11-18T00:00:00Z', '/?unknown=x', '/?outcome=nope', '/?snapshotSeq=-1',
 ]) assert.equal((await request('GET', url)).status, 400, url)
-result = await request('GET', '/?outcome=deferred&snapshotAt=2026-11-18T10:00:00.000Z&snapshotSeq=4')
+assert.equal((await request('GET', '/?outcome=deferred')).status, 400, 'the retired deferred outcome is rejected')
+result = await request('GET', '/?outcome=no_action&snapshotAt=2026-11-18T10:00:00.000Z&snapshotSeq=4')
 assert.equal(result.status, 200)
-assert.equal(calls.at(-1).outcome, 'deferred')
+assert.equal(calls.at(-1).outcome, 'no_action')
 assert.equal(calls.at(-1).snapshotSeq, 4)
 result = await request('POST', '/', JSON.stringify({ action: 'annotate', activityId: 'a1', label: 'interesting', active: true }))
 assert.equal(result.status, 200)

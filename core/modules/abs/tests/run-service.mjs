@@ -25,6 +25,8 @@ async function setup(overrides = {}, seed, options = {}) {
     async close() {},
   }
   const actionSelections = new Map()
+  // Mirrors the repository: only an enqueued review_pending moves the review signal.
+  let reviewPendingAt = options.lastReviewPendingAt === undefined ? new Date(clock).toISOString() : options.lastReviewPendingAt
   const activityStore = {
     recoverOpen() {}, startRuntime() { return 'runtime-test' }, touchRuntime() {}, closeRuntime() {}, prune() {}, close() {},
     recordWake(row) { activityRows.set(row.episodeId, structuredClone(row)); return true },
@@ -41,9 +43,15 @@ async function setup(overrides = {}, seed, options = {}) {
       const prior = actionSelections.get(selectionId) ?? { selectionId }
       const resolved = { ...prior, dispatchStatus, at, ...(reason != null ? { reason } : {}) }
       actionSelections.set(selectionId, resolved)
+      if (dispatchStatus === 'enqueued' && prior.intent === 'review_pending') reviewPendingAt = at
       return structuredClone(resolved)
     },
     actionContext() { return { remindedWorkStreakIds: [] } },
+    lastEnqueuedAt(intent) { return intent === 'review_pending' ? reviewPendingAt : null },
+    lastIntentAmong(intents) {
+      const rows = [...actionSelections.values()].filter((row) => intents.includes(row.intent))
+      return rows.at(-1)?.intent ?? null
+    },
     findActionSelection(key) { return actionSelections.get(key?.selectionId) ?? null },
     markActionVisible() { return true },
     recordAttempt() {},
@@ -139,7 +147,7 @@ await test('shadow computes and previews without delivering anything', async () 
   assert.equal(f.state.lastReview, null)
   assert.ok(f.state.nextWakeAt)
   assert.ok(result.actionSelection)
-  assert.equal(result.actionSelection.intent, 'continue_interest')
+  assert.equal(result.actionSelection.intent, 'study')
   assert.equal(result.actionSelection.dispatchStatus, 'preview')
   assert.equal(f.records.find((row) => row.type === 'WakeRecord').gate, 'SHADOW_PREVIEW_ONLY')
   await f.close()
@@ -157,7 +165,7 @@ await test('active delivers one review only after activation cooldown', async ()
   assert.equal(second.delivered, true)
   assert.equal(f.deliveries.length, 1)
   const review = f.deliveries[0]
-  assert.ok(review.text.includes('很想接触些新东西'))
+  assert.ok(review.text.includes('前面记下的学习线'))
   for (const word of ['web_search', '目标', '任务', '请']) assert.ok(!review.text.includes(word))
   assert.equal(f.state.lastReview.status, 'delivered')
   assert.equal(f.state.lastReview.messageId, f.deliveries[0].messageId)
@@ -315,17 +323,15 @@ await test('restart keeps state and does not replay missed reviews', async () =>
   await g.close()
 })
 
-await test('legacy motivations and executions are archived, drives and clock survive', async () => {
-  const legacy = createState(start)
-  legacy.motivations = [{ id: 'old-motivation' }]
-  legacy.executions = [{ executionId: 'old-execution' }]
-  legacy.proposalIds = ['old-proposal']
-  legacy.history = [{ kind: 'execution', intent: 'explore', at: new Date(start).toISOString(), mode: 'active' }]
-  const f = await setup({}, legacy)
-  assert.equal(f.state.motivations.length, 0)
-  assert.equal(f.state.executions.length, 0)
-  assert.equal(f.state.proposalIds.length, 0)
-  assert.ok(f.records.some((row) => row.type === 'StateMigrated'))
+await test('fields from retired ABS versions are dropped on startup, drives and clock survive', async () => {
+  const saved = createState(start)
+  Object.assign(saved, { motivations: [{ id: 'old-motivation' }], executions: [], history: [], proposalIds: ['old-proposal'],
+    budget: { day: '2026-11-07', llmCalls: 3 }, activeInitialized: true, evaluationOnlyPending: false, lastInternalProposalAt: '2026-11-07T00:00:00.000Z' })
+  const f = await setup({}, saved)
+  for (const key of ['motivations', 'executions', 'history', 'proposalIds', 'budget', 'activeInitialized', 'evaluationOnlyPending', 'lastInternalProposalAt']) {
+    assert.equal(key in f.state, false, key)
+  }
+  assert.ok(!f.records.some((row) => row.type === 'StateMigrated'), 'no migration audit record is written')
   assert.ok(f.state.drives.social.satisfaction > 0)
   await f.close()
 })
@@ -355,6 +361,58 @@ await test('clock scale changes are persisted without delivering', async () => {
   assert.equal(f.deliveries.length, deliveries)
   assert.ok(f.records.some((row) => row.type === 'ClockScaleChanged'))
   assert.equal(f.service.inspect().clockView.timeScale, 60)
+  await f.close()
+})
+
+await test('review_pending is selected when never reviewed, then waits for its own twelve-hour gate', async () => {
+  const f = await setup({ mode: 'active', activationCooldownMinutes: 0, drives: { social: { decayPerHour: 0 }, curiosity: { initialSatisfaction: 0.2, decayPerHour: 0 } } }, null, { lastReviewPendingAt: null })
+  const first = await f.service.wake('timer')
+  assert.equal(first.delivered, true)
+  assert.equal(first.actionSelection.intent, 'review_pending')
+  assert.match(f.deliveries[0].text, /代码或日程/)
+  f.advanceMinutes(60)
+  await armCuriosity(f)
+  const before = f.state.drives.curiosity.satisfaction
+  const second = await f.service.wake('manual')
+  assert.equal(second.actionSelection.intent, 'study', 'one hour after review is far below the twelve-hour gate; curiosity takes the slot')
+  assert.match(f.deliveries[1].text, /学习线/)
+  assert.equal(f.state.drives.curiosity.satisfaction, before, 'selection alone never changes curiosity')
+  await f.close()
+})
+
+await test('study and browse alternate on equal curiosity ties across wakes', async () => {
+  const f = await setup({ drives: { curiosity: { initialSatisfaction: 0.2 } } })
+  const first = await f.service.wake('manual')
+  const second = await f.service.wake('manual')
+  assert.equal(first.actionSelection.intent, 'study')
+  assert.equal(second.actionSelection.intent, 'browse')
+  await f.close()
+})
+
+await test('memory writes earn learning gain each time, with dedupe but no daily limit', async () => {
+  const f = await setup({ drives: { social: { decayPerHour: 0 }, curiosity: { decayPerHour: 0, initialSatisfaction: 0 } } })
+  const key = (n) => n.toString(16).padStart(64, '0')
+  const memoryWrite = (n, at) => ({ kind: 'exploration', result: 'local_content_found', activity: 'write', sessionId: 'fish', seq: n, turn: n, evidenceKey: key(n), at })
+  const day1 = '2026-11-07T10:00:00.000Z'
+  for (let n = 1; n <= 4; n++) { f.observe(memoryWrite(n, day1)); await f.service.syncClock() }
+  assert.ok(Math.abs(f.state.drives.curiosity.satisfaction - 0.6) < 1e-12, 'four distinct writes on one day each earn the gain')
+  f.observe({ ...memoryWrite(4, day1), seq: 5, turn: 5 }); await f.service.syncClock()
+  assert.equal(f.state.changeLedger.at(-1).reason, 'duplicate_evidence', 'the same content stays deduped')
+  f.observe(memoryWrite(6, '2026-11-08T01:00:00.000Z')); await f.service.syncClock()
+  assert.ok(Math.abs(f.state.drives.curiosity.satisfaction - 0.75) < 1e-12)
+  assert.equal(f.state.dailyEvidence, undefined, 'no daily counter is kept')
+  await f.close()
+})
+
+await test('browse results without a verified object do not count as learning and feed the chat hook only when verified', async () => {
+  const f = await setup(noDecay)
+  f.observe({ kind: 'exploration', result: 'unverified_activity', activity: 'browse', sessionId: 'fish', seq: 1, turn: 1, at: new Date(f.now()).toISOString() })
+  await f.service.syncClock()
+  assert.ok(!f.state.lastExploration, 'unverified browse leaves no exploration hook')
+  f.observe({ kind: 'exploration', result: 'local_content_found', activity: 'browse', sessionId: 'fish', seq: 2, turn: 2, evidenceKey: 'd'.repeat(64), at: new Date(f.now()).toISOString() })
+  await f.service.syncClock()
+  assert.equal(f.state.lastExploration.resultKind, 'local_content_found')
+  assert.equal(f.state.lastExploration.activity, 'browse')
   await f.close()
 })
 
@@ -480,6 +538,18 @@ await test('service start schedules the ABS deadline in real time', async () => 
   assert.ok(scheduled.at(-1).delay >= 250 && scheduled.at(-1).delay <= 30000)
   await f.close()
   assert.equal(scheduled.at(-1).cleared, true)
+})
+
+await test('inspect exposes read-only split action signals without recording anything', async () => {
+  const f = await setup({ drives: { social: { decayPerHour: 0 }, curiosity: { decayPerHour: 0, initialSatisfaction: 0 } } }, null, { lastReviewPendingAt: null })
+  const before = f.records.length
+  const signals = f.service.inspect().actionSignals
+  assert.deepEqual(signals.map(row => row.intent), ['review_pending', 'study', 'browse'])
+  assert.equal(signals[0].value, 1, 'never reviewed saturates')
+  assert.equal(signals[0].ready, true)
+  assert.ok(signals[1].value > 0 && signals[1].value === signals[2].value, 'study and browse share the curiosity gap')
+  assert.equal(f.records.length, before)
+  await f.close()
 })
 
 console.log(`ABS service/HTTP: ${passed} groups passed`)

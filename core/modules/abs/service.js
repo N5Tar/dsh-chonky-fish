@@ -4,23 +4,25 @@ import { createState, updateState, nextReviewAt, applyFeedback, CORE_LIMITS } fr
 import { sanitizeAbsConfig } from './config.js'
 import { createAbsClock } from './clock.js'
 import { restWindow, nextAwakeTime } from './rest.js'
-import { renderActionPrompt, driveDemand } from './review.js'
+import { driveDemand } from './review.js'
+import { ABS_CURIOSITY_INTENTS, ABS_HISTORY_INTENTS, actionSignals as describeActionSignals, renderActionPrompt } from './actions.js'
 import { selectAbsAction } from './selector.js'
 
 const clone = (value) => structuredClone(value)
 const minute = 60000
 const id = () => randomUUID()
 const iso = (value) => new Date(value).toISOString()
-
+const RETIRED_STATE_KEYS = ['motivations', 'executions', 'history', 'proposalIds', 'budget', 'activeInitialized', 'evaluationOnlyPending', 'lastInternalProposalAt']
 /**
  * Single serialized state owner.
  *
- * The self-review model has no action decision: a wake updates internal state,
- * renders a natural-language self-review and (in active mode) hands that review
- * to the fish's existing conversation. Feedback comes only from observed facts.
+ * A wake updates the internal drives, lets the selector pick at most one action
+ * (chat_owner, remind_rest, review_pending, study, browse), renders that action's
+ * first-person prompt and, in active mode, hands it to the fish's existing
+ * conversation. The fish decides what to do; feedback comes only from observed facts.
  */
 export async function createAbsService({ store, activityStore, host, getConfig, readWorkStreak = () => null, now = Date.now, logger = console, timers = { setTimeout, clearTimeout } }) {
-  if (!activityStore || ['recordWake','recordEvidence','recordTurn','query','startRuntime','touchRuntime','closeRuntime','recoverOpen','prune','setAnnotation','recordActionSelection','resolveActionSelection','actionContext','markActionVisible','close'].some(name => typeof activityStore[name] !== 'function')) throw new TypeError('ABS activity repository is required')
+  if (!activityStore || ['recordWake','recordEvidence','recordTurn','query','startRuntime','touchRuntime','closeRuntime','recoverOpen','prune','setAnnotation','recordActionSelection','resolveActionSelection','actionContext','lastEnqueuedAt','lastIntentAmong','markActionVisible','close'].some(name => typeof activityStore[name] !== 'function')) throw new TypeError('ABS activity repository is required')
   if (typeof host.subscribeActivity !== 'function' || typeof host.subscribeObservation !== 'function' || typeof host.boundSessionId !== 'function' || typeof host.surfaceAction !== 'function' || typeof host.setActionSelectionLookup !== 'function') throw new TypeError('ABS host action contract is required')
   const restored = store.read()
   const initialReal = now()
@@ -40,25 +42,13 @@ export async function createAbsService({ store, activityStore, host, getConfig, 
     clock.setScale(config().timeScale)
     startupRecords.push({ type: 'ClockScaleChanged', previous, timeScale: clock.timeScale, at: iso(clock.now()), realAt: iso(clock.realNow()), cause: 'startup-config' })
   }
-  const legacy = {
-    motivations: state.motivations?.length ?? 0,
-    executions: state.executions?.length ?? 0,
-    proposalIds: state.proposalIds?.length ?? 0,
-    history: state.history?.length ?? 0,
-  }
-  if (legacy.motivations || legacy.executions || legacy.proposalIds || legacy.history) {
-    startupRecords.push({ type: 'StateMigrated', at: iso(clock.now()), realAt: iso(clock.realNow()), archived: legacy })
-    state.motivations = []
-    state.executions = []
-    state.proposalIds = []
-    state.history = []
-  }
+  // Fields written by retired ABS versions are never read; drop them so the saved state converges.
+  for (const key of RETIRED_STATE_KEYS) delete state[key]
   state.mode ??= config().mode
   state.observations ??= []
   state.feedbackKeys ??= []
   state.changeLedger ??= []
   state.nextWakeAt ??= null
-  delete state.lastInternalProposalAt
   state.clock = clock.snapshot()
   const boundOwnerSession = host.boundSessionId()
   if (boundOwnerSession) {
@@ -203,7 +193,22 @@ export async function createAbsService({ store, activityStore, host, getConfig, 
       ownerInteraction: state.lastOwnerMessage?.sourceKind === 'user' ? state.lastOwnerMessage : null,
       socialGap: reviewDemand().social, curiosityGap: reviewDemand().curiosity,
       workStreak, remindedWorkStreakIds: context.remindedWorkStreakIds,
+      lastEnqueuedAt: lastEnqueuedAt(),
+      lastCuriosityIntent: activityStore.lastIntentAmong(ABS_CURIOSITY_INTENTS),
       policy: actionPolicy })
+  }
+  /** Real time each history-based action was last enqueued by the host. */
+  function lastEnqueuedAt() {
+    return Object.fromEntries(ABS_HISTORY_INTENTS.map(intent => [intent, activityStore.lastEnqueuedAt(intent)]))
+  }
+  /** Read-only view of the signals the lab shows; never selects or records anything. */
+  function actionSignals() {
+    try {
+      return describeActionSignals({ now: clock.realNow(), curiosityGap: reviewDemand().curiosity, lastEnqueuedAt: lastEnqueuedAt() }, config().actionPolicy)
+    } catch (error) {
+      logger.warn?.('[abs] action signals unavailable', error)
+      return []
+    }
   }
   async function ingestObservation(observation) {
     return serial(async () => {
@@ -286,6 +291,7 @@ export async function createAbsService({ store, activityStore, host, getConfig, 
         ...clone(state),
         clock: clock.snapshot(),
         clockView: clockView(),
+        actionSignals: actionSignals(),
         storageUncertain: poisoned,
         running: !closed,
         config: config(),
