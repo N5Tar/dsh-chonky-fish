@@ -1,0 +1,77 @@
+{
+  "ok": true,
+  "summary": {
+    "opportunities": 4,
+    "actionSelections": {
+      "total": 3,
+      "byIntent": { "chat_owner": 2, "continue_interest": 1 },
+      "byStatus": { "enqueued": 2, "preview": 1 }
+    }
+  },
+  "episodes": [
+    {
+      "id": "ep-chat-1",
+      "wakeAt": "2026-11-25T02:00:00.000Z",
+      "actionSelection": {
+        "intent": "chat_owner",
+        "reason": "selected",
+        "score": 0.8,
+        "dispatchStatus": "enqueued",
+        "selectedAt": "2026-11-25T02:00:01.000Z",
+        "visibleAt": "2026-11-25T02:00:20.000Z",
+        "resolvedAt": "2026-11-25T02:00:21.000Z",
+        "resolutionReason": "visible_reply_committed"
+      },
+      "choice": { "kind": "continue", "summary": "想跟主人打个招呼" },
+      "result": "no_action"
+    },
+    {
+      "id": "ep-chat-2",
+      "wakeAt": "2026-11-25T03:00:00.000Z",
+      "actionSelection": {
+        "intent": "chat_owner",
+        "reason": "selected",
+        "score": 0.7,
+        "dispatchStatus": "enqueued",
+        "selectedAt": "2026-11-25T03:00:01.000Z",
+        "visibleAt": null,
+        "resolvedAt": "2026-11-25T03:01:00.000Z",
+        "resolutionReason": "completed_without_output"
+      },
+      "choice": null,
+      "result": "no_action"
+    },
+    {
+      "id": "ep-blocked",
+      "wakeAt": "2026-11-25T04:00:00.000Z",
+      "actionSelection": {
+        "intent": null,
+        "reason": "no_candidate",
+        "score": null,
+        "dispatchStatus": "suppressed",
+        "selectedAt": "2026-11-25T04:00:01.000Z",
+        "visibleAt": null,
+        "resolvedAt": null,
+        "resolutionReason": null
+      },
+      "choice": null,
+      "result": "deferred"
+    },
+    {
+      "id": "ep-explore",
+      "wakeAt": "2026-11-25T05:00:00.000Z",
+      "actionSelection": {
+        "intent": "continue_interest",
+        "reason": "selected",
+        "score": 0.6,
+        "dispatchStatus": "enqueued",
+        "selectedAt": "2026-11-25T05:00:01.000Z",
+        "visibleAt": null,
+        "resolvedAt": null,
+        "resolutionReason": null
+      },
+      "choice": null,
+      "result": "verified"
+    }
+  ]
+}

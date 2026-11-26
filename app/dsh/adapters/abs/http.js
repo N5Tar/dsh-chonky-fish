@@ -71,6 +71,26 @@ export function createAbsHttpHandler({ service, resources, maxBodyBytes = 16384 
             content: (await service.records(1000)).map((row) => JSON.stringify(row)).join('\n') + '\n',
           }
           break
+        case 'pacing': {
+          const allowed = ['action', 'reviewIntervalMinutes', 'reviewMinRealGapMinutes', 'actionPolicy']
+          if (Object.keys(input).some((key) => !allowed.includes(key))) throw new Error('ABS_UNKNOWN_FIELD')
+          const patch = {}
+          if ('reviewIntervalMinutes' in input) patch.reviewIntervalMinutes = input.reviewIntervalMinutes
+          if ('reviewMinRealGapMinutes' in input) patch.reviewMinRealGapMinutes = input.reviewMinRealGapMinutes
+          if ('actionPolicy' in input) {
+            if (!input.actionPolicy || typeof input.actionPolicy !== 'object' || Array.isArray(input.actionPolicy)) throw new Error('ABS_INVALID_ACTION_POLICY')
+            patch.actionPolicy = input.actionPolicy
+          }
+          if (!Object.keys(patch).length) throw new Error('ABS_PACING_EMPTY')
+          const updated = await resources.updateConfig({ abs: patch })
+          const absCfg = updated?.abs ?? sanitizeAbsConfig({ ...(service.inspect().config ?? {}), ...patch })
+          result = {
+            reviewIntervalMinutes: absCfg.reviewIntervalMinutes,
+            reviewMinRealGapMinutes: absCfg.reviewMinRealGapMinutes,
+            actionPolicy: absCfg.actionPolicy,
+          }
+          break
+        }
         default:
           return reply(400, { ok: false, error: 'ABS_UNKNOWN_ACTION' })
       }

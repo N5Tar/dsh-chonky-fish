@@ -2,3 +2,5 @@ node_modules/
 preset/
 .DS_Store
 *.log
+docs/abs-iteration/snapshots/*
+!docs/abs-iteration/snapshots/.gitignore

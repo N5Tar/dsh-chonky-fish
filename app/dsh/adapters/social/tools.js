@@ -9,7 +9,7 @@ const output = {
 export function createOwnerSendTool({ service }) {
   return {
     name: 'social_send_owner_message',
-    description: '通过钉钉单聊主动给主人发一条文本消息。只在确实需要主动提醒或告知主人时使用；不要用它代替对当前对话的正常回复。发送结果 unknown 表示可能已送达，禁止换 operationId 重试。',
+    description: '通过钉钉单聊主动给主人发一条文本消息。想找主人聊两句、分享近况或轻量提醒时可以用；不要用它代替对当前对话的正常回复，也不要刷屏。发送结果 unknown 表示可能已送达，禁止换 operationId 重试。',
     parameters: {
       type: 'object', additionalProperties: false,
       properties: {

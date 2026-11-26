@@ -130,13 +130,17 @@ await test('owner messages are observed, injections are not', async () => {
   assert.equal(f.observations[0].sessionId, 'fish')
   assert.equal(f.observations[0].at, new Date(now).toISOString())
   f.emit('user/message', { id: 'social-' + 'a'.repeat(64), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '喂' }] })
-  assert.equal(f.observations.length, 1, 'plain channel message is not local owner activity')
+  assert.equal(f.observations.length, 2, 'owner direct message delivered from a channel (e.g. DingTalk) counts as owner interaction')
+  assert.equal(f.observations[1].kind, 'owner_message')
+  assert.equal(f.observations[1].sessionId, 'fish')
+  f.emit('user/message', { id: 'delivery-1', role: 'user', source: { kind: 'chonkyfish-social', version: 1 }, content: [{ type: 'text', text: '喂' }] })
+  assert.equal(f.observations.length, 3, 'legacy channel-sourced delivery also counts')
   for (const kind of ['chonkyfish-abs-action', 'chonkyfish-nudge', 'schedule', 'agent-instructions']) {
     f.emit('user/message', { source: { kind }, message: {} })
   }
-  assert.equal(f.observations.length, 1)
+  assert.equal(f.observations.length, 3)
   f.emit('assistant/message', { message: { content: [{ type: 'text', text: '我说完了' }] } })
-  assert.equal(f.observations.length, 1)
+  assert.equal(f.observations.length, 3)
   f.cleanup()
 })
 

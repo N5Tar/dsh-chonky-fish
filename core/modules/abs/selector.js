@@ -13,6 +13,15 @@ const PRIORITY = Object.freeze({ remind_rest: 3, continue_interest: 2, chat_owne
 const finiteTime = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null
 const result = (intent, score, reason, extra = {}) => ({ intent, score, reason, ...extra })
 
+function resolvePolicy(override) {
+  const source = override && typeof override === 'object' && !Array.isArray(override) ? override : {}
+  const minimumGap = typeof source.minimumGap === 'number' && Number.isFinite(source.minimumGap)
+    ? Math.min(1, Math.max(0, source.minimumGap)) : ABS_ACTION_POLICY.minimumGap
+  const explorationScoreFactor = typeof source.explorationScoreFactor === 'number' && Number.isFinite(source.explorationScoreFactor)
+    ? Math.min(2, Math.max(0, source.explorationScoreFactor)) : ABS_ACTION_POLICY.explorationScoreFactor
+  return { minimumGap, explorationScoreFactor }
+}
+
 /**
  * Pure single-intent selector. The activity repository records one stable
  * dispatch lifecycle row per review; it does not apply action quotas or cadence gates.
@@ -21,12 +30,14 @@ const result = (intent, score, reason, extra = {}) => ({ intent, score, reason, 
  *   ownerInteraction:{sessionId:string,realAt:string,sourceKind:'user'}|null, socialGap:number|null,
  *   curiosityGap:number|null,
  *   workStreak:{id:string,startedAt:string,observedThrough:string,workMinutes:number}|null,
- *   remindedWorkStreakIds:string[]}} input
+ *   remindedWorkStreakIds:string[],
+ *   policy?:{minimumGap?:number, explorationScoreFactor?:number}}} input
  */
 export function selectAbsAction(input) {
   if (!input || !Number.isFinite(input.now) || !['off','shadow','active'].includes(input.mode)) throw new TypeError('Invalid ABS selector input')
   if (input.mode === 'off') return result(null, null, 'mode_off')
   if (typeof input.currentSessionId !== 'string' || !input.currentSessionId) return result(null, null, 'owner_session_unavailable')
+  const policy = resolvePolicy(input.policy)
   const candidates = []
   const blocked = []
   const gap = value => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : null
@@ -47,8 +58,8 @@ export function selectAbsAction(input) {
   } else blocked.push({ intent: 'remind_rest', reason: 'work_streak_missing_or_unverified' })
 
   const curiosityGap = gap(input.curiosityGap)
-  if (curiosityGap == null || curiosityGap < ABS_ACTION_POLICY.minimumGap) blocked.push({ intent: 'continue_interest', reason: 'gap_below_threshold' })
-  else candidates.push({ intent: 'continue_interest', score: ABS_ACTION_POLICY.explorationScoreFactor * curiosityGap })
+  if (curiosityGap == null || curiosityGap < policy.minimumGap) blocked.push({ intent: 'continue_interest', reason: 'gap_below_threshold' })
+  else candidates.push({ intent: 'continue_interest', score: policy.explorationScoreFactor * curiosityGap })
 
   const socialGap = gap(input.socialGap)
   const interaction = input.ownerInteraction
@@ -57,7 +68,7 @@ export function selectAbsAction(input) {
       || interaction.sessionId !== input.currentSessionId || interactionAt == null || interactionAt > input.now) {
     blocked.push({ intent: 'chat_owner', reason: 'owner_interaction_unknown' })
   } else {
-    if (socialGap == null || socialGap < ABS_ACTION_POLICY.minimumGap) blocked.push({ intent: 'chat_owner', reason: 'gap_below_threshold' })
+    if (socialGap == null || socialGap < policy.minimumGap) blocked.push({ intent: 'chat_owner', reason: 'gap_below_threshold' })
     else candidates.push({ intent: 'chat_owner', score: socialGap })
   }
 

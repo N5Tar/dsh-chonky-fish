@@ -26,9 +26,43 @@ function comparisonText(current, previous) {
   return delta > 0 ? '比上次留意自己时，这份念头更强了一些。' : '比上次留意自己时，这份念头淡了一些。'
 }
 
+const EXPLORATION_HOOK_MAX_AGE_MS = 6 * 60 * 60 * 1000
+
+function dayPeriod(hour) {
+  if (hour < 5) return '深夜'
+  if (hour < 9) return '早上'
+  if (hour < 12) return '上午'
+  if (hour < 14) return '中午'
+  if (hour < 18) return '下午'
+  if (hour < 23) return '晚上'
+  return '深夜'
+}
+
+/**
+ * Build one concrete, verifiable opening hook for chat_owner. Only app-held
+ * facts are used: a recent verified exploration result, otherwise the current
+ * CST period plus the gap since the verified owner message. Returns '' when
+ * `now` is not supplied so callers without a clock keep the plain prompt.
+ */
+export function buildChatHook({ ownerTime, now = null, lastExploration = null }) {
+  const nowMs = now === null || now === undefined ? NaN : new Date(now).getTime()
+  if (!Number.isFinite(nowMs) || !Number.isFinite(ownerTime)) return ''
+  const explored = Date.parse(lastExploration?.realAt)
+  if (lastExploration?.resultKind === 'explore_content_found' && Number.isSafeInteger(lastExploration.sources)
+      && lastExploration.sources > 0 && Number.isFinite(explored) && nowMs >= explored && nowMs - explored <= EXPLORATION_HOOK_MAX_AGE_MS) {
+    return `我最近一次出去逛是 ${formatCstTime(explored)}，带回了 ${lastExploration.sources} 条能用的内容，可以拣一件说给他听。`
+  }
+  const hours = Math.floor(Math.max(0, nowMs - ownerTime) / 3600000)
+  const parts = {}
+  for (const part of CST_FORMAT.formatToParts(new Date(nowMs))) parts[part.type] = part.value
+  const clock = `${parts.hour}:${parts.minute}`
+  const gap = hours >= 1 ? `离上次交流已经过去约 ${hours} 小时` : '离上次交流还不到一小时'
+  return `眼下是${dayPeriod(Number(parts.hour))}（${clock}），${gap}。`
+}
+
 /** Render one already-selected, app-authored first-person action prompt. */
 export function renderActionPrompt({ intent, ownerInteraction = null, currentSessionId = null, socialGap = null,
-  previousSocialGap = null, workMinutes = null }) {
+  previousSocialGap = null, workMinutes = null, now = null, lastExploration = null }) {
   switch (intent) {
     case 'chat_owner': {
       const ownerTime = Date.parse(ownerInteraction?.realAt)
@@ -37,7 +71,8 @@ export function renderActionPrompt({ intent, ownerInteraction = null, currentSes
         throw new TypeError('Verified same-session owner timestamp is required for chat')
       }
       const comparison = comparisonText(socialGap, previousSocialGap)
-      return `唔……我现在很想和主人说说话，这份念头很强。${comparison}我这里最近一次和主人的交流记录是 ${formatCstTime(ownerInteraction.realAt)}，要不要找他说说话呢？`
+      const hook = buildChatHook({ ownerTime, now, lastExploration })
+      return `唔……有点想找主人聊两句。${comparison}我这边记着上次交流是 ${formatCstTime(ownerInteraction.realAt)}。${hook}光在会话里自言自语不算找到他；要是 social_send_owner_message 可用，我就用它给主人捎一句轻松的话。发不出去或渠道不可用时，我再老实记下，不要假装已经找到他。`
     }
     case 'remind_rest': {
       if (!Number.isFinite(workMinutes) || workMinutes < 60) throw new TypeError('Verified work duration is required for a rest prompt')

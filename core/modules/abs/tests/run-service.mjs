@@ -441,6 +441,25 @@ await test('HTTP scale validation and export', async () => {
   await f.close()
 })
 
+await test('HTTP pacing tunes review gap and actionPolicy', async () => {
+  const f = await setup()
+  const handler = createAbsHttpHandler({
+    service: f.service,
+    resources: { async updateConfig(patch) { f.configure(patch.abs); return { abs: f.cfg() } } },
+  })
+  assert.equal((await request(handler, 'POST', { action: 'pacing' })).status, 409)
+  const result = await request(handler, 'POST', {
+    action: 'pacing', reviewMinRealGapMinutes: 2, reviewIntervalMinutes: 30,
+    actionPolicy: { minimumGap: 0.3 },
+  })
+  assert.equal(result.status, 200)
+  assert.equal(result.body.result.reviewMinRealGapMinutes, 2)
+  assert.equal(result.body.result.reviewIntervalMinutes, 30)
+  assert.equal(result.body.result.actionPolicy.minimumGap, 0.3)
+  assert.equal(f.cfg().actionPolicy.minimumGap, 0.3)
+  await f.close()
+})
+
 await test('storage failure blocks further work', async () => {
   const f = await setup({}, undefined, { onCommit: async (_state, rows) => { if (rows.some((row) => row.type === 'ClockScaleChanged')) throw new Error('simulated storage failure') } })
   f.configure({ timeScale: 60 })

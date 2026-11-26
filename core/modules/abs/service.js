@@ -197,11 +197,13 @@ export async function createAbsService({ store, activityStore, host, getConfig, 
     const context = sessionId ? activityStore.actionContext() : { remindedWorkStreakIds: [] }
     let workStreak = null
     try { workStreak = readWorkStreak() } catch (error) { logger.warn?.('[abs] work streak unavailable', error) }
+    const actionPolicy = config().actionPolicy
     return selectAbsAction({ now: realAt, mode,
       currentSessionId: sessionId,
       ownerInteraction: state.lastOwnerMessage?.sourceKind === 'user' ? state.lastOwnerMessage : null,
       socialGap: reviewDemand().social, curiosityGap: reviewDemand().curiosity,
-      workStreak, remindedWorkStreakIds: context.remindedWorkStreakIds })
+      workStreak, remindedWorkStreakIds: context.remindedWorkStreakIds,
+      policy: actionPolicy })
   }
   async function ingestObservation(observation) {
     return serial(async () => {
@@ -355,7 +357,8 @@ export async function createAbsService({ store, activityStore, host, getConfig, 
               acceptance = blocked ? { accepted: false, definitive: true, status: 'rejected', reason: blocked }
                 : await host.surfaceAction({ text: renderActionPrompt({ intent: selection.intent,
                   currentSessionId: sessionId, socialGap: reviewDemand().social, previousSocialGap: state.lastReview?.demand?.social,
-                  ownerInteraction: state.lastOwnerMessage, workMinutes: selection.workMinutes }),
+                  ownerInteraction: state.lastOwnerMessage, workMinutes: selection.workMinutes,
+                  now: clock.realNow(), lastExploration: state.lastExploration }),
                   intent: selection.intent, selectionId, reviewId, messageId, expectedSessionId: sessionId, canDeliver })
             } catch (error) {
               acceptance = { accepted: false, definitive: false, status: 'unknown', reason: 'enqueue-outcome-unknown' }

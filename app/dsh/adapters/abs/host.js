@@ -221,7 +221,9 @@ export function createAbsHost({ ctx, resources }) {
         }
       }
       // Non-owner injections (schedule, nudge, self-review) are not owner interaction.
-      if (isChannelUserMessage(data) || data.source?.kind !== 'user') return
+      // Channel (e.g. DingTalk) input delivered into a fish session is the owner's own
+      // direct message (visitors are routed to separate peer sessions), so it counts.
+      if (data.source?.kind !== 'user' && !isChannelUserMessage(data)) return
       emit({ kind: 'owner_message', sessionId, seq: event.seq, turn: turn?.turn, at: isoTime(event.time), sourceKind: 'user' })
       return
     }
